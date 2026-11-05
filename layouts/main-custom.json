@@ -135,6 +135,13 @@
                       },
                       "id": "show",
                       "type": "block"
+                    },
+                    {
+                      "content": {
+                        "mod": "loops"
+                      },
+                      "id": "loops",
+                      "type": "block"
                     }
                   ],
                   "id": "panel-body",

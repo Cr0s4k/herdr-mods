@@ -57,6 +57,23 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
+## Loops
+
+The **Loops** tab beside Show lists local **Codex `/goal` goals**. It shows the objective,
+status, tokens used (and budget when set), and working time. Budget usage is not a measure
+of task completion. It refreshes every ten seconds, with a manual refresh button.
+
+**This space** follows the space's live terminal folders; **All projects** includes saved
+goals from other local projects. **Completed** includes finished goals. Both filters are
+remembered. **Open session** opens the exact thread with `codex resume` in a new tab.
+From a remote space it opens a local space instead.
+
+The reader uses Python 3's SQLite support to read Codex's local `goals_*.sqlite` and
+`state_*.sqlite` databases under `$CODEX_HOME` (default `~/.codex`). It never updates goal
+state. These are Codex's internal files: incompatible schemas show an error instead of
+silently falling back to stale goals. Claude, scheduled tasks, and remote Codex goals are
+not supported yet.
+
 ## Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
@@ -75,7 +92,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Changes (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
-| `mods/tabs-show/` | Herdr's tab bar, cloned, with the Show button added |
+| `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
+| `mods/loops/` | Codex goals panel and its Python reader |
 | `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
