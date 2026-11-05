@@ -348,7 +348,6 @@ export default class Spaces extends View {
       const connected = !m || machine?.state === "connected";
       const rebuilt = this.rebuilt(machine) || !!repair;
       const folded = !this.attention && this.folded.has(m);
-      const machineSummary = this.agents.summary(rows.filter(r => (r.w.machine ?? null) === m).map(r => r.w.id));
       const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 2 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
@@ -368,7 +367,6 @@ export default class Spaces extends View {
               .child(repair?.busy ? "Connecting…" : "Connect"))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
-          .when(folded && Boolean(machineSummary.status), el => el.child(this.agents.badge(t, machineSummary)))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
           .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
       const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
@@ -430,7 +428,7 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree, pinned, open, hasChildren, summary }, t) {
+  row({ w, i, g, tree, pinned, open, hasChildren }, t) {
     const on = w.active;
     const isPinned = (shared("space.pinned") ?? []).includes(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
@@ -504,7 +502,6 @@ export default class Spaces extends View {
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
           .when(Boolean(g), el => el.child(this.gitTail(g, tree, w.name, t).flex_none().max_w(65)))
-          .when(Boolean(summary?.status), el => el.child(this.agents.badge(t, summary)))
           .when(isPinned || this.hovered === w.id, el => el.child(
             div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer()
               .hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -523,7 +520,7 @@ export default class Spaces extends View {
       );
   }
 
-  compact({ w, i, summary }, t) {
+  compact({ w, i }, t) {
     return h_flex()
       .id(`space-${w.id}`)
       .h(26)
@@ -532,10 +529,9 @@ export default class Spaces extends View {
       .gap(4)
       .when(w.active, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .tooltip(`${w.name}${summary?.status ? ` · ${summary.count} ${summary.status === "blocked" ? "need you" : summary.status}` : ""}`)
+      .tooltip(w.name)
       .on_click(() => run("space.select", { id: w.id }))
-      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
-      .when(Boolean(summary?.status), el => el.child(this.agents.indicator(t, summary.status, true)));
+      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)));
   }
 
   render() {

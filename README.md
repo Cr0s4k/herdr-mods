@@ -110,8 +110,7 @@ without changing focus. Click an agent to focus its pane. Worktree spaces remain
 under their checkout and start collapsed; subagents start collapsed too, and clicking
 a subagent opens its live preview. Expansion choices survive restarts.
 
-Each space shows its most urgent agent status and a count, including work hidden in
-collapsed worktrees or subagent branches. **Needs you** filters the tree to agents
+Status indicators appear on agent rows. **Needs you** filters the tree to agents
 waiting for input, revealing their ancestors without changing saved expansion choices.
 Turn the filter off to return to all spaces. It also reveals matching agents inside
 collapsed machine groups. Agent pins stay at the top of their own space. Agent keyboard
@@ -138,7 +137,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
-| `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, status summaries and a Needs you filter |
+| `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |

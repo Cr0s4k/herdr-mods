@@ -111,15 +111,6 @@ export class AgentTree {
       .when(status !== "idle", el => el.bg(color));
   }
 
-  badge(t, summary) {
-    if (!summary.status) return div();
-    return h_flex().flex_none().gap(3).items_center()
-      .accessibility_label(`${summary.count} ${statusName(summary.status).toLowerCase()}`)
-      .tooltip(`${summary.count} ${statusName(summary.status).toLowerCase()}`)
-      .child(this.indicator(t, summary.status, true))
-      .child(div().text_size(10.5).text_color(t[summary.status] ?? t.muted).child(String(summary.count)));
-  }
-
   toggle(address, cx) {
     this.expanded.has(address) ? this.expanded.delete(address) : this.expanded.add(address);
     localStorage.setItem("agents.expanded", JSON.stringify([...this.expanded]));

@@ -101,16 +101,18 @@ test("hidden subagents raise space urgency and the filter reveals their full anc
   assert.equal(find(view.render(), "ag-one"), undefined);
 });
 
-test("completions stay visible on folded spaces and completed subagents do not create unread work", () => {
+test("statuses appear on agents, space rows stay quiet, and completed subagents do not create unread work", () => {
   const view = setup(); world.agents[0].status = "done";
   world.terminals = [{ address: "child", parent: "one", state: "live", status: "done", program }];
   click(view.render(), "space-fold-app");
   const root = view.render();
   assert.equal(find(root, "ag-one"), undefined);
   assert.equal(view.agents.summary(["app"]).count, 1);
-  assert.match(text(find(root, "space-app")), /1/);
+  assert.equal(text(find(root, "space-app")).trim(), "A app");
+  click(root, "space-fold-app");
+  assert.equal(find(view.render(), "ag-one").styles.accessibility_label[0], "Task one, Done");
   world.agents[0].status = "idle";
-  view.render();
+  assert.equal(find(view.render(), "ag-one").styles.accessibility_label[0], "Task one, Idle");
   assert.equal(view.agents.summary(["app"]).status, "idle");
 });
 
@@ -147,7 +149,7 @@ test("named tabs win, path-like titles fall back to the program, and split agent
   assert.equal(view.agents.labels.get("two"), "Codex");
 });
 
-test("worktrees fold under the checkout and retain urgency, pins, and rail access", () => {
+test("worktrees fold under the checkout and retain pins and rail access without space status badges", () => {
   const view = setup();
   world.spaces = [space("app", true), space("worktree"), space("other")];
   world.agents = [agent("one", "app"), agent("two", "worktree", "blocked")];
@@ -159,7 +161,7 @@ test("worktrees fold under the checkout and retain urgency, pins, and rail acces
   let root = view.render();
   assert.ok(find(root, "space-worktree"));
   assert.equal(find(root, "ag-two"), undefined); // Worktrees start folded.
-  assert.match(text(find(root, "space-app")), /1/);
+  assert.equal(text(find(root, "space-app")).trim(), "A app");
   click(root, "space-fold-worktree");
   assert.ok(find(view.render(), "ag-two"));
   click(view.render(), "space-fold-app");
@@ -168,6 +170,8 @@ test("worktrees fold under the checkout and retain urgency, pins, and rail acces
   assert.deepEqual(world.order, ["one", "two"]);
   world.width = 76; root = view.render();
   assert.ok(find(root, "space-worktree"));
+  assert.equal(text(find(root, "space-app")).trim(), "1");
+  assert.equal(text(find(root, "space-worktree")).trim(), "2");
   assert.ok(find(root, "spaces-expand-sidebar"));
   click(root, "spaces-expand-sidebar");
   assert.deepEqual(world.calls.at(-1), ["layout.resize", { id: "sidebar", px: 268 }]);
@@ -184,7 +188,7 @@ test("the attention filter gives a way back when the last blocked agent becomes 
   assert.ok(find(view.render(), "space-other"));
 });
 
-test("folded remote machines show urgency and the filter reveals them without saving new folds", () => {
+test("the attention filter reveals folded remote machines without saving new folds", () => {
   const view = setup();
   world.spaces.push({ ...space("vps/app"), machine: "vps" });
   world.agents.push(agent("vps/remote", "vps/app", "blocked"));
@@ -193,7 +197,6 @@ test("folded remote machines show urgency and the filter reveals them without sa
   view.folded.add("vps");
   let root = view.render();
   assert.ok(find(root, "machine-vps"));
-  assert.match(text(find(root, "machine-vps")), /1/);
   assert.equal(find(root, "ag-vps/remote"), undefined);
   click(root, "spaces-needs-you");
   root = view.render();
