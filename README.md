@@ -75,9 +75,28 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
+| `upgrade.sh` | merges a new Herdr version's originals into the clones (see Upgrading with Herdr) |
+| `skills/herdr-mods-upgrade/` | `/herdr-mods-upgrade`: runs `upgrade.sh`, resolves conflicts, checks the result in Herdr |
+| `upstream` branch | Herdr's originals of every clone, one commit per Herdr version |
+
+## Upgrading with Herdr
+
+Clones don't follow Herdr's updates by themselves. The `upstream` branch keeps Herdr's original of
+every clone, one commit per Herdr version, so git can merge Herdr's changes into ours.
+
+When Herdr updates, `./install.sh` lists the clones that are behind. Then:
+
+```sh
+./upgrade.sh                       # snapshot Herdr's new originals onto upstream, merge into main
+git push origin main upstream
+```
+
+Conflicts are left for you, or run `/herdr-mods-upgrade` in Claude to resolve and verify them.
+`git diff upstream main -- <path>` shows what a clone changes from Herdr's original.
 
 ## Adding a mod
 
 1. Make `mods/<name>/` with `main.js` and `mod.json` (or `herdr-app do mod.clone '{"name":"<shipped mod>","as":"<name>"}'` and move the copy here).
 2. If it belongs in the window, point a block in `layouts/main-custom.json` at it.
 3. `./install.sh`. A new section here if it's a feature.
+4. For a clone: sort its `mod.json` (`jq -S`), commit, then `./upgrade.sh` records Herdr's original on `upstream`.

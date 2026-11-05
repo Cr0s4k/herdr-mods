@@ -17,6 +17,15 @@ check() {
   for m in "${mods[@]}"; do herdr-app check "$app/mods/$(basename "$m")"; done
 }
 
+behind() {
+  local now f v
+  now="$(herdr-app --version | awk '{print $2}')"
+  for f in "$repo"/mods/*/mod.json "$repo"/layouts/*.json; do
+    v="$(jq -r '.cloned_from.version // empty' "$f")"
+    [ -z "$v" ] || [ "$v" = "$now" ] || echo "  ${f#"$repo"/} is from Herdr $v, Herdr is $now"
+  done
+}
+
 mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills" "$HOME/.agents/skills"
 copy -a
 for m in "${mods[@]}"; do
@@ -32,6 +41,8 @@ for s in "$repo"/skills/*; do
   done
 done
 check
+stale="$(behind)"
+[ -z "$stale" ] || printf 'Clones behind Herdr:\n%s\nRun ./upgrade.sh, or /herdr-mods-upgrade in Claude.\n' "$stale"
 
 if [ "${1:-}" = "--watch" ]; then
   echo "Watching $repo (ctrl-c to stop)"

@@ -31,10 +31,16 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
   0.9, height: 0.9, props})` then `closeOverlay(props().overlay)`, and run
   `herdr-app do mod.open '{"name":"<mod>"}'` (no tab to clean up). Herdr keeps a mod's old code
   when you rewrite it right away; use a new throwaway name per change.
-- `mods/tabs-show`, `mods/spaces-pin`, `mods/menu-pin`, `mods/files-modal`, `mods/changes-modal`
-  and `layouts/main-custom.json` are clones of Herdr's shipped `tabs`, `spaces`, `menu`, `files`,
-  `changes` and `main`. When Herdr updates those, the clones don't follow; re-clone and re-apply the changes
-  (`git diff` against a fresh clone shows them).
+- Mods whose `mod.json` has `cloned_from`, and `layouts/main-custom.json`, are clones of Herdr's
+  shipped mods and layout. The `upstream` branch holds Herdr's originals of them, one commit per
+  Herdr version, so `git diff upstream main -- <path>` shows only our changes. When Herdr updates
+  (`./install.sh` lists clones behind it), follow `skills/herdr-mods-upgrade/SKILL.md`.
+- In a clone, keep Herdr's functions where they are and add ours beside them; edit Herdr's lines
+  only where the feature needs it. Merges of new Herdr versions stay clean that way.
+- After cloning another shipped mod (with `cloned_from` in its `mod.json`), run `./upgrade.sh`
+  once: it records the original on `upstream`.
+- Keep `mod.json` and layout JSON key-sorted (`jq -S`), the format `upstream` uses; any other
+  formatting makes every merge conflict.
 - A mod can't import from another mod's folder or read files there with `fs`. To share a module,
   symlink it into the other mod (install copies with `--copy-links`) and read data with
   `readTextFile`, as `changes-modal/icons.js` does.
