@@ -42,7 +42,7 @@ function targetFor(item) {
 async function sendBack(item) {
   const target = targetFor(item);
   if (!target) {
-    notify({ title: "No agent to send to", body: "Start Claude in this space, then send again.", level: "warning" });
+    notify({ title: "No agent to send to", body: "Start an agent in this space, then send again.", level: "warning" });
     return false;
   }
   const note = item.note?.trim() ? ` Notes: ${item.note.trim()}` : "";

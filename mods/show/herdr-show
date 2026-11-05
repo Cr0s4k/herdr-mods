@@ -67,6 +67,21 @@ def project_of(cwd):
     return Path(r.stdout.strip() if r.returncode == 0 else cwd).name or "~"
 
 
+def own_terminal(cwd):
+    if os.environ.get("HC_TERMINAL_ID"):
+        return os.environ["HC_TERMINAL_ID"]
+    # Codex runs commands from a daemon, so the terminal's HC_* variables never reach us.
+    try:
+        r = subprocess.run(["hc", "ls", "--json"], capture_output=True, text=True, timeout=5)
+        listed = json.loads(r.stdout)["terminals"]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True).stdout.strip()
+    here = {p for p in (cwd, top) if p}
+    working = [t for t in listed if t.get("state") == "live" and t.get("status") == "working" and t.get("cwd") in here]
+    return working[0]["address"] if len(working) == 1 else None
+
+
 def renderer():
     if not RENDER_BIN.exists() or RENDER_BIN.stat().st_mtime < RENDER_SRC.stat().st_mtime:
         RENDER_BIN.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +129,7 @@ def post(args):
         "height": height,
         "project": parent["project"] if parent else project_of(cwd),
         "cwd": cwd,
-        "terminal": os.environ.get("HC_TERMINAL_ID") or (parent or {}).get("terminal"),
+        "terminal": own_terminal(cwd) or (parent or {}).get("terminal"),
         "title": args.title or (parent or {}).get("title"),
         "parent": parent["id"] if parent else None,
         "root": parent.get("root", parent["id"]) if parent else item_id,

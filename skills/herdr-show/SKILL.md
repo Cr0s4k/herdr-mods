@@ -1,6 +1,6 @@
 ---
 name: herdr-show
-description: Post screenshots or images to the user's Herdr "Show" panel so they can mark them up and send them back. Use whenever you produce a screenshot, render, chart or any image the user should look at while running inside Herdr (HC_TERMINAL_ID is set), and when a message says "Marked-up screenshot from the Show panel".
+description: Post screenshots or images to the user's Herdr "Show" panel so they can mark them up and send them back. Use whenever you produce a screenshot, render, chart or any image the user should look at while running inside Herdr (HERDR_ENV=1 or HC_TERMINAL_ID is set), and when a message says "Marked-up screenshot from the Show panel".
 ---
 
 # Showing images in Herdr
@@ -13,4 +13,7 @@ image, add a note, and send it back to you.
   what the markup points at, take a new screenshot of the same view, then post it with the
   exact command the message gives: `herdr-show <new.png> --fixes <id>`. That links the fix
   under the markup in the panel.
+- `herdr-show` writes to `~/.config/herdr-app/show/`, outside the workspace. In a sandbox (e.g.
+  Codex) run it with escalated permissions from the start, or rerun it that way when it fails
+  with "Operation not permitted". Don't fall back to showing the image inline.
 - Only PNG/JPEG. Post the image file you made; don't paste images inline instead.

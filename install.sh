@@ -17,7 +17,7 @@ check() {
   for m in "${mods[@]}"; do herdr-app check "$app/mods/$(basename "$m")"; done
 }
 
-mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills"
+mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills" "$HOME/.agents/skills"
 copy -a
 for m in "${mods[@]}"; do
   for f in "$m"/*; do
@@ -25,9 +25,11 @@ for m in "${mods[@]}"; do
   done
 done
 for s in "$repo"/skills/*; do
-  dest="$HOME/.claude/skills/$(basename "$s")"
-  [ -L "$dest" ] || rm -rf "$dest"
-  ln -sfn "$s" "$dest"
+  for dir in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+    dest="$dir/$(basename "$s")"
+    [ -L "$dest" ] || rm -rf "$dest"
+    ln -sfn "$s" "$dest"
+  done
 done
 check
 
