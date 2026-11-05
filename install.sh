@@ -7,7 +7,7 @@ repo="$(cd "$(dirname "$0")" && pwd)"
 app="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 
 sync() {
-  rsync -a --exclude gpui-kit.d.ts --exclude jsconfig.json "$repo/mods/show" "$repo/mods/tabs-show" "$app/mods/"
+  rsync -a --exclude gpui-kit.d.ts --exclude jsconfig.json "$repo/mods/show" "$repo/mods/tabs-show" "$repo/mods/spaces-pin" "$repo/mods/menu-pin" "$app/mods/"
   rsync -a "$repo/layouts/main-show.json" "$app/layouts/"
 }
 
@@ -19,11 +19,13 @@ ln -sf "$app/mods/show/herdr-show" "$HOME/.local/bin/herdr-show"
 ln -sfn "$repo/skill" "$HOME/.claude/skills/herdr-show"
 herdr-app check "$app/mods/show"
 herdr-app check "$app/mods/tabs-show"
+herdr-app check "$app/mods/spaces-pin"
+herdr-app check "$app/mods/menu-pin"
 
 if [ "${1:-}" = "--watch" ]; then
   echo "Watching $repo (ctrl-c to stop)"
   while sleep 1; do
-    changed="$(rsync -ai --dry-run --exclude gpui-kit.d.ts --exclude jsconfig.json "$repo/mods/show" "$repo/mods/tabs-show" "$app/mods/"; rsync -ai --dry-run "$repo/layouts/main-show.json" "$app/layouts/")"
+    changed="$(rsync -ai --dry-run --exclude gpui-kit.d.ts --exclude jsconfig.json "$repo/mods/show" "$repo/mods/tabs-show" "$repo/mods/spaces-pin" "$repo/mods/menu-pin" "$app/mods/"; rsync -ai --dry-run "$repo/layouts/main-show.json" "$app/layouts/")"
     if [ -n "$changed" ]; then
       sync
       echo "$(date +%H:%M:%S) synced"; echo "$changed" | sed 's/^/  /'

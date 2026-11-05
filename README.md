@@ -34,6 +34,12 @@ In the panel, click an image to mark it up: Pen, Arrow, Circle, Box, Text, numbe
 five colors, ⌘Z to undo, a note field. **Save & send back** pastes the marked image's path,
 your note and the `--fixes` command into the Claude terminal that posted the original.
 
+## Pinned spaces
+
+Right-click a space → **Pin to top**. Pinned spaces stay above the rest, with a pin icon and a
+line under them. Drag a space above the line to pin it, below to unpin it. Pins are saved
+in Herdr's shared state (`space.pinned`), so they survive restarts.
+
 ## What's in here
 
 | Path | What it is |
@@ -42,7 +48,9 @@ your note and the `--fixes` command into the Claude terminal that posted the ori
 | `mods/show/herdr-show` | the command that posts images and saves markups (Python) |
 | `mods/show/render.swift` | burns the drawn marks into a PNG; compiled on first use to `~/.cache/herdr-show/render` |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with the Show button added |
-| `layouts/main-show.json` | Herdr's default layout, cloned, with the Show panel slot |
+| `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
+| `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
+| `layouts/main-show.json` | Herdr's default layout, cloned, with the Show panel slot and `spaces-pin` |
 | `skill/SKILL.md` | tells Claude to post images with `herdr-show` and how to handle send-backs |
 
 Images and their metadata are stored in `~/.config/herdr-app/show/`.

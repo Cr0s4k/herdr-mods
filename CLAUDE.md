@@ -18,7 +18,8 @@ through the link nor loads the mod's own SVG icons. That is why install copies.
   passes and `herdr-app status` shows no errors. `herdr-app shot out.png` screenshots the window.
 - `check` doesn't run the editor (it only opens with `props.editor`). To see it:
   `herdr-app do tab.new '{"name":"t","mod":"show","props":{"editor":"<item id>"}}'`, then close that tab.
-- `mods/tabs-show` and `layouts/main-show.json` are clones of Herdr's shipped `tabs` and `main`.
-  When Herdr updates those, the clones don't follow; re-clone and re-apply the Show button/slot.
+- `mods/tabs-show`, `mods/spaces-pin`, `mods/menu-pin` and `layouts/main-show.json` are clones of
+  Herdr's shipped `tabs`, `spaces`, `menu` and `main`. When Herdr updates those, the clones don't
+  follow; re-clone and re-apply the changes (`git diff` against a fresh clone shows them).
 - `render.swift` changes recompile automatically on the next save from the editor
   (`~/.cache/herdr-show/render` is rebuilt when the source is newer).
