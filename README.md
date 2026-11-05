@@ -102,7 +102,23 @@ fails, its previous entries stay visible with an error while the other sources u
 Cloud/Desktop schedules, Monitor-based loops without scheduler records, and remote goals
 are not included.
 
-## Pinned spaces
+## Spaces and agents
+
+The sidebar is one tree: agents appear under their space, with subtle connecting
+lines. Click a space to select it, or its chevron to expand or collapse its children
+without changing focus. Click an agent to focus its pane. Worktree spaces remain
+under their checkout and start collapsed; subagents start collapsed too, and clicking
+a subagent opens its live preview. Expansion choices survive restarts.
+
+Each space shows its most urgent agent status and a count, including work hidden in
+collapsed worktrees or subagent branches. **Needs you** filters the tree to agents
+waiting for input, revealing their ancestors without changing saved expansion choices.
+Turn the filter off to return to all spaces. It also reveals matching agents inside
+collapsed machine groups. Agent pins stay at the top of their own space. Agent keyboard
+shortcuts follow the tree order, including agents in folded branches. The narrow sidebar
+keeps every space accessible, with an expand button at the bottom.
+
+### Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
 click it again to unpin. You can also right-click → **Pin to top**, or drag a space above
@@ -122,7 +138,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
-| `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
+| `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, status summaries and a Needs you filter |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |

@@ -46,7 +46,7 @@ export default class WorkspaceChrome extends View {
       .when(window()?.platform === "macos" && !window()?.fullscreen && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(div().flex_1()))
       .when(!collapsed, el => el.child(this.button("search", svg("mods/workspace-chrome-minimal/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
-      // On the macOS rail the traffic lights fill the row; the agents list's » unfolds it.
+      // On the macOS rail the traffic lights fill the row; the spaces tree unfolds it.
       .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/workspace-chrome-minimal/sidebar.svg").size(15), toggleSidebar)));
   }
 }

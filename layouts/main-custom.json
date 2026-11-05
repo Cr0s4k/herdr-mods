@@ -27,17 +27,6 @@
                 "weight": 1
               },
               "type": "block"
-            },
-            {
-              "content": {
-                "mod": "agents"
-              },
-              "id": "agents",
-              "min": 90,
-              "size": {
-                "weight": 1
-              },
-              "type": "block"
             }
           ],
           "id": "sidebar-lists",

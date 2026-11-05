@@ -1,11 +1,13 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
-// its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
-// switch, right-click for its menu, drag to reorder.
+// its first terminal is in now, only where unusual: branch, ahead/behind.
+// Agents and worktrees live under their space. Click to switch, right-click
+// for its menu, drag to reorder; chevrons fold without changing focus.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { AgentTree, branch } from "./agent-tree.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -47,6 +49,9 @@ export function tone(t, status) {
 
 export default class Spaces extends View {
   init(_props, cx) {
+    this.agents = new AgentTree();
+    this.expanded = JSON.parse(localStorage.getItem("spaces.expanded") ?? "{}");
+    this.attention = localStorage.getItem("spaces.attention") === "true";
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -310,8 +315,22 @@ export default class Spaces extends View {
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
-    const one = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
-    const draw = (r) => r.lastPinned ? [one(r), div().id(`pin-line-${r.w.id}`).flex_none().mx(8).my(4).h(1).bg(t.border)] : [one(r)];
+    this.agents.order(rows);
+    const clusters = [];
+    for (const r of rows) {
+      if (r.tree && clusters.length) clusters.at(-1).kids.push(r);
+      else clusters.push({ ...r, kids: [] });
+    }
+    for (const r of clusters) {
+      r.summary = this.agents.summary([r.w.id, ...r.kids.map(k => k.w.id)]);
+      for (const k of r.kids) { k.kids = []; k.summary = this.agents.summary([k.w.id]); }
+    }
+    const visible = clusters.filter(r => !this.attention || r.summary.blocked > 0);
+    const draw = (r) => {
+      const line = r.lastPinned || r.kids.some(k => k.lastPinned);
+      return [...(collapsed ? [this.compact(r, t), ...r.kids.filter(k => !this.attention || k.summary.blocked > 0).map(k => this.compact(k, t))] : [this.spaceTree(r, t)]),
+        ...(line ? [div().id(`pin-line-${r.w.id}`).flex_none().mx(8).my(4).h(1).bg(t.border)] : [])];
+    };
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -319,15 +338,17 @@ export default class Spaces extends View {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.flatMap(draw);
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : visible.flatMap(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
-      const mine = rows.filter((r) => (r.w.machine ?? null) === m);
+      const mine = visible.filter((r) => (r.w.machine ?? null) === m);
+      if (this.attention && !mine.length) return [];
       const repair = this.reconnecting[m];
       const machine = this.machines.find(k => k.name === m) ?? repair?.machine;
       const connected = !m || machine?.state === "connected";
       const rebuilt = this.rebuilt(machine) || !!repair;
-      const folded = this.folded.has(m);
+      const folded = !this.attention && this.folded.has(m);
+      const machineSummary = this.agents.summary(rows.filter(r => (r.w.machine ?? null) === m).map(r => r.w.id));
       const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 2 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
@@ -347,6 +368,7 @@ export default class Spaces extends View {
               .child(repair?.busy ? "Connecting…" : "Connect"))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
+          .when(folded && Boolean(machineSummary.status), el => el.child(this.agents.badge(t, machineSummary)))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
           .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
       const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
@@ -356,6 +378,34 @@ export default class Spaces extends View {
       if (!collapsed && rebuilt) return [head];
       return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
     });
+  }
+
+  spaceTree(r, t) {
+    const members = this.agents.members(r.w.id, this.attention);
+    const kids = r.kids.filter(k => !this.attention || k.summary.blocked > 0);
+    const hasChildren = members.length + kids.length > 0;
+    const open = this.attention || (this.expanded[r.w.id] ?? !r.tree);
+    const children = [
+      ...members.map(a => ({ id: `agent-branch-${a.address}`, view: () => this.agents.agent(a, t, this.attention) })),
+      ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t) })),
+    ];
+    return v_flex().id(`space-tree-${r.w.id}`).flex_none().min_w(0)
+      .child(this.row({ ...r, open, hasChildren }, t))
+      .when(open && hasChildren, el => el.child(v_flex().pl(r.tree ? 17 : 35).pr(3).flex_none().min_w(0)
+        .children(children.map((c, i) => branch(c.view(), i === children.length - 1, t, c.id)))));
+  }
+
+  toggleSpace(r, cx) {
+    this.expanded[r.w.id] = !(this.expanded[r.w.id] ?? !r.tree);
+    localStorage.setItem("spaces.expanded", JSON.stringify(this.expanded));
+    cx.notify();
+  }
+
+  toggleSidebar() {
+    const width = find(layout(), "sidebar")?.size?.px;
+    if (!narrow()) setShared("sidebar.width", width);
+    setShared("sidebar.collapsed", !narrow());
+    run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
   }
 
   // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
@@ -380,7 +430,7 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree, pinned }, t) {
+  row({ w, i, g, tree, pinned, open, hasChildren, summary }, t) {
     const on = w.active;
     const isPinned = (shared("space.pinned") ?? []).includes(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
@@ -436,12 +486,25 @@ export default class Spaces extends View {
       .on_mouse_down("right", () => this.menu(w))
       .child(
         h_flex()
-          .gap(9)
+          .gap(6)
+          .min_w(0)
           .items_center()
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
+          .child(div().id(`space-fold-${w.id}`).w(12).h(24).flex_none().flex().items_center().justify_center().rounded(4)
+            .when(hasChildren, el => el.cursor_pointer().text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
+              .accessibility_label(`${open ? "Collapse" : "Expand"} ${w.name}`)
+              .tooltip(this.attention ? "Show all spaces to collapse branches" : `${open ? "Collapse" : "Expand"} ${w.name}`)
+              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+              .on_click((_e, cx) => {
+                cx.stop_propagation();
+                if (!this.attention) this.toggleSpace({ w, tree }, cx);
+              })
+              .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11))))
+          .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(14).flex_none().text_color(t.dim)))
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
-          .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
+          .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
+          .when(Boolean(g), el => el.child(this.gitTail(g, tree, w.name, t).flex_none().max_w(65)))
+          .when(Boolean(summary?.status), el => el.child(this.agents.badge(t, summary)))
           .when(isPinned || this.hovered === w.id, el => el.child(
             div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer()
               .hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -460,7 +523,7 @@ export default class Spaces extends View {
       );
   }
 
-  compact({ w, i }, t) {
+  compact({ w, i, summary }, t) {
     return h_flex()
       .id(`space-${w.id}`)
       .h(26)
@@ -469,9 +532,10 @@ export default class Spaces extends View {
       .gap(4)
       .when(w.active, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
+      .tooltip(`${w.name}${summary?.status ? ` · ${summary.count} ${summary.status === "blocked" ? "need you" : summary.status}` : ""}`)
       .on_click(() => run("space.select", { id: w.id }))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
-      .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
+      .when(Boolean(summary?.status), el => el.child(this.agents.indicator(t, summary.status, true)));
   }
 
   render() {
@@ -479,6 +543,8 @@ export default class Spaces extends View {
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
+    this.agents.update(sp, panes());
+    const attentionCount = this.agents.summary(sp.map(s => s.id)).blocked;
     const ids = new Set(sp.map(p => p.id));
     const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
     let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
@@ -490,12 +556,29 @@ export default class Spaces extends View {
     }
     if (changed) setShared("space.colors", kept);
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
-        .when(!collapsed, el => el.child("Spaces"))
+      .child(h_flex().h(35).flex_none().pl(16).pr(10).gap(6).items_center().text_size(11.5).text_color(t.dim)
+        .when(!collapsed, el => el.child(div().flex_1().child("Spaces")))
+        .when(!collapsed, el => el.child(div().id("spaces-needs-you").h(23).px(6).rounded(5).flex_none().flex().gap(4).items_center().cursor_pointer()
+          .text_size(10.5).text_color(this.attention ? t.blocked : t.muted)
+          .when(this.attention, el => el.bg(t.blocked + "26"))
+          .hover(s => s.bg(t.hover).text_color(t.foreground))
+          .accessibility_label(this.attention ? "Show all spaces" : `Show agents needing you, ${attentionCount}`)
+          .tooltip(this.attention ? "Show all spaces" : "Show only agents that need you")
+          .on_click((_e, cx) => { this.attention = !this.attention; localStorage.setItem("spaces.attention", String(this.attention)); cx.notify(); })
+          .child("Needs you").when(attentionCount > 0, el => el.child(div().text_color(t.blocked).child(String(attentionCount))))))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(this.grouped(t, collapsed)));
+        .children(this.grouped(t, collapsed))
+        .when(this.attention && attentionCount === 0, el => el.child(v_flex().px(8).pt(12).gap(8).text_size(12)
+          .child(div().text_color(t.muted).child("No agents need you."))
+          .child(div().id("spaces-show-all").text_color(t.accent).cursor_pointer().on_click((_e, cx) => {
+            this.attention = false; localStorage.setItem("spaces.attention", "false"); cx.notify();
+          }).child("Show all spaces"))))
+        .when(!sp.length && !this.attention, el => el.child(div().px(8).pt(12).text_size(12).text_color(t.muted).child("Create a space to start working."))))
+      .when(collapsed, el => el.child(div().id("spaces-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
+        .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")
+        .on_click(() => this.toggleSidebar()).child(svg("mods/spaces-pin/expand.svg").size(15))));
   }
 }
