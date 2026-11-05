@@ -41,7 +41,7 @@ function splitRows(rows) {
     else if (r.kind === "+") adds.push(r);
     else {
       flush();
-      out.push(r.kind === " " ? { left: { kind: " ", number: r.old, text: r.text }, right: { kind: " ", number: r.number, text: r.text } } : r);
+      out.push(r.kind === " " ? { left: { kind: " ", number: r.old, text: r.text, spans: r.spans }, right: r } : r);
     }
   }
   flush();
@@ -65,6 +65,55 @@ async function diffLines({ root, on, hasHead }, file) {
     lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
   }
   return lines.slice(0, 5000).map(line => line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line);
+}
+
+const BAT = 'b=$(command -v bat || command -v batcat) || exit 9; "$b" --color=always --style=plain --paging=never --theme=ansi --tabs=0 "$@"';
+
+function parseAnsi(text) {
+  return text.replace(/\n$/, "").split("\n").map((line) => {
+    const spans = [], re = /\x1b\[([\d;]*)m/g;
+    let color = null, last = 0, m;
+    const push = (text) => {
+      if (!text) return;
+      const prev = spans[spans.length - 1];
+      if (prev && prev.color === color) prev.text += text; else spans.push({ text, color });
+    };
+    while ((m = re.exec(line))) {
+      push(line.slice(last, m.index));
+      last = re.lastIndex;
+      const codes = m[1] ? m[1].split(";").map(Number) : [0];
+      for (let i = 0; i < codes.length; i++) {
+        const c = codes[i];
+        if (c === 0 || c === 39) color = null;
+        else if (c >= 30 && c <= 37) color = c - 30;
+        else if (c >= 90 && c <= 97) color = c - 82;
+        else if (c === 38 && codes[i + 1] === 5) { color = codes[i + 2] < 16 ? codes[i + 2] : null; i += 2; }
+        else if (c === 38 && codes[i + 1] === 2) i += 4;
+      }
+    }
+    push(line.slice(last));
+    return spans;
+  });
+}
+
+async function highlighted({ root, on, hasHead }, file) {
+  const run = async (script, args) => {
+    const r = await exec("sh", ["-c", script, "sh", ...args], { cwd: root, on }).catch(() => null);
+    return r?.code === 0 && r.stdout.length < 2000000 ? parseAnsi(r.stdout) : null;
+  };
+  const [old, now] = await Promise.all([
+    hasHead && !file.fresh && file.status !== "A" ? run(`git show "HEAD:$1" | { ${BAT} --file-name "$1"; }`, [file.path]) : null,
+    file.status !== "D" ? run(`${BAT} -- "$1"`, [file.path]) : null,
+  ]);
+  return { old, now };
+}
+
+function paint(rows, { old, now }) {
+  for (const r of rows) {
+    if (r.kind !== "-" && r.kind !== "+" && r.kind !== " ") continue;
+    const spans = (r.kind === "-" ? old : now)?.[r.number - 1];
+    if (spans && spans.map((s) => s.text).join("") === r.text) r.spans = spans;
+  }
 }
 
 const statusColor = (s, t) => s === "A" ? t.ansi2 : s === "D" || s === "U" ? t.ansi1 : t.blocked;
@@ -190,16 +239,27 @@ export default class Changes extends View {
       this.diffWidth = Math.max(300, ...lines.map(line => line.length * 7.5 + 60));
       this.loadingDiff = false;
       cx.notify();
+      if (lines.length > 3000) return;
+      const colors = await highlighted(p, file);
+      if (this.index !== index) return;
+      paint(this.rows, colors); this.split = null;
+      cx.notify();
     });
     cx.notify();
   }
 
-  row({ kind, number, text }, t) {
+  code(text, spans, t) {
+    if (!spans) return div().flex_1().min_w(0).truncate().child(text);
+    return h_flex().flex_1().min_w(0).overflow_hidden()
+      .children(spans.map((s) => div().flex_none().when(s.color !== null, (e) => e.text_color(t[`ansi${s.color}`])).child(s.text)));
+  }
+
+  row({ kind, number, text, spans }, t) {
     if (kind === "@") return div().w_full().px(12).h(22).flex_none().flex().items_center().truncate().bg(t.raised).text_color(t.dim).child(text);
     return h_flex().w_full().h(22).flex_none().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .child(div().w(40).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
       .child(div().w(10).flex_none().text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.dim).child(kind === " " ? "" : kind))
-      .child(div().flex_1().min_w(0).truncate().child(text));
+      .child(this.code(text, spans, t));
   }
 
   half(side, t) {
@@ -208,7 +268,7 @@ export default class Changes extends View {
       .when(side?.kind === "+", (e) => e.bg(t.ansi2 + "18")).when(side?.kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .when(Boolean(side), (e) => e
         .child(div().w(40).flex_none().text_right().text_color(t.dim).child(String(side.number)))
-        .child(div().flex_1().min_w(0).truncate().child(side.text)));
+        .child(this.code(side.text, side.spans, t)));
   }
 
   splitRow(r, t) {

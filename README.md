@@ -41,11 +41,15 @@ In Codex, `herdr-show` must run outside the sandbox: approve it when Codex asks,
 "don't ask again" for `herdr-show`. Codex's commands don't see the terminal's `HC_TERMINAL_ID`,
 so `herdr-show` looks up the one agent working in that project instead.
 
-## Changes in a modal
+## Files and Changes in a dialog
 
-The Changes panel lists the changed files; clicking one opens its diff in a large dialog
-instead of the narrow panel. **Split** shows old and new side by side, **Unified** one column
-(`S` toggles, and the choice sticks). ↑/↓ steps through the changed files, Esc closes.
+The Files and Changes panels only list; clicking a file opens it in a large dialog instead of
+the narrow panel. ↑/↓ steps through the listed files, Esc closes.
+
+- **Files** shows the file with syntax highlighting (Herdr's code view).
+- **Changes** shows the diff, **Split** (old and new side by side) or **Unified** (`S` toggles,
+  and the choice sticks). Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
+  when it's installed (`brew install bat`), in the theme's terminal colors; without it they're plain.
 
 ## Pinned spaces
 
@@ -60,11 +64,12 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/show/main.js` | Show: the panel and the markup editor |
 | `mods/show/herdr-show` | Show: the command that posts images and saves markups (Python) |
 | `mods/show/render.swift` | Show: burns the drawn marks into a PNG; compiled on first use to `~/.cache/herdr-show/render` |
+| `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with the Show button added |
 | `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
-| `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`changes-modal` replaces `changes`) |
+| `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
 
 ## Adding a mod
