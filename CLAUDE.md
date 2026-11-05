@@ -25,8 +25,13 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
   `herdr-app do tab.new '{"name":"t","mod":"<mod>"}'`, then remove both.
 - The Show editor only opens with `props.editor`:
   `herdr-app do tab.new '{"name":"t","mod":"show","props":{"editor":"<item id>"}}'`.
-- `mods/tabs-show`, `mods/spaces-pin`, `mods/menu-pin` and `layouts/main-custom.json` are clones of
-  Herdr's shipped `tabs`, `spaces`, `menu` and `main`. When Herdr updates those, the clones don't
-  follow; re-clone and re-apply the changes (`git diff` against a fresh clone shows them).
+- The Changes diff dialog only opens as an overlay with props `{root, on, hasHead, files, index}`.
+  To test it, drop a throwaway mod whose `init` calls `openOverlay({mod: "changes-modal", kind:
+  "dialog", width: 0.9, height: 0.9, props})` then `closeOverlay(props().overlay)`, and run
+  `herdr-app do mod.open '{"name":"<mod>"}'` (no tab to clean up).
+- `mods/tabs-show`, `mods/spaces-pin`, `mods/menu-pin`, `mods/changes-modal` and
+  `layouts/main-custom.json` are clones of Herdr's shipped `tabs`, `spaces`, `menu`, `changes` and
+  `main`. When Herdr updates those, the clones don't follow; re-clone and re-apply the changes
+  (`git diff` against a fresh clone shows them).
 - `render.swift` changes recompile automatically on the next save from the editor
   (`~/.cache/herdr-show/render` is rebuilt when the source is newer).
