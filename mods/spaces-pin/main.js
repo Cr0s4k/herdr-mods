@@ -61,6 +61,7 @@ export default class Spaces extends View {
     this.born = {};
     this.pressed = null;
     this.over = null;
+    this.hovered = null;
     this.machines = [];
     this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
     for (const state of Object.values(this.reconnecting)) state.busy = false;
@@ -381,6 +382,7 @@ export default class Spaces extends View {
 
   row({ w, i, g, tree, pinned }, t) {
     const on = w.active;
+    const isPinned = (shared("space.pinned") ?? []).includes(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const colors = shared("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
@@ -395,6 +397,11 @@ export default class Spaces extends View {
       .rounded(8)
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      .on_hover((on, cx) => {
+        if (on) this.hovered = w.id;
+        else if (this.hovered === w.id) this.hovered = null;
+        cx.notify();
+      })
       .when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
         div().absolute().left(0).right(0).h(2).bg(t.accent)
@@ -435,7 +442,21 @@ export default class Spaces extends View {
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
-          .when(pinned && (shared("space.pinned") ?? []).includes(w.id), el => el.child(svg("mods/workspace-chrome/pin.svg").size(12).flex_none().text_color(t.dim))),
+          .when(isPinned || this.hovered === w.id, el => el.child(
+            div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer()
+              .hover(s => s.bg(t.hover).text_color(t.foreground))
+              .tooltip(isPinned ? "Unpin" : "Pin to the top")
+              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+              .on_click((_e, cx) => {
+                cx.stop_propagation();
+                const pins = shared("space.pinned") ?? [];
+                setShared("space.pinned", pins.includes(w.id) ? pins.filter(id => id !== w.id) : [...pins, w.id]);
+                // Reordering can move the row without a hover-out event.
+                this.hovered = null;
+                cx.notify();
+              })
+              .child(svg(`mods/workspace-chrome/${isPinned && this.hovered === w.id ? "pin-off" : "pin"}.svg`).size(13)))),
       );
   }
 

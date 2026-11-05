@@ -55,8 +55,9 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 
 ## Pinned spaces
 
-Right-click a space → **Pin to top**. Pinned spaces stay above the rest, with a pin icon and a
-line under them. Drag a space above the line to pin it, below to unpin it. Pins are saved
+Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
+click it again to unpin. You can also right-click → **Pin to top**, or drag a space above
+the line to pin it, below to unpin it. Pinned spaces stay above the rest, with a line under them. Pins are saved
 in Herdr's shared state (`space.pinned`), so they survive restarts.
 
 ## What's in here
