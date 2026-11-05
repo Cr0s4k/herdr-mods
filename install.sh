@@ -5,34 +5,43 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "$0")" && pwd)"
 app="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
+layout=main-custom
+mods=("$repo"/mods/*)
 
-sync() {
-  rsync -a --exclude gpui-kit.d.ts --exclude jsconfig.json "$repo/mods/show" "$repo/mods/tabs-show" "$repo/mods/spaces-pin" "$repo/mods/menu-pin" "$app/mods/"
-  rsync -a "$repo/layouts/main-show.json" "$app/layouts/"
+copy() {
+  rsync "$@" --exclude gpui-kit.d.ts --exclude jsconfig.json "${mods[@]}" "$app/mods/"
+  rsync "$@" "$repo"/layouts/*.json "$app/layouts/"
+}
+
+check() {
+  for m in "${mods[@]}"; do herdr-app check "$app/mods/$(basename "$m")"; done
 }
 
 mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills"
-chmod +x "$repo/mods/show/herdr-show"
-sync
-ln -sf "$app/mods/show/herdr-show" "$HOME/.local/bin/herdr-show"
-[ -L "$HOME/.claude/skills/herdr-show" ] || rm -rf "$HOME/.claude/skills/herdr-show"
-ln -sfn "$repo/skill" "$HOME/.claude/skills/herdr-show"
-herdr-app check "$app/mods/show"
-herdr-app check "$app/mods/tabs-show"
-herdr-app check "$app/mods/spaces-pin"
-herdr-app check "$app/mods/menu-pin"
+copy -a
+for m in "${mods[@]}"; do
+  for f in "$m"/*; do
+    [ -f "$f" ] && [ -x "$f" ] && ln -sf "$app/mods/$(basename "$m")/$(basename "$f")" "$HOME/.local/bin/$(basename "$f")"
+  done
+done
+for s in "$repo"/skills/*; do
+  dest="$HOME/.claude/skills/$(basename "$s")"
+  [ -L "$dest" ] || rm -rf "$dest"
+  ln -sfn "$s" "$dest"
+done
+check
 
 if [ "${1:-}" = "--watch" ]; then
   echo "Watching $repo (ctrl-c to stop)"
   while sleep 1; do
-    changed="$(rsync -ai --dry-run --exclude gpui-kit.d.ts --exclude jsconfig.json "$repo/mods/show" "$repo/mods/tabs-show" "$repo/mods/spaces-pin" "$repo/mods/menu-pin" "$app/mods/"; rsync -ai --dry-run "$repo/layouts/main-show.json" "$app/layouts/")"
+    changed="$(copy -ai --dry-run)"
     if [ -n "$changed" ]; then
-      sync
+      copy -a
       echo "$(date +%H:%M:%S) synced"; echo "$changed" | sed 's/^/  /'
-      herdr-app check "$app/mods/show" || true
+      check || true
     fi
   done
 else
-  herdr-app do layout.switch '{"name":"main-show"}' >/dev/null || true
-  echo "Installed. Show is in the tab bar; ctrl-shift-l switches layouts."
+  herdr-app do layout.switch "{\"name\":\"$layout\"}" >/dev/null || true
+  echo "Installed. Herdr is on the $layout layout; ctrl-shift-l switches layouts."
 fi
