@@ -34,6 +34,9 @@ In the panel, click an image to mark it up: Pen, Arrow, Circle, Box, Text, numbe
 five colors, ⌘Z to undo, a note field. **Save & send back** pastes the marked image's path,
 your note and the `--fixes` command into the agent terminal that posted the original.
 Images and their metadata are stored in `~/.config/herdr-app/show/`.
+**Clear** removes every image in the current view and its stored copy and metadata. It
+respects the space filter: switch to **All** to clear images across all spaces. Original
+source files are kept.
 
 Needs macOS (Swift toolchain, `sips`) and Python 3.
 
