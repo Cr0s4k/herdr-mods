@@ -117,6 +117,14 @@ collapsed machine groups. Agent pins stay at the top of their own space. Agent k
 shortcuts follow the tree order, including agents in folded branches. The narrow sidebar
 keeps every space accessible, with an expand button at the bottom.
 
+Hover a space and click the focus icon beside its pin, or right-click and choose
+**Focus this space**, to show only its agents in the sidebar. Its name stays visible
+above the list. **All spaces** returns to the full
+tree with its folds, filter and scroll position preserved. A small count beside
+the back button appears when agents in other spaces need you. Focus stays on the
+chosen space as agents finish or focus moves elsewhere; clicking its name shows
+that space again. Closing the space returns the sidebar to the full tree.
+
 ### Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
@@ -138,7 +146,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
-| `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
+| `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin and Focus this space |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |

@@ -23,7 +23,7 @@ function element() {
   } });
   return el;
 }
-const cx = { notify() {}, stop_propagation() {}, spawn() {}, timer: { every() {} } };
+const cx = { notify() {}, stop_propagation() {}, spawn() {}, timer: { every() {} }, focus_handle() { return { focus() {} }; } };
 globalThis.__spacesNative = {
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element,
   spaces: () => world.spaces, panes: () => world.panes, agents: () => world.agents,
@@ -32,6 +32,7 @@ globalThis.__spacesNative = {
   setAgentOrder: order => { world.order = order; },
   theme: () => new Proxy({}, { get: (_, key) => key }),
   shared: k => sharedState.get(k), setShared: (k, v) => sharedState.set(k, v),
+  props: () => world.menu, keys: () => [], closeOverlay: id => world.closed.push(id), openOverlay: options => world.opened.push(options),
   window: () => ({ active: true, platform: "macos" }), layout: () => ({ id: "sidebar", size: { px: world.width } }),
 };
 let source = (await readFile(new URL("../mods/spaces-pin/agent-tree.js", import.meta.url), "utf8"))
@@ -41,8 +42,11 @@ const { AgentTree, branch } = await import("data:text/javascript," + encodeURICo
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
+source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;
+const { default: Menu } = await import("data:text/javascript," + encodeURIComponent(source));
 const program = { name: "Codex", key: "codex", icon: "icons/codex.png", agent: true };
 const space = (id, active = false) => ({ id, name: id, folder: `/work/${id}`, active, tabs: [{ id: `${id}-tab`, name: "1", named: false }] });
 const agent = (id, sp, status = "idle", extra = {}) => ({ address: id, pane: `${id}-pane`, space: sp, tab: `${sp}-tab`, tab_index: 1,
@@ -50,7 +54,7 @@ const agent = (id, sp, status = "idle", extra = {}) => ({ address: id, pane: `${
 function setup() {
   preferences.clear(); sharedState.clear();
   Object.assign(world, { spaces: [space("app", true), space("other")], panes: [], agents: [agent("one", "app", "working"), agent("two", "other")],
-    terminals: [], calls: [], order: [], width: 268 });
+    terminals: [], calls: [], order: [], width: 268, menu: null, closed: [], opened: [] });
   const view = new Spaces(); view.init({}, cx); return view;
 }
 function find(el, id) { return el?.styles?.id?.[0] === id ? el : (el?.nodes ?? []).map(n => find(n, id)).find(Boolean); }
@@ -206,6 +210,135 @@ test("the attention filter reveals folded remote machines without saving new fol
   click(root, "spaces-needs-you");
   assert.equal(find(view.render(), "ag-vps/remote"), undefined);
   assert.ok(view.folded.has("vps"));
+});
+
+test("the hover focus button selects its own space without dragging or changing pins", () => {
+  const view = setup();
+  sharedState.set("space.pinned", ["app"]);
+  let root = view.render();
+  assert.equal(find(root, "space-focus-other"), undefined);
+  find(root, "space-other").handlers.hover(true, cx);
+  root = view.render();
+  const button = find(root, "space-focus-other");
+  assert.ok(button);
+  let stops = 0;
+  const actionCx = { ...cx, stop_propagation() { stops++; } };
+  button.handlers["mouse_down-left"]({}, actionCx);
+  button.handlers["mouse_up-left"]({}, actionCx);
+  assert.equal(stops, 2);
+  assert.deepEqual(world.calls, []);
+  button.handlers.click({}, actionCx);
+  assert.equal(stops, 3);
+  assert.equal(sharedState.get("spaces.focus"), "other");
+  assert.deepEqual(world.calls, [["space.select", { id: "other" }]]);
+  assert.deepEqual(sharedState.get("space.pinned"), ["app"]);
+  assert.equal(view.pressed, null);
+  assert.ok(find(view.render(), "spaces-focus-view"));
+});
+
+test("the menu focuses the right-clicked space, selects it, and offers a way back", () => {
+  setup();
+  world.menu = { tab: "space", target: { id: "other" }, overlay: "popup" };
+  const menu = new Menu(); menu.init({}, cx);
+  assert.match(text(menu.render(cx)), /Focus this space/);
+  menu.choose(2, cx);
+  assert.equal(sharedState.get("spaces.focus"), "other");
+  assert.deepEqual(world.calls, [["space.select", { id: "other" }]]);
+  assert.deepEqual(world.closed, ["popup"]);
+  assert.match(text(menu.render(cx)), /Show all spaces/);
+  menu.choose(2, cx);
+  assert.equal(sharedState.get("spaces.focus"), null);
+  assert.equal(world.calls.length, 1);
+});
+
+test("a stale focus menu never selects an unrelated space", () => {
+  setup();
+  world.menu = { tab: "space", target: { id: "gone" }, overlay: "popup" };
+  const menu = new Menu(); menu.init({}, cx); menu.choose(2, cx);
+  assert.equal(sharedState.has("spaces.focus"), false);
+  assert.deepEqual(world.calls, []);
+});
+
+test("focus shows only that space's agents while keeping the original list mounted for scroll restoration", () => {
+  const view = setup();
+  click(view.render(), "space-fold-app");
+  view.attention = true;
+  const savedFolds = preferences.get("spaces.expanded");
+  const before = find(view.render(), "spaces-all-list");
+  sharedState.set("spaces.focus", "app");
+  const root = view.render(), focus = find(root, "spaces-focus-view");
+  assert.ok(find(root, "spaces-all-view").styles.invisible);
+  assert.equal(find(root, "spaces-all-list").styles.id[0], before.styles.id[0]);
+  assert.ok(find(focus, "focus-ag-one")); // Focus ignores the full tree's folds and filter.
+  assert.equal(find(focus, "focus-ag-two"), undefined);
+  assert.equal(find(focus, "space-app"), undefined);
+  assert.equal(text(find(focus, "spaces-focus-title")).trim(), "A app");
+  click(focus, "focus-ag-one");
+  assert.deepEqual(world.calls, [["pane.focus", { pane: "one-pane" }]]);
+  click(root, "spaces-unfocus");
+  const restored = view.render();
+  assert.equal(find(restored, "spaces-focus-view"), undefined);
+  assert.equal(find(restored, "spaces-all-view").styles.invisible, undefined);
+  assert.equal(preferences.get("spaces.expanded"), savedFolds);
+  assert.equal(view.attention, true);
+});
+
+test("focus stays on its chosen space when agents finish or another space becomes active", () => {
+  const view = setup(); sharedState.set("spaces.focus", "app");
+  world.agents[0].status = "done";
+  world.spaces[0].active = false; world.spaces[1].active = true;
+  const root = view.render(), focus = find(root, "spaces-focus-view");
+  assert.equal(sharedState.get("spaces.focus"), "app");
+  assert.equal(find(focus, "focus-ag-one").styles.accessibility_label[0], "Task one, Done");
+  click(focus, "spaces-focus-title");
+  assert.deepEqual(world.calls, [["space.select", { id: "app" }]]);
+});
+
+test("the back button counts attention only in other spaces, including their subagents", () => {
+  const view = setup(); sharedState.set("spaces.focus", "app");
+  world.agents[0].status = "blocked"; world.agents[1].status = "blocked";
+  world.terminals = [{ address: "child", parent: "two", state: "live", status: "error", program }];
+  let root = view.render();
+  assert.equal(text(find(root, "spaces-focus-elsewhere")), "2 elsewhere");
+  world.agents[1].status = "idle"; world.terminals = [];
+  root = view.render();
+  assert.equal(find(root, "spaces-focus-elsewhere"), undefined);
+  assert.ok(find(root, "spaces-unfocus"));
+});
+
+test("focused subagents and pins keep their actions and use distinct element identities", () => {
+  const view = setup(); sharedState.set("spaces.focus", "app"); world.agents[0].pinned = true;
+  world.terminals = [{ address: "child", parent: "one", state: "live", status: "working", program }];
+  let root = view.render();
+  click(root, "focus-agent-fold-one");
+  root = view.render();
+  assert.ok(find(find(root, "spaces-focus-view"), "focus-ag-child"));
+  assert.ok(find(find(root, "spaces-all-view"), "ag-child"));
+  click(root, "focus-ag-child"); click(root, "focus-agent-pin-one");
+  assert.deepEqual(world.calls, [["terminal.peek", { terminal: "child" }], ["terminal.pin", { terminal: "one", pinned: false }]]);
+});
+
+test("empty and narrow focused views keep an accessible way back", () => {
+  const view = setup(); sharedState.set("spaces.focus", "app"); world.agents = [];
+  let root = view.render();
+  assert.match(text(find(root, "spaces-focus-view")), /No agents in this space/);
+  world.width = 76; world.agents = [agent("one", "app")];
+  root = view.render();
+  assert.ok(find(root, "spaces-focus-expand-sidebar"));
+  assert.equal(text(find(root, "focus-ag-one")).trim(), ""); // Icon and status, with the full name in its tooltip.
+  assert.match(find(root, "focus-ag-one").styles.tooltip[0], /Task one/);
+  click(root, "spaces-unfocus");
+  assert.equal(find(view.render(), "spaces-focus-view"), undefined);
+});
+
+test("closing the focused space returns to all spaces without selecting another target", () => {
+  const view = setup(); sharedState.set("spaces.focus", "app");
+  world.spaces = [world.spaces[1]];
+  const root = view.render();
+  assert.equal(find(root, "spaces-focus-view"), undefined);
+  assert.equal(sharedState.get("spaces.focus"), null);
+  assert.ok(find(root, "space-other"));
+  assert.deepEqual(world.calls, []);
 });
 
 test("the shipped custom layout mounts a single list and keeps the agent panel out", async () => {

@@ -117,7 +117,8 @@ export class AgentTree {
     cx.notify();
   }
 
-  agent(a, t, attention, sub = false, seen = new Set()) {
+  agent(a, t, attention, sub = false, seen = new Set(), options = {}) {
+    const { prefix = "", compact = false } = options;
     const visited = new Set(seen);
     visited.add(a.address);
     const kids = (this.children.get(a.address) ?? []).filter(k => !visited.has(k.address) && (!attention || this.needs(k)));
@@ -128,7 +129,8 @@ export class AgentTree {
     const name = sub ? a.name || a.template || a.program?.name || a.address : this.labels.get(a.address);
     const on = sub ? a.address === this.shown : a.focused;
     const pic = icon(a.program, t);
-    const row = h_flex().id(`ag-${a.address}`).h(28).px(5).gap(6).min_w(0).flex_none().rounded(6).items_center()
+    const row = h_flex().id(`${prefix}ag-${a.address}`).h(28).px(5).gap(6).min_w(0).flex_none().rounded(6).items_center()
+      .when(compact, el => el.justify_center())
       .cursor_pointer().accessibility_label(`${name}, ${statusName(state)}`)
       .tooltip(`${name} · ${a.program?.name || "Agent"} · ${statusName(state)} · ${a.address}`)
       .when(on, el => el.bg(t.selected))
@@ -140,21 +142,21 @@ export class AgentTree {
       })
       .on_click(() => run(sub ? "terminal.peek" : "pane.focus", sub ? { terminal: a.address } : { pane: a.pane }))
       .when(Boolean(pic), el => el.child(pic))
-      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(state === "idle" && !on ? t.muted : t.foreground).child(name))
-      .when(kids.length > 0, el => el.child(div().id(`agent-fold-${a.address}`).h(22).px(2).gap(2).flex_none().flex().items_center()
+      .when(!compact, el => el.child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(state === "idle" && !on ? t.muted : t.foreground).child(name)))
+      .when(!compact && kids.length > 0, el => el.child(div().id(`${prefix}agent-fold-${a.address}`).h(22).px(2).gap(2).flex_none().flex().items_center()
         .text_size(10.5).text_color(t.dim).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
         .accessibility_label(`${open ? "Collapse" : "Expand"} subagents of ${name}`)
         .tooltip(`${open ? "Hide" : "Show"} ${kids.length} subagents`)
         .on_click((_e, cx) => { cx.stop_propagation(); this.toggle(a.address, cx); })
         .child(String(kids.length)).child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(10))))
-      .when(!sub && (a.pinned || this.hovered === a.address), el => el.child(div().id(`agent-pin-${a.address}`).p(2).flex_none().rounded(4)
+      .when(!compact && !sub && (a.pinned || this.hovered === a.address), el => el.child(div().id(`${prefix}agent-pin-${a.address}`).p(2).flex_none().rounded(4)
         .text_color(t.dim).hover(s => s.text_color(t.foreground)).tooltip(a.pinned ? "Unpin agent" : "Pin agent in this space")
         .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); this.hovered = null; cx.notify(); })
         .child(svg(`mods/workspace-chrome/${a.pinned ? "pin-off" : "pin"}.svg`).size(12))))
       .child(this.indicator(t, state, true));
     return v_flex().min_w(0).flex_none().child(row)
-      .when(open && kids.length > 0, el => el.child(v_flex().pl(12).flex_none()
-        .children(kids.map((k, i) => branch(this.agent(k, t, attention, true, visited), i === kids.length - 1, t, `agent-branch-${k.address}`)))));
+      .when(!compact && open && kids.length > 0, el => el.child(v_flex().pl(12).flex_none()
+        .children(kids.map((k, i) => branch(this.agent(k, t, attention, true, visited, options), i === kids.length - 1, t, `${prefix}agent-branch-${k.address}`)))));
   }
 
   members(id, attention) {

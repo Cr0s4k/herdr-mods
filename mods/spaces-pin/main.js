@@ -502,6 +502,19 @@ export default class Spaces extends View {
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
           .when(Boolean(g), el => el.child(this.gitTail(g, tree, w.name, t).flex_none().max_w(65)))
+          .when(this.hovered === w.id, el => el.child(div().id(`space-focus-${w.id}`).size(22).flex_none().flex().items_center().justify_center()
+            .rounded(4).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
+            .accessibility_label(`Focus ${w.name}`).tooltip("Focus this space")
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              this.pressed = null; this.over = null; this.hovered = null;
+              setShared("spaces.focus", w.id);
+              run("space.select", { id: w.id });
+              cx.notify();
+            })
+            .child(svg("mods/menu-pin/focus.svg").size(14))))
           .when(isPinned || this.hovered === w.id, el => el.child(
             div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer()
               .hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -534,11 +547,46 @@ export default class Spaces extends View {
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)));
   }
 
+  focusedSpace(s, sp, t, collapsed) {
+    const members = this.agents.members(s.id, false);
+    const elsewhere = this.agents.summary(sp.filter(other => other.id !== s.id).map(other => other.id)).blocked;
+    const color = (shared("space.colors") ?? {})[s.id] ?? "ansi6";
+    const fill = color.startsWith("#") ? color : MARK[color] ?? t[color];
+    return v_flex().id("spaces-focus-view").absolute().inset_0().min_h(0).bg(t.chrome).text_size(13)
+      .child(h_flex().id("spaces-unfocus").h(35).px(collapsed ? 8 : 16).gap(6).flex_none().items_center()
+        .cursor_pointer().text_color(t.muted).hover(el => el.bg(t.hover).text_color(t.foreground))
+        .role("button").accessibility_label(`All spaces${elsewhere ? `, ${elsewhere} agents elsewhere need you` : ""}`)
+        .tooltip(`Back to all spaces${elsewhere ? ` · ${elsewhere} need you elsewhere` : ""}`)
+        .on_click(() => setShared("spaces.focus", null))
+        .child(svg("mods/workspace-chrome/chevron-left.svg").size(13).flex_none())
+        .when(!collapsed, el => el.child(div().flex_1().child("All spaces")))
+        .when(elsewhere > 0, el => el.child(div().id("spaces-focus-elsewhere").flex_none().text_size(10.5).text_color(t.blocked)
+          .child(collapsed ? String(elsewhere) : `${elsewhere} elsewhere`))))
+      .child(h_flex().id("spaces-focus-title").h(36).px(16).gap(8).flex_none().items_center().min_w(0)
+        .when(collapsed, el => el.justify_center())
+        .tooltip(`${s.name}${s.machine ? ` · ${s.machine}` : ""} · Click to show this space`)
+        .on_click(() => run("space.select", { id: s.id }))
+        .on_mouse_down("right", () => this.menu(s))
+        .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...s.name][0]?.toUpperCase() ?? "?"))
+        .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(s.name))
+          .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.dim).child(s.machine)))))
+      .child(v_flex().id(`spaces-focus-list-${s.id}`).flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
+        .children(members.map(a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed })))
+        .when(!members.length, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
+          .tooltip("No agents in this space.").child(collapsed ? "0" : "No agents in this space."))))
+      .when(collapsed, el => el.child(div().id("spaces-focus-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
+        .text_color(t.muted).hover(el => el.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")
+        .on_click(() => this.toggleSidebar()).child(svg("mods/spaces-pin/expand.svg").size(15))));
+  }
+
   render() {
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
+    const focusId = shared("spaces.focus");
+    const focus = sp.find(s => s.id === focusId);
+    if (focusId && !focus) setShared("spaces.focus", null);
     this.agents.update(sp, panes());
     const attentionCount = this.agents.summary(sp.map(s => s.id)).blocked;
     const ids = new Set(sp.map(p => p.id));
@@ -551,7 +599,11 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
+    // Keep the full view laid out beneath focus mode. Its native scroll region
+    // retains its offset and bounds; returning doesn't rebuild a shorter list
+    // or clamp the old offset against the focused space's agent count.
+    const all = v_flex().id("spaces-all-view").size_full().min_h(0).bg(t.chrome).text_size(13)
+      .when(Boolean(focus), el => el.invisible())
       .child(h_flex().h(35).flex_none().pl(16).pr(10).gap(6).items_center().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child(div().flex_1().child("Spaces")))
         .when(!collapsed, el => el.child(div().id("spaces-needs-you").h(23).px(6).rounded(5).flex_none().flex().gap(4).items_center().cursor_pointer()
@@ -564,7 +616,7 @@ export default class Spaces extends View {
           .child("Needs you").when(attentionCount > 0, el => el.child(div().text_color(t.blocked).child(String(attentionCount))))))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_click(() => run("space.new")).child(svg("mods/workspace-chrome/plus.svg").size(14))))
-      .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
+      .child(v_flex().id("spaces-all-list").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(this.grouped(t, collapsed))
         .when(this.attention && attentionCount === 0, el => el.child(v_flex().px(8).pt(12).gap(8).text_size(12)
@@ -576,5 +628,7 @@ export default class Spaces extends View {
       .when(collapsed, el => el.child(div().id("spaces-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
         .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")
         .on_click(() => this.toggleSidebar()).child(svg("mods/spaces-pin/expand.svg").size(15))));
+    return v_flex().id("spaces-views").relative().size_full().min_h(0).child(all)
+      .when(Boolean(focus), el => el.child(this.focusedSpace(focus, sp, t, collapsed)));
   }
 }
