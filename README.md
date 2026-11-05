@@ -59,13 +59,14 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 
 ## Loops
 
-The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals**, labeled by
-source. It refreshes every ten seconds, with a manual refresh button. Codex goals show
+The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals** and **Claude
+scheduled `/loop` tasks**, labeled by source. It refreshes every ten seconds, with a manual refresh button. Codex goals show
 status, tokens used (and budget when set), and working time. Budget usage is not a measure
 of task completion.
 
 **This space** follows the space's live terminal folders; **All projects** includes saved
-goals from other local projects. **History** includes completed, failed, and cleared goals.
+goals and schedules from other local projects. **History** includes completed, failed,
+cleared, cancelled, ended, expired, and inactive entries.
 Both filters are remembered. **Open session** opens the exact Codex thread with
 `codex resume` in a new tab. From a remote space it opens a local space instead.
 
@@ -76,12 +77,28 @@ spend, elapsed time, and evaluated turns appear when recorded, usually when the 
 Clearing a goal is distinct from completing it. **Copy session ID** copies its exact session
 ID. The panel never runs the Claude CLI, including when refreshing or clicking a Claude row.
 
+Claude schedules come from confirmed `CronCreate`, `CronDelete`, `CronList`, and
+`ScheduleWakeup` results and `session_cron_carry` snapshots in those same transcripts.
+The panel also reads `.claude/scheduled_tasks.json` in known project folders (including
+local Herdr spaces) and their parents. Project files are authoritative for durable tasks;
+copied schedules belonging to another project are marked inactive. Both recurring and
+one-shot cron tasks and self-paced wakeups appear with their prompt and schedule.
+
+**Saved schedule** describes the last recorded state, not a running session. **Recorded
+run** is the time Claude saved, including its scheduler offset; the panel does not invent
+a live next-run time. **Run time passed** leaves execution unconfirmed. Confirmed
+cancellations are distinct from tasks that ended with no outcome recorded. Recurring
+tasks past Claude's seven-day lifetime appear as **Expired**; Claude may fire them one
+final time before removal. Permanent project schedules do not expire. A project task
+without a session ID offers **Copy task ID** instead.
+
 The reader uses Python 3's SQLite support to read Codex's local `goals_*.sqlite` and
 `state_*.sqlite` databases under `$CODEX_HOME` (default `~/.codex`). It never updates goal
-state or Claude transcripts. These are internal files: incompatible formats show an error
+state, Claude transcripts, or project schedule files. These are internal files: incompatible formats show an error
 instead of silently showing an empty list. Each source refreshes independently; if one
-fails, its previous goals stay visible with an error while the other source updates.
-Scheduled `/loop` tasks and remote goals are not supported yet.
+fails, its previous entries stay visible with an error while the other sources update.
+Cloud/Desktop schedules, Monitor-based loops without scheduler records, and remote goals
+are not included.
 
 ## Pinned spaces
 
@@ -102,7 +119,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
-| `mods/loops/` | Codex and Claude goals panel and its Python readers |
+| `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
 | `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |

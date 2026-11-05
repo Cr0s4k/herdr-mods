@@ -72,7 +72,7 @@ test("failed refresh retains previous data and tells the user it is stale", asyn
   world.result = { code: 1, stdout: JSON.stringify({ error: "Database is locked. Try refreshing." }) };
   await loops.reload({ notify() {} });
   assert.equal(loops.items.length, 3);
-  assert.match(textOf(loops.render()), /Some goals may be from an earlier refresh/);
+  assert.match(textOf(loops.render()), /Some entries may be from an earlier refresh/);
   world.result = { code: 0, stdout: JSON.stringify({ goals: [], warning: null }) };
   await loops.reload({ notify() {} });
   assert.equal(loops.items.length, 0);
@@ -126,15 +126,16 @@ test("each source refreshes independently and failures preserve only its previou
   world.execCalls = [];
   world.result = (_command, args) => args[0].endsWith("claude-goals.py")
     ? { code: 1, stdout: JSON.stringify({ error: "Transcript unavailable" }) }
-    : { code: 0, stdout: JSON.stringify({ goals: [goal("fresh", "/work/app")] }) };
+    : { code: 0, stdout: JSON.stringify({ goals: args[0].endsWith("codex-goals.py") ? [goal("fresh", "/work/app")] : [] }) };
   await loops.reload({ notify() {} });
   assert.deepEqual(loops.items.map((g) => [g.source, g.thread_id]), [["codex", "fresh"], ["claude", "claude-old"]]);
   assert.match(loops.error, /Claude: Transcript unavailable/);
   assert.deepEqual(world.execCalls.map(([command, args]) => [command, args[0]]), [
     ["python3", "/tmp/herdr/mods/loops/codex-goals.py"],
     ["python3", "/tmp/herdr/mods/loops/claude-goals.py"],
+    ["python3", "/tmp/herdr/mods/loops/claude-loops.py"],
   ]);
-  world.result = (_command, args) => args[0].endsWith("claude-goals.py")
+  world.result = (_command, args) => !args[0].endsWith("codex-goals.py")
     ? { code: 0, stdout: JSON.stringify({ goals: [] }) }
     : { code: 0, stdout: "null" };
   await loops.reload({ notify() {} });
@@ -144,6 +145,75 @@ test("each source refreshes independently and failures preserve only its previou
   await loops.reload({ notify() {} });
   assert.deepEqual(loops.items, []);
   assert.equal(loops.error, null);
+});
+
+test("scheduled rows show cadence and recorded state, with unique task IDs and no goal metrics", () => {
+  const loops = make();
+  loops.all = true;
+  loops.items = ["first", "second"].map((id) => ({
+    thread_id: "session", task_id: id, record_id: `session:${id}`, kind: "schedule", schedule_kind: "cron",
+    objective: "Check deploy", cwd: "/work/app", status: "saved_schedule", source: "claude-loops",
+    cron: "*/5 * * * *", recurring: true, recorded_next_run_ms: 1000,
+    expires_at_ms: 2000, reason: "Last recorded schedule; session may be offline.",
+  }));
+  const root = loops.render();
+  const first = find(root, "goal-claude-loops-session:first");
+  assert.ok(first);
+  assert.ok(find(root, "goal-claude-loops-session:second"));
+  const text = textOf(first);
+  assert.match(text, /Claude · scheduled task/);
+  assert.match(text, /Saved schedule/);
+  assert.match(text, /Recurring · \*\/5 \* \* \* \*/);
+  assert.match(text, /Recorded run:/);
+  assert.match(text, /Expiry:/);
+  assert.match(text, /session may be offline/);
+  assert.doesNotMatch(text, /tokens|working time|Metrics not recorded|Open session/);
+  world.calls = [];
+  let copied;
+  find(root, "copy-claude-loops-session:first").handlers.click({}, { write_to_clipboard: (id) => { copied = id; }, notify() {} });
+  assert.equal(copied, "session");
+  loops.open(loops.items[0]);
+  assert.deepEqual(world.calls, []);
+});
+
+test("ended schedules stay in history, and project schedules without sessions copy the task ID", () => {
+  const loops = make();
+  loops.all = true;
+  loops.items = ["cancelled", "expired", "ended", "inactive", "schedule_due"].map((status) => ({
+    kind: "schedule", schedule_kind: "dynamic", source: "claude-loops", thread_id: null,
+    task_id: status, record_id: `project:${status}`, objective: `Schedule ${status}`, status,
+  }));
+  let root = loops.render();
+  assert.match(textOf(root), /History \(4\)/);
+  assert.doesNotMatch(textOf(root), /Schedule cancelled|Schedule expired|Schedule ended|Schedule inactive/);
+  assert.match(textOf(root), /Run time passed/);
+  assert.match(textOf(root), /Self-paced loop/);
+  let copied;
+  find(root, "copy-claude-loops-project:schedule_due").handlers.click({}, { write_to_clipboard: (id) => { copied = id; }, notify() {} });
+  assert.equal(copied, "schedule_due");
+  loops.completed = true;
+  root = loops.render();
+  assert.match(textOf(root), /Schedule cancelled/);
+  assert.match(textOf(root), /Schedule expired/);
+});
+
+test("schedule reader gets local project folders, and its failure preserves schedules independently", async () => {
+  world.spaces = [{ folder: "/work/app", tabs: [{ id: "local" }] },
+    { folder: "/remote/project", machine: "remote", tabs: [{ id: "remote" }] }];
+  world.panes = [{ tab: "local", cwd: "/work/app/src" }, { tab: "remote", cwd: "/remote/secret" }];
+  world.execCalls = [];
+  const loops = make();
+  loops.items = [{ source: "claude-loops", kind: "schedule", status: "saved_schedule", record_id: "session:job", objective: "Keep me" }];
+  world.result = (_command, args) => args[0].endsWith("claude-loops.py")
+    ? { code: 1, stdout: JSON.stringify({ error: "Schedule snapshot unavailable" }) }
+    : { code: 0, stdout: JSON.stringify({ goals: [] }) };
+  await loops.reload({ notify() {} });
+  assert.equal(loops.items.length, 1);
+  assert.equal(loops.items[0].objective, "Keep me");
+  assert.match(loops.error, /Claude schedules: Schedule snapshot unavailable/);
+  const [command, args] = world.execCalls.find(([, args]) => args[0].endsWith("claude-loops.py"));
+  assert.equal(command, "python3");
+  assert.deepEqual(args.slice(1), ["--project", "/work/app", "--project", "/work/app/src"]);
 });
 
 test("opening a local goal from a remote space creates a local space", () => {

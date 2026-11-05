@@ -12,14 +12,21 @@ const STATUS = {
   saved: ["Saved goal", "muted"],
   cleared: ["Cleared", "muted"],
   failed: ["Failed", "blocked"],
+  saved_schedule: ["Saved schedule", "muted"],
+  schedule_due: ["Run time passed", "muted"],
+  cancelled: ["Cancelled", "muted"],
+  ended: ["Ended", "muted"],
+  expired: ["Expired", "muted"],
+  inactive: ["Different project", "muted"],
 };
 const SOURCES = [{ id: "codex", label: "Codex", script: "codex-goals.py" },
-  { id: "claude", label: "Claude", script: "claude-goals.py" }];
-const ended = (goal) => ["complete", "cleared", "failed"].includes(goal.status);
+  { id: "claude", label: "Claude", script: "claude-goals.py" },
+  { id: "claude-loops", label: "Claude schedules", script: "claude-loops.py" }];
+const ended = (goal) => ["complete", "cleared", "failed", "cancelled", "ended", "expired", "inactive"].includes(goal.status);
 const sourceOf = (goal) => goal.source || "codex";
-const keyOf = (goal) => `${sourceOf(goal)}-${goal.thread_id}`;
+const keyOf = (goal) => `${sourceOf(goal)}-${goal.record_id || goal.thread_id}`;
 const priority = (goal) => ({ blocked: 0, usage_limited: 1, budget_limited: 1, active: 2,
-  saved: 3, paused: 3, complete: 4, cleared: 4, failed: 4 })[goal.status] ?? 2;
+  saved: 3, paused: 3, saved_schedule: 3, schedule_due: 3 })[goal.status] ?? (ended(goal) ? 4 : 2);
 const number = (n) => String(Math.max(0, Math.floor(Number(n) || 0))).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const path = (p) => p?.replace(/\\/g, "/").replace(/\/$/, "");
 const inside = (a, b) => a === b || a?.startsWith(`${b}/`) || b?.startsWith(`${a}/`);
@@ -45,10 +52,17 @@ export default class Loops extends View {
     try {
       const results = await Promise.all(SOURCES.map(async (source) => {
         try {
-          const r = await exec("python3", [`${appHome()}/mods/loops/${source.script}`]);
+          const args = [`${appHome()}/mods/loops/${source.script}`];
+          if (source.id === "claude-loops") {
+            const local = spaces().filter((space) => !space.machine);
+            const tabs = new Set(local.flatMap((space) => (space.tabs ?? []).map((tab) => tab.id)));
+            const folders = new Set([...local.map((space) => space.folder), ...panes().filter((pane) => tabs.has(pane.tab)).map((pane) => pane.cwd)].filter(Boolean));
+            for (const folder of folders) args.push("--project", folder);
+          }
+          const r = await exec("python3", args);
           let data;
           try { data = JSON.parse(r.stdout); } catch { throw new Error("Check that Python 3 is installed, then refresh."); }
-          if (r.code !== 0 || data?.error || !Array.isArray(data?.goals)) throw new Error(data?.error || "Could not read goals. Try refreshing.");
+          if (r.code !== 0 || data?.error || !Array.isArray(data?.goals)) throw new Error(data?.error || "Could not read loops. Try refreshing.");
           return { source, data };
         } catch (e) {
           return { source, error: `${source.label}: ${e.message || String(e)}` };
@@ -101,7 +115,8 @@ export default class Loops extends View {
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => action(cx)).child(label);
     const goalRow = (goal) => {
       const [label, color] = STATUS[goal.status] ?? [goal.status, "muted"];
-      const claude = sourceOf(goal) === "claude";
+      const claude = sourceOf(goal).startsWith("claude");
+      const scheduled = goal.kind === "schedule";
       const key = keyOf(goal);
       const project = goal.cwd?.split("/").pop() || "Unknown project";
       const tokens = goal.token_budget == null
@@ -119,27 +134,34 @@ export default class Loops extends View {
           .tooltip("Token budget used; this does not measure task completion")
           .child(div().h_full().w(`${percent}%`).bg(t[color]))))
         .child(v_flex().gap(3).text_size(11).text_color(t.muted)
-          .child(div().child(claude ? "Claude · /goal" : "Codex · /goal"))
+          .child(div().child(scheduled ? "Claude · scheduled task" : claude ? "Claude · /goal" : "Codex · /goal"))
+          .when(scheduled, (el) => el.child(div().whitespace_normal().child(goal.schedule_kind === "dynamic"
+            ? "Self-paced loop" : `${goal.recurring ? "Recurring" : "One-shot"} · ${goal.cron}`)))
+          .when(scheduled && goal.recorded_next_run_ms != null, (el) => el.child(div().whitespace_normal()
+            .child(`Recorded run: ${new Date(goal.recorded_next_run_ms).toLocaleString()}`)))
+          .when(scheduled && goal.expires_at_ms != null, (el) => el.child(div().whitespace_normal()
+            .child(`Expiry: ${new Date(goal.expires_at_ms).toLocaleString()}`)))
+          .when(scheduled, (el) => el.child(div().whitespace_normal().child(goal.reason || "Last recorded schedule; session may be offline.")))
           .when(goal.tokens_used != null, (el) => el.child(div().child(tokens)))
           .when(goal.time_used_seconds != null, (el) => el.child(div().child(`${duration(goal.time_used_seconds)} ${claude ? "elapsed" : "working time"}`)))
-          .when(claude && goal.tokens_used == null && goal.time_used_seconds == null,
+          .when(claude && !scheduled && goal.tokens_used == null && goal.time_used_seconds == null,
             (el) => el.child(div().child("Metrics not recorded yet")))
           .when(claude && goal.iterations != null, (el) => el.child(div().child(`${number(goal.iterations)} evaluated turns`))))
         .child(h_flex().items_center().gap(6)
           .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.muted)
-            .child(goal.updated_at_ms ? `Updated ${new Date(goal.updated_at_ms).toLocaleString()}` : "Saved goal"))
+            .child(goal.updated_at_ms ? `Updated ${new Date(goal.updated_at_ms).toLocaleString()}` : "Saved entry"))
           .when(!claude && Boolean(goal.cwd), (el) => el.child(button(`open-${key}`, "Open session", () => this.open(goal))
             .tooltip("Open this exact thread in a new Codex tab")))
-          .when(claude, (el) => el.child(button(`copy-${key}`, this.copied === key ? "Copied" : "Copy session ID", (cx) => {
-            cx.write_to_clipboard(goal.thread_id);
+          .when(claude, (el) => el.child(button(`copy-${key}`, this.copied === key ? "Copied" : goal.thread_id ? "Copy session ID" : "Copy task ID", (cx) => {
+            cx.write_to_clipboard(goal.thread_id || goal.task_id);
             this.copied = key;
             cx.notify();
-          }).tooltip("Copy the Claude session ID"))));
+          }).tooltip(goal.thread_id ? "Copy the Claude session ID" : "Copy the Claude task ID"))));
     };
     const empty = !this.all && space?.machine
       ? ["Loops are local for now.", "Switch to a local space or choose All projects."]
-      : [this.completed ? "No goals here yet." : "No current goals.",
-         history.length ? "Show history to see previous work." : "Start one in Codex or Claude with /goal <outcome>."];
+      : [this.completed ? "No loops here yet." : "No current loops.",
+         history.length ? "Show history to see previous work." : "Use /goal in Codex or Claude, or /loop in Claude."];
 
     return v_flex().id("loops").size_full().min_h(0).rounded(10).overflow_hidden()
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
@@ -150,7 +172,7 @@ export default class Loops extends View {
           this.all = !this.all;
           localStorage.setItem("scope", this.all ? "all" : "space");
           cx.notify();
-        }).tooltip(this.all ? "Show goals for this space" : "Show all saved local goals")))
+        }).tooltip(this.all ? "Show loops for this space" : "Show all saved local loops and goals")))
       .child(h_flex().h(38).flex_none().px(14).gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(`${current.length} current`))
         .child(button("loops-completed", `History (${history.length})`, (cx) => {
@@ -160,18 +182,18 @@ export default class Loops extends View {
         }, this.completed))
         .child(button("loops-refresh", svg("mods/loops/loops.svg").size(13), (cx) => {
           cx.spawn(async (cx) => this.reload(cx));
-        }).accessibility_label("Refresh goals").tooltip("Refresh goals")))
+        }).accessibility_label("Refresh loops").tooltip("Refresh loops")))
       .child(v_flex().id("loops-list").flex_1().min_h(0).overflow_y_scrollbar().px(14)
         .when(Boolean(this.error), (el) => el.child(v_flex().py(12).gap(5).text_size(11.5).text_color(t.blocked)
           .child(div().whitespace_normal().child(this.error))
-          .when(Boolean(this.updated), (row) => row.child(div().whitespace_normal().child("Some goals may be from an earlier refresh.")))))
+          .when(Boolean(this.updated), (row) => row.child(div().whitespace_normal().child("Some entries may be from an earlier refresh.")))))
         .when(Boolean(this.warning), (el) => el.child(div().py(12).text_size(11.5).text_color(t.muted).whitespace_normal().child(this.warning)))
-        .when(this.loading, (el) => el.child(div().py(16).text_color(t.muted).child("Loading goals…")))
+        .when(this.loading, (el) => el.child(div().py(16).text_color(t.muted).child("Loading loops…")))
         .when(!this.loading && !this.error && !visible.length, (el) => el.child(v_flex().py(20).gap(8).text_size(12)
           .child(div().font_medium().child(empty[0]))
           .child(div().text_color(t.muted).whitespace_normal().child(empty[1]))))
         .children(visible.map(goalRow)))
       .child(div().h(28).flex_none().px(14).flex().items_center().text_size(10.5).text_color(t.muted)
-        .child(this.updated ? "Local goals · refreshes every 10s" : "Local goals"));
+        .child(this.updated ? "Local loops · refreshes every 10s" : "Local loops"));
   }
 }
