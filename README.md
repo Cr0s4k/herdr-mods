@@ -57,6 +57,15 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
+**Changes + terminal** is a separate action beside the Files, Changes, Show and Loops side-panel
+toggles. It opens Changes as a normal pane on the right, with a normal terminal pane below
+it, starting at equal height. Once open, the action becomes **Focus changes** and returns
+to that pane without creating another terminal or closing your chosen side panel.
+Pane navigation, swapping, dragging, splitting, zooming and closing use Herdr's usual
+shortcuts and controls. The arrangement belongs to its tab and Herdr remembers it.
+**Changes** toggles the normal side panel, just like Files, Show and Loops. It works
+independently of the review panes, so either view is available when you want it.
+
 ## Loops
 
 The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals** and **Claude
@@ -143,6 +152,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Changes (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
+| `mods/review-pane/` | Changes inside a normal pane, sharing the existing view through a symlink |
+| `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Changes title for review panes |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |

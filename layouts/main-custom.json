@@ -85,7 +85,7 @@
                   "gap": 8,
                   "header": {
                     "content": {
-                      "mod": "pane"
+                      "mod": "pane-titles"
                     },
                     "height": 30,
                     "position": "top",
