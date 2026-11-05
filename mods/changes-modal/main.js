@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
-import { iconsReady, fileIcon } from "./icons.js";
+import { iconsReady, fileIcon, light } from "./icons.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -68,7 +68,7 @@ async function diffLines({ root, on, hasHead }, file) {
   return lines.slice(0, 5000).map(line => line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line);
 }
 
-const BAT = 'b=$(command -v bat || command -v batcat) || exit 9; "$b" --color=always --style=plain --paging=never --theme=ansi --tabs=0 "$@"';
+const bat = () => `b=$(command -v bat || command -v batcat) || exit 9; COLORTERM=truecolor "$b" --color=always --style=plain --paging=never --theme="${light() ? "Catppuccin Latte" : "Catppuccin Mocha"}" --tabs=0 "$@"`;
 
 function parseAnsi(text) {
   return text.replace(/\n$/, "").split("\n").map((line) => {
@@ -89,7 +89,7 @@ function parseAnsi(text) {
         else if (c >= 30 && c <= 37) color = c - 30;
         else if (c >= 90 && c <= 97) color = c - 82;
         else if (c === 38 && codes[i + 1] === 5) { color = codes[i + 2] < 16 ? codes[i + 2] : null; i += 2; }
-        else if (c === 38 && codes[i + 1] === 2) i += 4;
+        else if (c === 38 && codes[i + 1] === 2) { color = "#" + codes.slice(i + 2, i + 5).map((n) => n.toString(16).padStart(2, "0")).join(""); i += 4; }
       }
     }
     push(line.slice(last));
@@ -103,8 +103,8 @@ async function highlighted({ root, on, hasHead }, file) {
     return r?.code === 0 && r.stdout.length < 2000000 ? parseAnsi(r.stdout) : null;
   };
   const [old, now] = await Promise.all([
-    hasHead && !file.fresh && file.status !== "A" ? run(`git show "HEAD:$1" | { ${BAT} --file-name "$1"; }`, [file.path]) : null,
-    file.status !== "D" ? run(`${BAT} -- "$1"`, [file.path]) : null,
+    hasHead && !file.fresh && file.status !== "A" ? run(`git show "HEAD:$1" | { ${bat()} --file-name "$1"; }`, [file.path]) : null,
+    file.status !== "D" ? run(`${bat()} -- "$1"`, [file.path]) : null,
   ]);
   return { old, now };
 }
@@ -253,7 +253,7 @@ export default class Changes extends View {
   code(text, spans, t) {
     if (!spans) return div().flex_1().min_w(0).truncate().child(text);
     return h_flex().flex_1().min_w(0).overflow_hidden()
-      .children(spans.map((s) => div().flex_none().when(s.color !== null, (e) => e.text_color(t[`ansi${s.color}`])).child(s.text)));
+      .children(spans.map((s) => div().flex_none().when(s.color !== null, (e) => e.text_color(typeof s.color === "string" ? s.color : t[`ansi${s.color}`])).child(s.text)));
   }
 
   row({ kind, number, text, spans }, t) {

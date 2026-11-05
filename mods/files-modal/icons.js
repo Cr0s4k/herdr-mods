@@ -8,7 +8,7 @@ export const iconsReady = readTextFile(`${appHome()}/${DIR}/index.json`)
   .then((text) => { map = JSON.parse(text); })
   .catch(() => {});
 
-function light() {
+export function light() {
   const hex = (theme().background ?? "#000000").replace("#", "");
   const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) || 0);
   return 0.299 * r + 0.587 * g + 0.114 * b > 140;
