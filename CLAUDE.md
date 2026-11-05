@@ -35,5 +35,8 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
   and `layouts/main-custom.json` are clones of Herdr's shipped `tabs`, `spaces`, `menu`, `files`,
   `changes` and `main`. When Herdr updates those, the clones don't follow; re-clone and re-apply the changes
   (`git diff` against a fresh clone shows them).
+- A mod can't import from another mod's folder or read files there with `fs`. To share a module,
+  symlink it into the other mod (install copies with `--copy-links`) and read data with
+  `readTextFile`, as `changes-modal/icons.js` does.
 - `render.swift` changes recompile automatically on the next save from the editor
   (`~/.cache/herdr-show/render` is rebuilt when the source is newer).

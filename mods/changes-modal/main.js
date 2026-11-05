@@ -1,6 +1,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
+import { iconsReady, fileIcon } from "./icons.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -121,6 +122,7 @@ const statusColor = (s, t) => s === "A" ? t.ansi2 : s === "D" || s === "U" ? t.a
 export default class Changes extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
+    cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);
     this.files = []; this.message = "";
     this.input = InputState.new({ placeholder: "Commit message" });
@@ -303,6 +305,7 @@ export default class Changes extends View {
       })
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(t.border)
         .child(div().w(14).text_size(12).text_color(statusColor(file.status, t)).child(file.status))
+        .child(fileIcon(file.path, {}, t))
         .child(h_flex().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
         .when(file.add > 0, (e) => e.child(div().text_size(12).text_color(t.ansi2).child(`+${file.add}`)))
         .when(file.del > 0, (e) => e.child(div().text_size(12).text_color(t.ansi1).child(`−${file.del}`)))
@@ -345,6 +348,7 @@ export default class Changes extends View {
         const parts = f.path.split("/"), name = parts.pop();
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => this.view(i))
           .child(div().w(14).text_size(11).text_color(statusColor(f.status, t)).child(f.status))
+          .child(fileIcon(f.path, {}, t))
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
       })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))

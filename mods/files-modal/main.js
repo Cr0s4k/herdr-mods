@@ -2,6 +2,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay } from "herdr";
+import { iconsReady, fileIcon } from "./icons.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -41,6 +42,7 @@ async function directory(path, on) {
 export default class Files extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
+    cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
@@ -193,7 +195,7 @@ export default class Files extends View {
         cx.stop_propagation();
       })
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(t.border)
-        .child(svg("mods/files-modal/file.svg").size(14).flex_none().text_color(t.muted))
+        .child(fileIcon(path, {}, t))
         .child(h_flex().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
         .when(Boolean(mark), el => el.child(div().text_size(12).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark)))
         .child(div().flex_1())
@@ -215,7 +217,7 @@ export default class Files extends View {
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.view(path))
         .child(entry.dir ? svg(`mods/files-modal/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
-        .child(svg(`mods/files-modal/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
+        .child(fileIcon(path, { dir: entry.dir, open }, t))
         .child(div().flex_1().min_w(0).truncate().child(entry.name))
         .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))));
       if (entry.dir && open) this.rows(path, depth + 1, out, t);

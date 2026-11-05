@@ -9,7 +9,7 @@ layout=main-custom
 mods=("$repo"/mods/*)
 
 copy() {
-  rsync "$@" --exclude gpui-kit.d.ts --exclude jsconfig.json "${mods[@]}" "$app/mods/"
+  rsync "$@" --copy-links --exclude gpui-kit.d.ts --exclude jsconfig.json "${mods[@]}" "$app/mods/"
   rsync "$@" "$repo"/layouts/*.json "$app/layouts/"
 }
 

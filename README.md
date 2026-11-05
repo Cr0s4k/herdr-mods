@@ -50,6 +50,8 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 - **Changes** shows the diff, **Split** (old and new side by side) or **Unified** (`S` toggles,
   and the choice sticks). Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
   when it's installed (`brew install bat`), in the theme's terminal colors; without it they're plain.
+- Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
+  file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
 ## Pinned spaces
 
@@ -65,6 +67,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/show/herdr-show` | Show: the command that posts images and saves markups (Python) |
 | `mods/show/render.swift` | Show: burns the drawn marks into a PNG; compiled on first use to `~/.cache/herdr-show/render` |
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
+| `mods/files-modal/icons.js` | File and folder icon lookup, shared with Changes (`mods/changes-modal/icons.js` is a symlink; install copies it) |
+| `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with the Show button added |
 | `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
