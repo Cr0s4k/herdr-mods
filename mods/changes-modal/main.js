@@ -14,7 +14,6 @@ const key = () => JSON.stringify(location());
 // the folder watch would see it, and every refresh would start the next one.
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
-const SPLIT = "changes-modal.split";
 
 // Numbers each diff line once, so a frame only draws the rows on screen.
 function diffRows(lines) {
@@ -25,47 +24,31 @@ function diffRows(lines) {
     const kind = line[0];
     if (kind === "-") return { kind, number: old++, text: line.slice(1) || " " };
     if (kind === "+") return { kind, number: next++, text: line.slice(1) || " " };
-    if (kind === " ") return { kind, old: old++, number: next++, text: line.slice(1) || " " };
+    if (kind === " ") { old++; return { kind, number: next++, text: line.slice(1) || " " }; }
     return { kind: "", text: line };
   });
 }
 
+const SPLIT = "changes-modal.split";
+
 function splitRows(rows) {
   const out = [];
-  let dels = [], adds = [];
+  let dels = [], adds = [], old = 0;
   const flush = () => {
     for (let i = 0; i < Math.max(dels.length, adds.length); i++) out.push({ left: dels[i] ?? null, right: adds[i] ?? null });
     dels = []; adds = [];
   };
   for (const r of rows) {
-    if (r.kind === "-") dels.push(r);
+    if (r.kind === "-") { dels.push(r); old = r.number + 1; }
     else if (r.kind === "+") adds.push(r);
     else {
       flush();
-      out.push(r.kind === " " ? { left: { kind: " ", number: r.old, text: r.text, spans: r.spans }, right: r } : r);
+      if (r.kind === "@") old = +(/^@@ -(\d+)/.exec(r.text)?.[1] ?? 0);
+      out.push(r.kind === " " ? { left: { kind: " ", number: old++, text: r.text, spans: r.spans }, right: r } : r);
     }
   }
   flush();
   return out;
-}
-
-async function diffLines({ root, on, hasHead }, file) {
-  let lines;
-  if (file.fresh || (!hasHead && file.status === "A")) {
-    const text = await readTextFile(`${root}/${file.path}`, { on }).catch(() => null);
-    if (text === null) lines = ["Cannot preview this file (binary, too large, or unreadable)"];
-    else if (text.includes("\0")) lines = ["Binary file · no text diff"];
-    else {
-      file.add = countLines(text);
-      lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 5000).map(l => `+${l}`)];
-    }
-  } else {
-    const r = await exec("git", [...READ, "diff", ...(hasHead ? ["HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", file.path], { cwd: root, on });
-    if (r.code !== 0) throw new Error(r.stderr);
-    const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
-    lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
-  }
-  return lines.slice(0, 5000).map(line => line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line);
 }
 
 const bat = () => `b=$(command -v bat || command -v batcat) || exit 9; COLORTERM=truecolor "$b" --color=always --style=plain --paging=never --theme="${light() ? "Catppuccin Latte" : "Catppuccin Mocha"}" --tabs=0 "$@"`;
@@ -121,10 +104,9 @@ const statusColor = (s, t) => s === "A" ? t.ansi2 : s === "D" || s === "U" ? t.a
 
 export default class Changes extends View {
   init(_props, cx) {
-    this.handle = cx.focus_handle();
+    this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
     cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);
-    this.files = []; this.message = "";
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
       const hadMessage = Boolean(this.message.trim());
@@ -155,8 +137,8 @@ export default class Changes extends View {
     if (this.loading || this.busy) return;
     const { cwd, on } = location(), context = key();
     if (context !== this.context) {
-      this.context = context; this.root = null; this.files = [];
-      this.message = ""; this.input.set_value(""); this.error = null; this.note = null; this.watched = null; this.limited = false;
+      this.context = context; this.root = null; this.files = []; this.open = null;
+      this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note = null; this.watched = null; this.closed = false; this.limited = false;
     }
     if (!cwd) return;
     this.loading = true;
@@ -164,7 +146,7 @@ export default class Changes extends View {
       try {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
         if (key() !== context) return;
-        if (top.code !== 0) { this.root = null; this.files = []; this.error = "Not a git repository"; return; }
+        if (top.code !== 0) { this.root = null; this.files = []; this.setLines([]); this.open = null; this.error = "Not a git repository"; return; }
         const root = top.stdout.trim(), git = (args) => exec("git", [...READ, ...args], { cwd: root, on });
         const status = await git(["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]);
         if (status.code !== 0) throw new Error(status.stderr);
@@ -192,16 +174,52 @@ export default class Changes extends View {
         if (key() !== context) return;
         this.root = root; this.on = on; this.hasHead = head.code === 0; this.files = files; this.limited = entries.length > 1000; this.error = null;
         this.watch(root, cx);
+        if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
+        if (this.open) {
+          try { await this.load(this.open, context); }
+          catch { if (key() === context) this.setLines(["Cannot preview this diff (too large or unreadable)"]); }
+        }
       } catch (e) { if (key() === context) this.error = String(e); }
       finally { this.loading = false; cx.notify(); }
     });
   }
 
-  view(index) {
-    openOverlay({
-      mod: "changes-modal", kind: "dialog", width: 0.9, height: 0.9,
-      props: { root: this.root, on: this.on ?? null, hasHead: this.hasHead, files: this.files, index },
+  async load(path, context) {
+    const file = this.files.find((f) => f.path === path), root = this.root, on = this.on;
+    if (!file) return;
+    let lines;
+    if (file.fresh || (!this.hasHead && file.status === "A")) {
+      const text = await readTextFile(`${root}/${path}`, { on }).catch(() => null);
+      if (text === null) lines = ["Cannot preview this file (binary, too large, or unreadable)"];
+      else if (text.includes("\0")) lines = ["Binary file · no text diff"];
+      else {
+        file.add = countLines(text);
+        lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 5000).map(l => `+${l}`)];
+      }
+    } else {
+      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? ["HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      if (r.code !== 0) throw new Error(r.stderr);
+      const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
+      lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
+    }
+    if (key() === context && this.open === path) this.setLines(lines.slice(0, 5000).map(line => line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line));
+  }
+
+  setLines(lines) {
+    this.rows = diffRows(lines);
+    this.diffWidth = Math.max(300, ...lines.map(line => line.length * 7 + 50));
+  }
+
+  pick(path, cx) {
+    this.open = this.open === path ? null : path; this.setLines([]); this.note = null;
+    this.closed = !this.open;
+    const context = this.context;
+    if (this.open) cx.spawn(async (cx) => {
+      try { await this.load(path, context); }
+      catch (e) { if (key() === context && this.open === path) this.note = `Cannot preview this diff (too large or unreadable): ${e}`; }
+      cx.notify();
     });
+    cx.notify();
   }
 
   commit(cx) {
@@ -221,8 +239,15 @@ export default class Changes extends View {
     cx.notify();
   }
 
+  view(index) {
+    openOverlay({
+      mod: "changes-modal", kind: "dialog", width: 0.9, height: 0.9,
+      props: { root: this.root, on: this.on ?? null, hasHead: this.hasHead, files: this.files, index },
+    });
+  }
+
   initViewer(p, cx) {
-    this.files = p.files ?? []; this.index = p.index ?? 0; this.rows = []; this.diffWidth = 0;
+    this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.index = p.index ?? 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.show(this.index, cx);
@@ -230,19 +255,17 @@ export default class Changes extends View {
 
   show(index, cx) {
     if (index < 0 || index >= this.files.length) return;
-    this.index = index; this.rows = []; this.split = null; this.loadingDiff = true;
-    const p = props(), file = this.files[index];
+    const file = this.files[index], context = key();
+    this.index = index; this.open = file.path; this.setLines([]); this.split = null; this.loadingDiff = true;
     cx.spawn(async (cx) => {
-      let lines;
-      try { lines = await diffLines(p, file); }
-      catch (e) { lines = [`Cannot preview this diff (too large or unreadable): ${e}`]; }
+      try { await this.load(file.path, context); }
+      catch (e) { this.setLines([`Cannot preview this diff (too large or unreadable): ${e}`]); }
       if (this.index !== index) return;
-      this.rows = diffRows(lines); this.split = null;
-      this.diffWidth = Math.max(300, ...lines.map(line => line.length * 7.5 + 60));
-      this.loadingDiff = false;
+      this.diffWidth = Math.max(300, ...this.rows.map((r) => r.text.length * 7.5 + 80));
+      this.loadingDiff = false; this.split = null;
       cx.notify();
-      if (lines.length > 3000) return;
-      const colors = await highlighted(p, file);
+      if (this.rows.length > 3000) return;
+      const colors = await highlighted(props(), file);
       if (this.index !== index) return;
       paint(this.rows, colors); this.split = null;
       cx.notify();
@@ -329,6 +352,13 @@ export default class Changes extends View {
         .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.dim).child("Loading…"))))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
         .child("↑ ↓ file").child("S split / unified").child("Esc close"));
+  }
+
+  diffRow({ kind, number, text }, t) {
+    if (kind === "@") return div().w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
+    return h_flex().w_full().h(20).flex_none().gap(10).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
+      .child(div().w(30).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
+      .child(div().flex_1().min_w(0).truncate().child(text));
   }
 
   render(cx) {
