@@ -78,6 +78,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with the Show button added |
 | `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
+| `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
 | `upgrade.sh` | merges a new Herdr version's originals into the clones (see Upgrading with Herdr) |

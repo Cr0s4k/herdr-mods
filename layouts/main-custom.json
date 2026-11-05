@@ -6,7 +6,7 @@
       "children": [
         {
           "content": {
-            "mod": "workspace-chrome"
+            "mod": "workspace-chrome-minimal"
           },
           "id": "brand",
           "size": {
