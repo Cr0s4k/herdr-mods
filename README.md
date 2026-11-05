@@ -66,8 +66,10 @@ of task completion.
 
 **This space** follows the space's live terminal folders; **All projects** includes saved
 goals and schedules from other local projects. **History** includes completed, failed,
-cleared, cancelled, ended, expired, and inactive entries.
-Both filters are remembered. **Open session** opens the exact Codex thread with
+cleared, cancelled, ended, expired, and inactive entries. The **Codex** and **Claude**
+header buttons independently toggle each source; both start enabled. Claude includes
+goals and scheduled tasks. Counts follow the selected sources. All filters are remembered.
+**Open session** opens the exact Codex thread with
 `codex resume` in a new tab. From a remote space it opens a local space instead.
 
 Claude goals come from structured `goal_status` attachments in local session transcripts

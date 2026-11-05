@@ -42,6 +42,8 @@ export default class Loops extends View {
     this.loading = true;
     this.all = localStorage.getItem("scope") === "all";
     this.completed = localStorage.getItem("completed") === "true";
+    this.showCodex = localStorage.getItem("source-codex") !== "false";
+    this.showClaude = localStorage.getItem("source-claude") !== "false";
     cx.spawn(async (cx) => this.reload(cx));
     cx.timer.every(10000, (cx) => { cx.spawn(async (cx) => this.reload(cx)); });
   }
@@ -74,12 +76,25 @@ export default class Loops extends View {
       this.items.sort((a, b) => priority(a) - priority(b) || b.updated_at_ms - a.updated_at_ms);
       this.warning = results.map(({ data }) => data?.warning).filter(Boolean).join(" ");
       this.error = results.map(({ error }) => error).filter(Boolean).join(" ") || null;
+      this.sourceErrors = results.filter(({ error }) => error).map(({ source, error }) => ({ source: source.id, message: error }));
+      this.sourceWarnings = results.filter(({ data }) => data?.warning).map(({ source, data }) => ({ source: source.id, message: data.warning }));
       if (results.some(({ data }) => data)) this.updated = Date.now();
     } finally {
       this.loading = false;
       this.refreshing = false;
       cx.notify();
     }
+  }
+
+  sourceEnabled(source) {
+    return source.startsWith("claude") ? this.showClaude !== false : this.showCodex !== false;
+  }
+
+  toggleSource(source, cx) {
+    const field = source === "claude" ? "showClaude" : "showCodex";
+    this[field] = this[field] === false;
+    localStorage.setItem(`source-${source}`, String(this[field]));
+    cx.notify();
   }
 
   scope() {
@@ -104,7 +119,10 @@ export default class Loops extends View {
 
   render() {
     const t = theme();
-    const { space, items } = this.scope();
+    const { space, items: scoped } = this.scope();
+    const items = scoped.filter((goal) => this.sourceEnabled(sourceOf(goal)));
+    const error = this.sourceErrors?.filter((entry) => this.sourceEnabled(entry.source)).map((entry) => entry.message).join(" ") || (this.sourceErrors ? null : this.error);
+    const warning = this.sourceWarnings?.filter((entry) => this.sourceEnabled(entry.source)).map((entry) => entry.message).join(" ") || (this.sourceWarnings ? null : this.warning);
     const current = items.filter((g) => !ended(g));
     const history = items.filter(ended);
     const visible = this.completed ? items : current;
@@ -158,7 +176,9 @@ export default class Loops extends View {
             cx.notify();
           }).tooltip(goal.thread_id ? "Copy the Claude session ID" : "Copy the Claude task ID"))));
     };
-    const empty = !this.all && space?.machine
+    const empty = this.showCodex === false && this.showClaude === false
+      ? ["No sources selected.", "Enable Codex or Claude above to show loops."]
+      : !this.all && space?.machine
       ? ["Loops are local for now.", "Switch to a local space or choose All projects."]
       : [this.completed ? "No loops here yet." : "No current loops.",
          history.length ? "Show history to see previous work." : "Use /goal in Codex or Claude, or /loop in Claude."];
@@ -166,8 +186,15 @@ export default class Loops extends View {
     return v_flex().id("loops").size_full().min_h(0).rounded(10).overflow_hidden()
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Loops"))
-        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child("Codex + Claude"))
+        .child(div().flex_none().font_semibold().child("Loops"))
+        .child(h_flex().gap(4).flex_none().children(["codex", "claude"].map((source) => {
+          const name = source === "codex" ? "Codex" : "Claude";
+          const selected = this.sourceEnabled(source);
+          return button(`loops-source-${source}`, name, (cx) => this.toggleSource(source, cx), selected)
+            .selected(selected).accessibility_label(`Show ${name} loops`)
+            .tooltip(`${selected ? "Hide" : "Show"} ${name} ${source === "claude" ? "goals and scheduled tasks" : "goals"}`);
+        })))
+        .child(div().flex_1().min_w(0))
         .child(button("loops-scope", this.all ? "All projects" : "This space", (cx) => {
           this.all = !this.all;
           localStorage.setItem("scope", this.all ? "all" : "space");
@@ -184,12 +211,12 @@ export default class Loops extends View {
           cx.spawn(async (cx) => this.reload(cx));
         }).accessibility_label("Refresh loops").tooltip("Refresh loops")))
       .child(v_flex().id("loops-list").flex_1().min_h(0).overflow_y_scrollbar().px(14)
-        .when(Boolean(this.error), (el) => el.child(v_flex().py(12).gap(5).text_size(11.5).text_color(t.blocked)
-          .child(div().whitespace_normal().child(this.error))
+        .when(Boolean(error), (el) => el.child(v_flex().py(12).gap(5).text_size(11.5).text_color(t.blocked)
+          .child(div().whitespace_normal().child(error))
           .when(Boolean(this.updated), (row) => row.child(div().whitespace_normal().child("Some entries may be from an earlier refresh.")))))
-        .when(Boolean(this.warning), (el) => el.child(div().py(12).text_size(11.5).text_color(t.muted).whitespace_normal().child(this.warning)))
+        .when(Boolean(warning), (el) => el.child(div().py(12).text_size(11.5).text_color(t.muted).whitespace_normal().child(warning)))
         .when(this.loading, (el) => el.child(div().py(16).text_color(t.muted).child("Loading loops…")))
-        .when(!this.loading && !this.error && !visible.length, (el) => el.child(v_flex().py(20).gap(8).text_size(12)
+        .when(!this.loading && !error && !visible.length, (el) => el.child(v_flex().py(20).gap(8).text_size(12)
           .child(div().font_medium().child(empty[0]))
           .child(div().text_color(t.muted).whitespace_normal().child(empty[1]))))
         .children(visible.map(goalRow)))

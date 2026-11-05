@@ -5,6 +5,9 @@ import test from "node:test";
 // Execute the actual mod against a small native-element stand-in. These checks
 // exercise deferred rows and actions that herdr-app check does not render.
 const world = { spaces: [], panes: [], calls: [], result: null, execCalls: [] };
+const preferences = new Map();
+globalThis.localStorage = { getItem: (key) => preferences.get(key) ?? null,
+  setItem: (key, value) => preferences.set(key, value) };
 function native() {
   const target = { nodes: [], handlers: {} };
   let el;
@@ -223,4 +226,68 @@ test("opening a local goal from a remote space creates a local space", () => {
   assert.equal(world.calls[0][0], "space.new");
   assert.deepEqual(world.calls[0][1].argv, ["codex", "resume", "one"]);
   assert.equal(world.calls[0][1].folder, "/work/app");
+});
+
+test("source toggles include Claude goals and schedules, update counts, and persist independently", (t) => {
+  t.after(() => preferences.clear());
+  preferences.clear();
+  world.spaces = [{ active: true, folder: "/work/app" }];
+  world.panes = [];
+  const loops = make();
+  loops.items.push({ ...goal("claude-goal", "/work/app", "saved"), source: "claude" },
+    { ...goal("schedule", "/work/app", "saved_schedule"), source: "claude-loops", kind: "schedule" },
+    { ...goal("cancelled", "/work/app", "cancelled"), source: "claude-loops", kind: "schedule" });
+  const cx = { notify() {} };
+  let root = loops.render();
+  assert.equal(find(root, "loops-source-codex").selectedArgs[0], true);
+  assert.equal(find(root, "loops-source-claude").selectedArgs[0], true);
+  assert.match(textOf(root), /3 current/);
+  assert.match(textOf(root), /History \(2\)/);
+  find(root, "loops-source-claude").handlers.click({}, cx);
+  root = loops.render();
+  assert.ok(find(root, "goal-codex-one"));
+  assert.equal(find(root, "goal-claude-claude-goal"), undefined);
+  assert.equal(find(root, "goal-claude-loops-schedule"), undefined);
+  assert.match(textOf(root), /1 current/);
+  assert.match(textOf(root), /History \(1\)/);
+  assert.equal(find(root, "loops-source-claude").selectedArgs[0], false);
+  find(root, "loops-source-codex").handlers.click({}, cx);
+  assert.match(textOf(loops.render()), /No sources selected/);
+  const restored = new Loops();
+  restored.init({}, { spawn() {}, timer: { every() {} } });
+  assert.equal(restored.showCodex, false);
+  assert.equal(restored.showClaude, false);
+  find(loops.render(), "loops-source-claude").handlers.click({}, cx);
+  root = loops.render();
+  assert.equal(find(root, "goal-codex-one"), undefined);
+  assert.ok(find(root, "goal-claude-claude-goal"));
+  assert.ok(find(root, "goal-claude-loops-schedule"));
+  assert.match(textOf(root), /2 current/);
+  assert.match(textOf(root), /History \(1\)/);
+  assert.equal(preferences.get("source-claude"), "true");
+  assert.equal(preferences.get("source-codex"), "false");
+});
+
+test("hidden sources keep refreshing while their errors and warnings follow the source filter", async (t) => {
+  t.after(() => preferences.clear());
+  const loops = make();
+  loops.all = true;
+  loops.showClaude = false;
+  world.result = (_command, args) => args[0].endsWith("claude-goals.py")
+    ? { code: 1, stdout: JSON.stringify({ error: "Claude unavailable" }) }
+    : { code: 0, stdout: JSON.stringify({ goals: args[0].endsWith("claude-loops.py")
+      ? [{ ...goal("new-schedule", "/work/app", "saved_schedule"), kind: "schedule" }] : [],
+    warning: args[0].endsWith("claude-loops.py") ? "Schedule folder unavailable" : null }) };
+  await loops.reload({ notify() {} });
+  assert.doesNotMatch(textOf(loops.render()), /Claude unavailable|Schedule folder unavailable|Goal new-schedule/);
+  find(loops.render(), "loops-source-claude").handlers.click({}, { notify() {} });
+  const root = loops.render();
+  assert.match(textOf(root), /Claude unavailable/);
+  assert.match(textOf(root), /Schedule folder unavailable/);
+  assert.ok(find(root, "goal-claude-loops-new-schedule"));
+  const initialized = new Loops();
+  preferences.clear();
+  initialized.init({}, { spawn() {}, timer: { every() {} } });
+  assert.equal(initialized.showCodex, true);
+  assert.equal(initialized.showClaude, true);
 });
