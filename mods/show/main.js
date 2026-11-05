@@ -117,6 +117,7 @@ export default class Show extends View {
     if (this.mode === "editor") return this.initEditor(cx);
     this.items = [];
     this.all = false;
+    this.removing = false;
     this.seen = null;
     const reload = async (cx) => {
       try { this.arrived(await loadItems()); } catch (e) { this.error = String(e); }
@@ -192,11 +193,33 @@ export default class Show extends View {
   }
 
   remove(item, cx) {
+    this.removeItems([item], cx);
+  }
+
+  clear(cx) {
+    this.removeItems(this.scope().items, cx);
+  }
+
+  removeItems(items, cx) {
+    if (this.removing || !items.length) return;
+    this.removing = true;
     cx.spawn(async (cx) => {
-      try { await fs.unlink(`${ITEMS()}/${item.id}.json`); await fs.unlink(item.path); } catch {}
-      this.items = this.items.filter((i) => i.id !== item.id);
+      const removed = new Set();
+      let failed = 0;
+      for (const item of items) {
+        try {
+          for (const path of [item.path, `${ITEMS()}/${item.id}.json`]) {
+            try { await fs.unlink(path); } catch (e) { if (await fs.exists(path)) throw e; }
+          }
+          removed.add(item.id);
+        } catch { failed++; }
+      }
+      this.items = this.items.filter((i) => !removed.has(i.id));
+      this.removing = false;
+      if (failed) notify({ title: "Couldn't remove some images", body: `${failed} image(s) could not be removed. Try again.`, level: "error" });
       cx.notify();
     });
+    cx.notify();
   }
 
   renderPanel() {
@@ -246,8 +269,11 @@ export default class Show extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Show"))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(title ?? ""))
-        .child(div().text_size(11).text_color(t.dim).child(this.all ? "all spaces" : space?.name ?? ""))
-        .child(pill("scope", this.all ? "This space" : "All", false, (cx) => { this.all = !this.all; cx.notify(); })))
+        .child(div().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.all ? "all spaces" : space?.name ?? ""))
+        .child(pill("scope", this.all ? "This space" : "All", false, (cx) => { this.all = !this.all; cx.notify(); }).flex_none())
+        .when(items.length > 0, (el) => el.child(pill("clear-items", this.removing ? "Clearing…" : "Clear", false, (cx) => this.clear(cx))
+          .flex_none().tooltip(this.all || !space ? "Remove all shown images" : "Remove shown images in this space")
+          .when(this.removing, (b) => b.opacity(0.5)))))
       .child(v_flex().id("show-list").flex_1().min_h(0).overflow_y_scrollbar().p(14).gap(18)
         .when(!items.length, (el) => el.child(v_flex().gap(6).text_color(t.dim).text_size(12)
           .child(div().child(this.error ?? "Nothing shown yet."))
