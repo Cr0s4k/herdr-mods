@@ -59,20 +59,29 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 
 ## Loops
 
-The **Loops** tab beside Show lists local **Codex `/goal` goals**. It shows the objective,
+The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals**, labeled by
+source. It refreshes every ten seconds, with a manual refresh button. Codex goals show
 status, tokens used (and budget when set), and working time. Budget usage is not a measure
-of task completion. It refreshes every ten seconds, with a manual refresh button.
+of task completion.
 
 **This space** follows the space's live terminal folders; **All projects** includes saved
-goals from other local projects. **Completed** includes finished goals. Both filters are
-remembered. **Open session** opens the exact thread with `codex resume` in a new tab.
-From a remote space it opens a local space instead.
+goals from other local projects. **History** includes completed, failed, and cleared goals.
+Both filters are remembered. **Open session** opens the exact Codex thread with
+`codex resume` in a new tab. From a remote space it opens a local space instead.
+
+Claude goals come from structured `goal_status` attachments in local session transcripts
+under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`). **Saved goal** means the
+last recorded goal is unresolved; it does not prove that Claude is still running. Token
+spend, elapsed time, and evaluated turns appear when recorded, usually when the goal ends.
+Clearing a goal is distinct from completing it. **Copy session ID** copies its exact session
+ID. The panel never runs the Claude CLI, including when refreshing or clicking a Claude row.
 
 The reader uses Python 3's SQLite support to read Codex's local `goals_*.sqlite` and
 `state_*.sqlite` databases under `$CODEX_HOME` (default `~/.codex`). It never updates goal
-state. These are Codex's internal files: incompatible schemas show an error instead of
-silently falling back to stale goals. Claude, scheduled tasks, and remote Codex goals are
-not supported yet.
+state or Claude transcripts. These are internal files: incompatible formats show an error
+instead of silently showing an empty list. Each source refreshes independently; if one
+fails, its previous goals stay visible with an error while the other source updates.
+Scheduled `/loop` tasks and remote goals are not supported yet.
 
 ## Pinned spaces
 
@@ -93,7 +102,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
-| `mods/loops/` | Codex goals panel and its Python reader |
+| `mods/loops/` | Codex and Claude goals panel and its Python readers |
 | `mods/spaces-pin/` | Herdr's Spaces sidebar, cloned, with pinned spaces on top |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin for spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
