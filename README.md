@@ -47,6 +47,7 @@ The Files and Changes panels only list; clicking a file opens it in a large dial
 the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 
 - **Files** shows the file with syntax highlighting (Herdr's code view).
+  Use **Collapse all folders** in its header to close every expanded folder at once.
 - **Changes** shows the diff, **Split** (old and new side by side) or **Unified** (`S` toggles,
   and the choice sticks). Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
   when it's installed (`brew install bat`), in the theme's terminal colors; without it they're plain.
