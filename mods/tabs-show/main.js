@@ -2,6 +2,8 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
 import { ReviewPanes } from "./review.js";
+import { BriefTracker } from "./brief-tracker.js";
+import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -17,11 +19,13 @@ export default class Tabs extends View {
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     this.review = new ReviewPanes();
+    this.brief = new BriefTracker();
+    this.brief.start(cx);
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
-        else if (command === "files" || command === "changes") this.togglePanel(command);
+        else if (["files", "changes", "show", "loops", "brief"].includes(command)) this.togglePanel(command);
       }
     });
   }
@@ -61,6 +65,7 @@ export default class Tabs extends View {
   }
 
   render() {
+    this.brief.observe();
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
@@ -92,7 +97,7 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", "loops"];
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", "loops", "brief"];
     this.syncPanel(space, panel, body, enabled);
     const tab = shown.find(tab => tab.active)?.id;
     const review = panes().find(pane => pane.tab === tab && pane.mod === "review-pane");
@@ -127,6 +132,10 @@ export default class Tabs extends View {
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(panelButton("show", "Show", "mods/show/show.svg"))
       .child(panelButton("loops", "Loops", "mods/loops/loops.svg"))
+      .child(panelButton("brief", (() => {
+        const count = unreadFor(entriesFor(space?.id, shared(ACTIVITY) ?? [], shared(REPORTS) ?? []), shared(receipt(space?.id))).length;
+        return count ? `Brief (${count})` : "Brief";
+      })(), "mods/brief/brief.svg"))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs-show/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs-show/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs-show/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

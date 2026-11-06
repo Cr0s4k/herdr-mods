@@ -19,7 +19,7 @@ function folder(cwd) {
   return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
 }
 
-const PANEL_TITLES = { "review-pane": "Changes", "files-pane": "Files", "show-pane": "Show", "loops-pane": "Loops" };
+const PANEL_TITLES = { "review-pane": "Changes", "files-pane": "Files", "show-pane": "Show", "loops-pane": "Loops", "brief-pane": "Since you left" };
 
 export default class Pane extends View {
   init() { this.hovered = false; }

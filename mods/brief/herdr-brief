@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Persist agent handoffs for Herdr's Since you left panel."""
+import argparse
+import json
+import os
+import secrets
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+def store():
+    return Path(os.environ.get("HERDR_APP_HOME", Path.home() / ".config/herdr-app")) / "brief/items"
+
+
+def command_json(argv):
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=5)
+    if result.returncode:
+        raise ValueError(f"{argv[0]} could not read the current session.")
+    return json.loads(result.stdout)
+
+
+def destination(spaces, terminals, cwd, terminal=None):
+    """Use identity first; directory fallback must identify one live worker."""
+    if not terminal:
+        workers = [item for item in terminals if item.get("cwd") == cwd
+                   and item.get("state") == "live" and item.get("status") == "working"]
+        if len(workers) != 1:
+            raise ValueError("Cannot identify one working agent in this folder. Pass --terminal with your exact terminal address.")
+        terminal = workers[0]["address"]
+    matches = [space for space in spaces for tab in space.get("tabs", [])
+               if any(item.get("terminal") == terminal for item in tab.get("terminals", []))]
+    if len(matches) != 1:
+        raise ValueError("The terminal does not identify one Herdr space. No handoff was posted.")
+    return matches[0]["id"], terminal
+
+
+def validate(item):
+    if not isinstance(item, dict) or item.get("source") != "agent":
+        raise ValueError("Invalid handoff")
+    for key in ("id", "space", "terminal", "title", "summary"):
+        if not isinstance(item.get(key), str) or not item[key].strip() or len(item[key]) > 12000:
+            raise ValueError(f"Invalid {key}")
+    if not isinstance(item.get("time"), int) or item["time"] < 0:
+        raise ValueError("Invalid time")
+    for key in ("changes", "tests", "questions"):
+        if not isinstance(item.get(key), list) or len(item[key]) > 30 or any(
+                not isinstance(value, str) or not value.strip() or len(value) > 12000 for value in item[key]):
+            raise ValueError(f"Invalid {key}")
+    return item
+
+
+def post(args):
+    cwd = str(Path(args.cwd or os.getcwd()).resolve())
+    identity = args.terminal or os.environ.get("HC_TERMINAL_ID")
+    layout = command_json(["herdr-app", "ls"])
+    terminals = [] if identity else command_json(["hc", "ls", "--json"])["terminals"]
+    space, terminal = destination(layout["spaces"], terminals, cwd, identity)
+    item = validate({"id": f"handoff-{time.time_ns()}-{secrets.token_hex(4)}",
+                     "space": space, "terminal": terminal, "cwd": cwd,
+                     "time": int(time.time() * 1000), "source": "agent", "kind": "handoff",
+                     "title": args.title.strip(), "summary": args.summary.strip(),
+                     "changes": args.change, "tests": args.test, "questions": args.question})
+    root = store()
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / f"{item['id']}.json"
+    temporary = target.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"id": item["id"], "space": space}
+
+
+def listing():
+    items, failed = [], 0
+    root = store()
+    if root.exists():
+        # Files are immutable and uniquely named; concurrent writers never share
+        # a temporary path and readers only see atomically published JSON.
+        for path in sorted(root.glob("*.json"), reverse=True)[:500]:
+            try:
+                items.append(validate(json.loads(path.read_text(encoding="utf-8"))))
+            except (OSError, ValueError, TypeError):
+                failed += 1
+    return {"items": sorted(items, key=lambda item: (item["time"], item["id"]), reverse=True),
+            "warning": f"{failed} handoff file(s) could not be read. Other updates are still shown." if failed else None}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("list", help="Read saved handoffs as JSON")
+    posting = commands.add_parser("post", help="Leave a handoff for your own space")
+    posting.add_argument("--title", required=True)
+    posting.add_argument("--summary", required=True)
+    for field in ("change", "test", "question"):
+        posting.add_argument(f"--{field}", action="append", default=[])
+    posting.add_argument("--terminal", help="Exact terminal address; never the focused terminal")
+    posting.add_argument("--cwd", help="Task's working folder")
+    args = parser.parse_args()
+    try:
+        print(json.dumps(listing() if args.command == "list" else post(args)))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -119,6 +119,44 @@ fails, its previous entries stay visible with an error while the other sources u
 Cloud/Desktop schedules, Monitor-based loops without scheduler records, and remote goals
 are not included.
 
+## Since you left
+
+The **Brief** toolbar button opens a persistent handoff for the current space. Its
+count shows unread updates. **Mark reviewed** clears that unread view; **History**
+keeps reviewed updates available. Opening a space or focusing an agent does not
+mark its brief read. Each space has its own read receipts, even when several
+spaces share a project folder.
+
+While Herdr is open on `main-custom`, the toolbar observes agent requests for
+input and working → idle/done transitions across spaces. A finished turn is
+activity, not a verified successful outcome. The initial agent state is a
+baseline; closing an agent, losing a connection, or an unknown status never
+counts as completion. Activity while the app is closed is not reconstructed.
+
+For substantive results, Codex and Claude can leave a handoff using the installed
+`herdr-brief` skill and command:
+
+```sh
+herdr-brief post --title "Login fix ready" --summary "Fixed the redirect after sign-in." \
+  --change "Updated src/auth.ts." --test "Passed: npm test (42 tests)." \
+  --question "Should expired sessions return to the original page?"
+```
+
+Changes, validation and open questions are separate sections; validation is
+labeled **agent reported**. The optional flags repeat. **Open agent** returns to
+the handoff's exact live terminal in its original space. Handoffs are routed by
+terminal identity, with a unique working agent in the exact task folder as a
+fallback; ambiguous matches fail instead of using the focused space. The command
+uses local `herdr-app` and `hc` access. Existing agents may need to load the new
+skill before they start posting richer handoffs.
+
+The panel can **Move to pane** like the other panels. A moved brief remains bound
+to its tab's space. Shared activity and read receipts survive restarts. Handoffs
+are stored atomically under `~/.config/herdr-app/brief/items/`; the panel loads the
+newest 500 handoffs and retains the last 500 observed events across spaces. It
+refreshes handoffs every ten seconds, keeps previous results on errors, and never
+reads terminal transcripts or treats a status indicator as a test result.
+
 ## Spaces and agents
 
 The sidebar is one tree: agents appear under their space, with subtle connecting
@@ -166,6 +204,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Changes title for review panes |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
+| `mods/brief/`, `mods/brief-pane/` | Since you left: per-space activity, persistent handoffs, unread history and pane view |
+| `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin and Focus this space |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |

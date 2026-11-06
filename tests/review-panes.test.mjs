@@ -111,10 +111,12 @@ Object.assign(globalThis.__reviewNative, {
   layout: () => world.layout,
   window: () => ({ platform: "macos" }), settings: () => ({ zoom: 1 }),
   theme: () => new Proxy({}, { get: (_, key) => key }),
+  BriefTracker: class { start() {} observe() {} },
+  ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, spaces, panes, run, theme, window, shared, layout, settings, ReviewPanes } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, spaces, panes, run, theme, window, shared, layout, settings, ReviewPanes, BriefTracker, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -128,9 +130,9 @@ function find(el, id) {
 }
 function text(el) { return typeof el === "string" ? el : (el?.nodes ?? []).map(text).join(" "); }
 
-test("Files, Changes, Show and Loops toggle side panels without creating panes", () => {
+test("Files, Changes, Show, Loops and Brief toggle side panels without creating panes", () => {
   const tabs = setupTabs(), root = tabs.render();
-  for (const id of ["files", "changes", "show", "loops"]) {
+  for (const id of ["files", "changes", "show", "loops", "brief"]) {
     world.calls = [];
     find(root, `panel-${id}`).handlers.click({}, cx);
     assert.deepEqual(world.calls, [

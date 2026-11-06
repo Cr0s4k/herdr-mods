@@ -47,6 +47,7 @@ test("each side panel opens its native pane with its current state and creates n
     ["changes", "review-pane", { message: "Draft message" }],
     ["show", "show-pane", { all: true }],
     ["loops", "loops-pane", { all: true, completed: true, showCodex: false, showClaude: true }],
+    ["brief", "brief-pane", {}],
   ]) {
     setup();
     moveToPane(kind, state, cx);

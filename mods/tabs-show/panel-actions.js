@@ -6,6 +6,7 @@ const PANELS = {
   changes: { mod: "review-pane", name: "Changes" },
   show: { mod: "show-pane", name: "Show" },
   loops: { mod: "loops-pane", name: "Loops" },
+  brief: { mod: "brief-pane", name: "Brief" },
 };
 const opening = new Set();
 

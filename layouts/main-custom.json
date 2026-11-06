@@ -131,6 +131,13 @@
                       },
                       "id": "loops",
                       "type": "block"
+                    },
+                    {
+                      "content": {
+                        "mod": "brief"
+                      },
+                      "id": "brief",
+                      "type": "block"
                     }
                   ],
                   "id": "panel-body",
