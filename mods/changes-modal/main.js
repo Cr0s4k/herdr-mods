@@ -2,6 +2,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { iconsReady, fileIcon, light } from "./icons.js";
+import { moveToPaneButton } from "./panel-actions.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -119,6 +120,11 @@ export default class Changes extends View {
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.refresh(cx);
+    const draft = props()?.panelState;
+    if (draft?.message && (!draft.context || draft.context === this.context)) {
+      this.message = draft.message;
+      this.input.set_value(this.message);
+    }
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
 
@@ -377,7 +383,8 @@ export default class Changes extends View {
       .when(!this.embedded, el => el.child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Changes"))
         .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`))
-        .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))))
+        .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
+        .child(moveToPaneButton("changes", { message: this.message, context: this.context }, t))))
       .child(v_flex().id("changes-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.files.map((f, i) => {
         const parts = f.path.split("/"), name = parts.pop();
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => this.view(i))

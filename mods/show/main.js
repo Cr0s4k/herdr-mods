@@ -2,6 +2,7 @@ import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, home, appHome, spaces, panes, agents, theme, run, props, openOverlay, closeOverlay, notify, watchFolder } from "herdr";
 import * as fs from "fs/promises";
+import { moveToPaneButton } from "./panel-actions.js";
 
 const ITEMS = () => `${appHome()}/show/items`;
 const CLI = () => `${home()}/.local/bin/herdr-show`;
@@ -116,7 +117,7 @@ export default class Show extends View {
     this.size = { width: 360, height: 600 };
     if (this.mode === "editor") return this.initEditor(cx);
     this.items = [];
-    this.all = false;
+    this.all = props()?.panelState?.all ?? false;
     this.removing = false;
     this.seen = null;
     const reload = async (cx) => {
@@ -132,7 +133,7 @@ export default class Show extends View {
   }
 
   arrived(items) {
-    if (this.seen) {
+    if (this.seen && !this.embedded) {
       for (const i of items) {
         if (this.seen.has(i.id) || i.kind === "marked") continue;
         notify({ title: i.kind === "fixed" ? "Fix arrived" : "New image to review", body: i.name, level: "info", timeout: 5000,
@@ -263,17 +264,20 @@ export default class Show extends View {
     };
 
     const groups = this.groups(items);
-    return v_flex().id("root").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
+    return v_flex().id("root").size_full().min_h(0).overflow_hidden().bg(t.background)
+      .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
+      .when(Boolean(this.embedded), el => el.track_focus(this.handle))
       .text_color(t.foreground).text_size(13)
       .on_size_change((size, cx) => { this.size = size; cx.notify(); })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Show"))
+        .when(!this.embedded, el => el.child(div().font_semibold().child("Show")))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(title ?? ""))
         .child(div().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.all ? "all spaces" : space?.name ?? ""))
         .child(pill("scope", this.all ? "This space" : "All", false, (cx) => { this.all = !this.all; cx.notify(); }).flex_none())
         .when(items.length > 0, (el) => el.child(pill("clear-items", this.removing ? "Clearing…" : "Clear", false, (cx) => this.clear(cx))
           .flex_none().tooltip(this.all || !space ? "Remove all shown images" : "Remove shown images in this space")
-          .when(this.removing, (b) => b.opacity(0.5)))))
+          .when(this.removing, (b) => b.opacity(0.5))))
+        .when(!this.embedded, el => el.child(moveToPaneButton("show", { all: this.all }, t))))
       .child(v_flex().id("show-list").flex_1().min_h(0).overflow_y_scrollbar().p(14).gap(18)
         .when(!items.length, (el) => el.child(v_flex().gap(6).text_color(t.dim).text_size(12)
           .child(div().child(this.error ?? "Nothing shown yet."))

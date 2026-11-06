@@ -1,6 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button } from "gpui-base";
-import { appHome, spaces, panes, exec, run, theme } from "herdr";
+import { appHome, spaces, panes, exec, run, theme, props } from "herdr";
+import { moveToPaneButton } from "./panel-actions.js";
 
 const STATUS = {
   active: ["Active", "working"],
@@ -40,10 +41,11 @@ export default class Loops extends View {
   init(_props, cx) {
     this.items = [];
     this.loading = true;
-    this.all = localStorage.getItem("scope") === "all";
-    this.completed = localStorage.getItem("completed") === "true";
-    this.showCodex = localStorage.getItem("source-codex") !== "false";
-    this.showClaude = localStorage.getItem("source-claude") !== "false";
+    const state = props()?.panelState;
+    this.all = state?.all ?? (localStorage.getItem("scope") === "all");
+    this.completed = state?.completed ?? (localStorage.getItem("completed") === "true");
+    this.showCodex = state?.showCodex ?? (localStorage.getItem("source-codex") !== "false");
+    this.showClaude = state?.showClaude ?? (localStorage.getItem("source-claude") !== "false");
     cx.spawn(async (cx) => this.reload(cx));
     cx.timer.every(10000, (cx) => { cx.spawn(async (cx) => this.reload(cx)); });
   }
@@ -183,10 +185,12 @@ export default class Loops extends View {
       : [this.completed ? "No loops here yet." : "No current loops.",
          history.length ? "Show history to see previous work." : "Use /goal in Codex or Claude, or /loop in Claude."];
 
-    return v_flex().id("loops").size_full().min_h(0).rounded(10).overflow_hidden()
-      .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+    return v_flex().id("loops").size_full().min_h(0).overflow_hidden().bg(t.background)
+      .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
+      .when(Boolean(this.embedded), el => el.track_focus(this.handle))
+      .text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().flex_none().font_semibold().child("Loops"))
+        .when(!this.embedded, el => el.child(div().flex_none().font_semibold().child("Loops")))
         .child(h_flex().gap(4).flex_none().children(["codex", "claude"].map((source) => {
           const name = source === "codex" ? "Codex" : "Claude";
           const selected = this.sourceEnabled(source);
@@ -209,7 +213,10 @@ export default class Loops extends View {
         }, this.completed))
         .child(button("loops-refresh", svg("mods/loops/loops.svg").size(13), (cx) => {
           cx.spawn(async (cx) => this.reload(cx));
-        }).accessibility_label("Refresh loops").tooltip("Refresh loops")))
+        }).accessibility_label("Refresh loops").tooltip("Refresh loops"))
+        .when(!this.embedded, el => el.child(moveToPaneButton("loops", {
+          all: this.all, completed: this.completed, showCodex: this.showCodex, showClaude: this.showClaude,
+        }, t))))
       .child(v_flex().id("loops-list").flex_1().min_h(0).overflow_y_scrollbar().px(14)
         .when(Boolean(error), (el) => el.child(v_flex().py(12).gap(5).text_size(11.5).text_color(t.blocked)
           .child(div().whitespace_normal().child(error))

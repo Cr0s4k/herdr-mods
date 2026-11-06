@@ -19,6 +19,8 @@ function folder(cwd) {
   return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
 }
 
+const PANEL_TITLES = { "review-pane": "Changes", "files-pane": "Files", "show-pane": "Show", "loops-pane": "Loops" };
+
 export default class Pane extends View {
   init() { this.hovered = false; }
 
@@ -44,7 +46,7 @@ export default class Pane extends View {
     const t = theme();
     const p = this.me();
     if (!p) return div();
-    const name = p.mod === "review-pane" ? "Changes" : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
+    const name = PANEL_TITLES[p.mod] ?? (((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell");
     const summary = p.mod === "review-pane" ? shared(`review-pane.summary.${p.tab}`) : null;
     const pic = icon(p.program, 14, t.dim);
     const st = p.status;

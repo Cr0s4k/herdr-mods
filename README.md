@@ -66,6 +66,14 @@ shortcuts and controls. The arrangement belongs to its tab and Herdr remembers i
 **Changes** toggles the normal side panel, just like Files, Show and Loops. It works
 independently of the review panes, so either view is available when you want it.
 
+Files, Changes, Show and Loops each have a **Move to pane** icon in their side-panel header.
+It opens that view as a normal pane in the current tab, then hides the side panel. New panes
+keep the current folder expansion, commit draft or filters. If that view already has a pane
+in the tab, the action focuses it and keeps its existing state. These panes support the usual
+navigation, drag, split, zoom and close controls. Use the toolbar toggle whenever you want
+the side panel again. Moving a panel does not start a terminal; **Changes + terminal**
+remains the shortcut for the paired layout.
+
 ## Loops
 
 The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals** and **Claude
@@ -153,6 +161,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/review-pane/` | Changes inside a normal pane, sharing the existing view through a symlink |
+| `mods/files-pane/`, `mods/show-pane/`, `mods/loops-pane/` | Normal pane versions of the existing panels, sharing their views through symlinks |
+| `mods/tabs-show/panel-actions.js` | Shared Move to pane action and keyboard-focus handling |
 | `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Changes title for review panes |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |

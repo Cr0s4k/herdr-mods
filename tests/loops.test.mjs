@@ -30,10 +30,12 @@ globalThis.__loopsNative = {
     return typeof world.result === "function" ? world.result(...args) : world.result;
   }, run: (...args) => world.calls.push(args),
   theme: () => new Proxy({}, { get: (_, k) => k }),
+  props: () => world.props ?? null,
+  moveToPaneButton: kind => native().id(`move-${kind}-to-pane`),
 };
 const source = (await readFile(new URL("../mods/loops/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "")
-  .replace("const STATUS", "const { View, div, svg, v_flex, h_flex, Button, appHome, spaces, panes, exec, run, theme } = globalThis.__loopsNative;\nconst STATUS");
+  .replace("const STATUS", "const { View, div, svg, v_flex, h_flex, Button, appHome, spaces, panes, exec, run, theme, props, moveToPaneButton } = globalThis.__loopsNative;\nconst STATUS");
 const { default: Loops } = await import("data:text/javascript," + encodeURIComponent(source));
 const goal = (id, cwd, status = "active") => ({ thread_id: id, objective: `Goal ${id}`, cwd, status,
   tokens_used: 250, token_budget: 1000, time_used_seconds: 90, updated_at_ms: 1000 });
@@ -290,4 +292,20 @@ test("hidden sources keep refreshing while their errors and warnings follow the 
   initialized.init({}, { spawn() {}, timer: { every() {} } });
   assert.equal(initialized.showCodex, true);
   assert.equal(initialized.showClaude, true);
+});
+
+test("moving Loops to a pane restores its explicit filters over copy-local preferences", () => {
+  preferences.set("scope", "space");
+  preferences.set("completed", "false");
+  preferences.set("source-codex", "true");
+  preferences.set("source-claude", "false");
+  world.props = { panelState: { all: true, completed: true, showCodex: false, showClaude: true } };
+  try {
+    const moved = new Loops();
+    moved.init({}, { spawn() {}, timer: { every() {} } });
+    assert.equal(moved.all, true);
+    assert.equal(moved.completed, true);
+    assert.equal(moved.showCodex, false);
+    assert.equal(moved.showClaude, true);
+  } finally { world.props = null; }
 });

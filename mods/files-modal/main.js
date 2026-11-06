@@ -3,6 +3,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay } from "herdr";
 import { iconsReady, fileIcon } from "./icons.js";
+import { moveToPaneButton } from "./panel-actions.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -47,6 +48,7 @@ export default class Files extends View {
     cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);
     this.saved = new Map();
+    this.moveState = props()?.panelState ?? null;
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
@@ -79,7 +81,9 @@ export default class Files extends View {
     const { cwd, on } = location(), next = key();
     if (next !== this.context?.key) {
       if (this.context) this.saved.set(this.context.key, { folders: this.folders });
-      const saved = this.saved.get(next);
+      const moved = this.moveState && this.moveState.root === cwd && (this.moveState.on ?? null) === (on ?? null) ? this.moveState : null;
+      const saved = this.saved.get(next) ?? moved;
+      this.moveState = null;
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.watched = null; this.error = null; this.limited = false;
       this.loading = false;
@@ -237,16 +241,20 @@ export default class Files extends View {
     if (props()?.overlay) return this.renderViewer();
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
-    return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+    return v_flex().id("files").size_full().min_h(0).overflow_hidden().bg(t.background)
+      .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
+      .when(Boolean(this.embedded), el => el.track_focus(this.handle))
+      .text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Files"))
+        .when(!this.embedded, el => el.child(div().font_semibold().child("Files")))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.root?.split(/[\\/]/).pop() ?? ""))
         .child(Button.new("files-collapse-all").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim)
           .disabled(this.folders.size === 0).opacity(this.folders.size ? 1 : 0.4)
           .tooltip("Collapse all folders").accessibility_label("Collapse all folders")
           .when(this.folders.size > 0, el => el.cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground)))
           .on_click((_e, cx) => this.collapseAll(cx))
-          .child(svg("mods/files-modal/collapse-all.svg").size(16))))
+          .child(svg("mods/files-modal/collapse-all.svg").size(16)))
+        .when(!this.embedded, el => el.child(moveToPaneButton("files", { folders: [...this.folders], root: this.root, on: this.on ?? null }, t))))
       .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))));
