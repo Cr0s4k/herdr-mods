@@ -159,6 +159,13 @@ reads terminal transcripts or treats a status indicator as a test result.
 
 ## Spaces and agents
 
+The sidebar **+** offers **New space** for the usual terminal, or **From a project…**
+to search the folders in `~/Projects`. Choose a project to create a local space with
+the default terminal on the left and **Changes + terminal** on the right. Both
+terminals start in the project folder, and focus stays in the left terminal.
+Use ↑/↓ and Enter to choose; Esc closes the picker. **Refresh projects** rereads the
+folder list. Reading the list requires Python 3, like the other local readers.
+
 The sidebar is one tree: agents appear under their space, with subtle connecting
 lines. Click a space to select it, or its chevron to expand or collapse its children
 without changing focus. Click an agent to focus its pane. Worktree spaces remain
@@ -207,6 +214,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/brief/`, `mods/brief-pane/` | Since you left: per-space activity, persistent handoffs, unread history and pane view |
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
+| `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin and Focus this space |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |

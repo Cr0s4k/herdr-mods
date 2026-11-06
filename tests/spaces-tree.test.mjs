@@ -61,6 +61,13 @@ function find(el, id) { return el?.styles?.id?.[0] === id ? el : (el?.nodes ?? [
 function text(el) { return typeof el === "string" ? el : (el?.nodes ?? []).map(text).join(" "); }
 function click(root, id) { const el = find(root, id); assert.ok(el, `Missing ${id}`); el.handlers.click({}, cx); }
 
+test("the sidebar plus opens the space choices without starting a terminal", () => {
+  const view = setup();
+  click(view.render(), "space-new");
+  assert.deepEqual(world.calls, []);
+  assert.deepEqual(world.opened, [{ mod: "space-new", kind: "popup", width: 300, height: 114 }]);
+});
+
 test("one tree places agents inside their owning space and focuses the exact pane", () => {
   const view = setup(), root = view.render();
   assert.ok(find(find(root, "space-tree-app"), "ag-one"));
