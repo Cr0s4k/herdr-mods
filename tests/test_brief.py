@@ -37,7 +37,7 @@ class BriefTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"HERDR_APP_HOME": folder}), \
                 patch.object(brief, "command_json", return_value={"spaces": self.spaces}):
             args = SimpleNamespace(cwd=folder, terminal="t1", title="Fixed", summary="Result",
-                                   change=["Callback"], test=["42 passed"], question=["Ship?"])
+                                   change=["Callback"], test=["42 passed"], question=["Ship?"], caveat=[])
             with ThreadPoolExecutor(max_workers=8) as pool:
                 results = list(pool.map(lambda _: brief.post(args), range(24)))
             items = brief.listing()["items"]
@@ -50,10 +50,25 @@ class BriefTests(unittest.TestCase):
             self.assertEqual(len(listed["items"]), 24)
             self.assertIn("1 handoff", listed["warning"])
 
+    def test_repeated_caveats_round_trip_through_the_command(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {"HERDR_APP_HOME": folder}), \
+                patch.object(brief, "command_json", return_value={"spaces": self.spaces}), \
+                patch.object(brief.sys, "argv", ["herdr-brief", "post", "--terminal", "t1", "--cwd", folder,
+                                                "--title", "Sign-in fixed", "--summary", "Returns to your page",
+                                                "--caveat", "Safari has not been checked", "--caveat", "Restart required"]), \
+                patch("builtins.print"):
+            self.assertEqual(brief.main(), 0)
+            item = brief.listing()["items"][0]
+            self.assertEqual(item["caveats"], ["Safari has not been checked", "Restart required"])
+            self.assertEqual(item["tests"], [])
+
     def test_empty_sections_are_optional_but_invalid_claim_payloads_rejected(self):
         item = {"source": "agent", "id": "one", "space": "one", "terminal": "t1", "time": 1,
                 "title": "Ready", "summary": "Done", "changes": [], "tests": [], "questions": []}
         self.assertEqual(brief.validate(item)["tests"], [])
+        for value in ("warning", [""], [None], ["Too long"] * 31):
+            with self.assertRaises(ValueError):
+                brief.validate({**item, "caveats": value})
         with self.assertRaises(ValueError):
             brief.validate({**item, "tests": "passed"})
         with self.assertRaises(ValueError):

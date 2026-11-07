@@ -44,9 +44,11 @@ def validate(item):
             raise ValueError(f"Invalid {key}")
     if not isinstance(item.get("time"), int) or item["time"] < 0:
         raise ValueError("Invalid time")
-    for key in ("changes", "tests", "questions"):
-        if not isinstance(item.get(key), list) or len(item[key]) > 30 or any(
-                not isinstance(value, str) or not value.strip() or len(value) > 12000 for value in item[key]):
+    for key in ("changes", "tests", "questions", "caveats"):
+        # Caveats were added later; existing handoffs remain valid without them.
+        values = item.get(key, []) if key == "caveats" else item.get(key)
+        if not isinstance(values, list) or len(values) > 30 or any(
+                not isinstance(value, str) or not value.strip() or len(value) > 12000 for value in values):
             raise ValueError(f"Invalid {key}")
     return item
 
@@ -61,7 +63,8 @@ def post(args):
                      "space": space, "terminal": terminal, "cwd": cwd,
                      "time": int(time.time() * 1000), "source": "agent", "kind": "handoff",
                      "title": args.title.strip(), "summary": args.summary.strip(),
-                     "changes": args.change, "tests": args.test, "questions": args.question})
+                     "changes": args.change, "tests": args.test, "questions": args.question,
+                     "caveats": args.caveat})
     root = store()
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{item['id']}.json"
@@ -96,7 +99,7 @@ def main():
     posting = commands.add_parser("post", help="Leave a handoff for your own space")
     posting.add_argument("--title", required=True)
     posting.add_argument("--summary", required=True)
-    for field in ("change", "test", "question"):
+    for field in ("change", "test", "question", "caveat"):
         posting.add_argument(f"--{field}", action="append", default=[])
     posting.add_argument("--terminal", help="Exact terminal address; never the focused terminal")
     posting.add_argument("--cwd", help="Task's working folder")

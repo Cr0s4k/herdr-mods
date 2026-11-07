@@ -225,23 +225,25 @@ While Herdr is open on `main-custom`, the toolbar records requests for input
 across spaces. Finishing a turn no longer creates an update. Existing finished-turn
 notices and routine reports whose title and opening sentence announce a commit or
 push are kept in **History**, without adding to the unread count. Reports with
-questions or reported failures remain in the main feed. The initial agent state
+questions, caveats or reported failures remain in the main feed. The initial agent state
 is a baseline; activity while the app is closed is not reconstructed.
 
 For substantive results, Codex and Claude can leave a handoff using the installed
 `herdr-brief` skill and command:
 
 ```sh
-herdr-brief post --title "Sign-in returns you to your page" \
-  --summary "After signing in, you now return to the page you were trying to open." \
-  --change 'Updated `src/auth.ts`.' --test "All 42 sign-in tests passed." \
-  --question "Should expired sessions return to the original page?"
+herdr-brief post --title "Hide quiet spaces" \
+  --summary "Hide a space until a time you choose." \
+  --change "Terminals keep running; restore early from Hidden spaces." \
+  --test "All sidebar tests passed; checked hiding and early restore in the app."
 ```
 
-Briefs lead with a short title and a readable Markdown summary. Questions stay
-visible under **Needs your answer**; **Changes & checks** expands optional details
-and validation written by the agent. The installed skill asks for plain-language
-outcomes and skips routine commit, push and status notices. The optional flags
+Briefs show a short title and a one-sentence summary. **Read more** expands
+optional practical changes. Questions stay visible under
+**Needs your answer**. Use `--caveat` for important failures or limitations; these
+stay visible under **Keep in mind**. Validation stays in the saved record and is
+not displayed in the panel. Older briefs without caveats still load normally. The installed
+skill asks for plain-language outcomes and skips routine commit, push and status notices. The optional flags
 repeat. **Open conversation** (or **Reply to agent**) returns to
 the handoff's exact live terminal in its original space. Handoffs are routed by
 terminal identity, with a unique working agent in the exact task folder as a

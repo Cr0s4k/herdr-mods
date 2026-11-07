@@ -52,25 +52,23 @@ export default class Brief extends View {
           const report = item.source === "agent";
           const needsReply = item.kind === "blocked" || Boolean(item.questions?.length);
           const expanded = this.expanded.has(item.id);
-          const details = report && Boolean(item.changes?.length || item.tests?.length);
+          const more = report && Boolean(item.changes?.length);
           const date = new Date(item.time), today = new Date();
           const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
           const stamp = date.toDateString() === today.toDateString() ? clock : `${date.getDate()}/${date.getMonth() + 1} · ${clock}`;
-          return v_flex().id(`brief-${item.id}`).min_w(0).py(18).gap(12).flex_none().border_b(1).border_color(t.border)
+          return v_flex().id(`brief-${item.id}`).min_w(0).py(14).gap(8).flex_none().border_b(1).border_color(t.border)
             .child(div().font_semibold().text_size(14).whitespace_normal().child(item.title))
             .child(TextView.markdown(`summary-${item.id}`, item.summary).text_size(13.5).line_height(1.5).selectable(true))
+            .when(report && Boolean(item.caveats?.length), el => el.child(section(`caveats-${item.id}`, "Keep in mind", item.caveats, t.blocked)))
             .when(report && Boolean(item.questions?.length), el => el.child(section(`questions-${item.id}`, "Needs your answer", item.questions, t.blocked)))
-            .when(expanded && details, el => el.child(v_flex().min_w(0).gap(14).children([
-              section(`changes-${item.id}`, "What changed", item.changes),
-              section(`tests-${item.id}`, "Checks", item.tests),
-            ].filter(Boolean))))
-            .when(details, el => el.child(h_flex().child(button(`brief-details-${item.id}`, expanded ? "Hide details" : "Changes & checks", cx => {
-              if (expanded) this.expanded.delete(item.id); else this.expanded.add(item.id);
-              cx.notify();
-            }))))
+            .when(expanded && more, el => el.child(section(`changes-${item.id}`, "What changed", item.changes)))
             .child(h_flex().gap(6).items_center()
               .child(div().flex_1().min_w(0).text_size(11.5).text_color(t.muted)
                 .tooltip(`${date.toLocaleString()}${report ? " · Written by your agent" : " · Activity only; no result reported"}`).child(stamp))
+              .when(more, el => el.child(button(`brief-more-${item.id}`, expanded ? "Read less" : "Read more", cx => {
+                if (expanded) this.expanded.delete(item.id); else this.expanded.add(item.id);
+                cx.notify();
+              })))
               .when(Boolean(live), el => el.child(button(`brief-open-${item.id}`, needsReply ? "Reply to agent" : "Open conversation", () => run("agent.focus", { terminal: live.address })))));
         })));
   }

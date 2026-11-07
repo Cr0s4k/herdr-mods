@@ -6,7 +6,7 @@ export const receipt = space => `brief.read.${space}`;
 // Old activity and housekeeping reports remain available in History, but don't
 // compete with results or inflate the toolbar's unread count.
 export const isRoutine = item => item.kind === "finished" || (
-  item.source === "agent" && !item.questions?.length &&
+  item.source === "agent" && !item.questions?.length && !item.caveats?.length &&
   /\b(?:committed|pushed)\b/i.test(item.title ?? "") &&
   /^(?:pushed|committed)\s+[a-f\d]{7,40}\b/i.test(item.summary ?? "") &&
   !/\b(?:fail(?:ed|ure|ures|ing|s)?|error|blocked|conflict|rejected)\b/i.test(

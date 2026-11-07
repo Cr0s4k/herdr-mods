@@ -38,7 +38,7 @@ test("routine legacy activity stays in history and does not inflate unread count
   assert.equal(unreadFor(entriesFor("one", events, reports), []).length, 2);
   assert.deepEqual(entriesFor("one", events, reports, true).map(item => item.id), ["reply", "turn", "push", "result"]);
   for (const extra of [{ questions: ["Deploy this?"] }, { tests: ["Push failed"] }, { summary: "Push rejected by the remote." },
-    { title: "Committed locally; push failed" }, { changes: ["Deployment is blocked"] }]) {
+    { title: "Committed locally; push failed" }, { changes: ["Deployment is blocked"] }, { caveats: ["Requires a restart"] }]) {
     assert.equal(entriesFor("one", [], [{ ...reports[0], ...extra }]).length, 1);
   }
 });
@@ -80,23 +80,28 @@ const { default: Brief } = await import("data:text/javascript," + encodeURICompo
 const textOf = node => typeof node === "string" ? node : (node?.nodes ?? []).map(textOf).join(" ");
 const find = (node, id) => node?.idArgs?.[0] === id ? node : (node?.nodes ?? []).map(child => find(child, id)).find(Boolean);
 
-test("real rows show handoff evidence; marking reviewed preserves history and later arrivals", () => {
+test("read more reveals changes only; caveats and questions stay visible", () => {
   world.props = null;
   world.spaces = [{ id: "one", active: true, name: "Project", tabs: [{ id: "tab" }] }];
   world.values = new Map([["brief.activity", []], ["brief.reports", [{ id: "handoff", space: "one", terminal: "t1", time: 100,
-    source: "agent", title: "Ready", summary: "Fixed login", changes: ["Updated callback"], tests: ["42 passed"], questions: ["Ship it?"] }]]]);
+    source: "agent", title: "Ready", summary: "Fixed login", changes: ["Returns you to your original page"],
+    tests: ["42 passed"], questions: ["Ship it?"], caveats: ["Safari has not been checked"] }]]]);
   world.agents = [agent("idle")];
   const view = new Brief(); view.init();
   let root = view.render();
   assert.doesNotMatch(textOf(root), /42 passed/);
+  assert.doesNotMatch(textOf(root), /Returns you to your original page/);
+  assert.match(textOf(root), /Safari has not been checked/);
   assert.match(textOf(root), /Ship it\?/);
-  find(root, "brief-details-handoff").handlers.click({}, { notify() {} });
+  find(root, "brief-more-handoff").handlers.click({}, { notify() {} });
   root = view.render();
-  assert.match(textOf(root), /42 passed/);
-  assert.match(textOf(root), /Checks/);
-  find(root, "brief-details-handoff").handlers.click({}, { notify() {} });
+  assert.doesNotMatch(textOf(root), /42 passed|Show checks/);
+  assert.match(textOf(root), /Returns you to your original page/);
+  find(root, "brief-more-handoff").handlers.click({}, { notify() {} });
   root = view.render();
   assert.doesNotMatch(textOf(root), /42 passed/);
+  assert.doesNotMatch(textOf(root), /Returns you to your original page/);
+  assert.match(textOf(root), /Safari has not been checked/);
   assert.match(textOf(root), /Ship it\?/);
   find(root, "brief-open-handoff").handlers.click({}, {});
   assert.deepEqual(world.calls.at(-1), ["agent.focus", { terminal: "t1" }]);
@@ -107,8 +112,28 @@ test("real rows show handoff evidence; marking reviewed preserves history and la
   assert.match(textOf(root), /Arrived later/);
   assert.doesNotMatch(textOf(root), /42 passed/);
   find(root, "brief-history").handlers.click({}, { notify() {} });
-  find(view.render(), "brief-details-handoff").handlers.click({}, { notify() {} });
-  assert.match(textOf(view.render()), /42 passed/);
+  find(view.render(), "brief-more-handoff").handlers.click({}, { notify() {} });
+  assert.match(textOf(view.render()), /Returns you to your original page/);
+  assert.doesNotMatch(textOf(view.render()), /42 passed/);
+});
+
+test("change-only briefs expand independently; test-only briefs have no disclosure", () => {
+  world.props = null;
+  world.spaces = [{ id: "one", active: true, name: "Project", tabs: [] }];
+  world.values = new Map([["brief.reports", [
+    { id: "changes", space: "one", time: 100, source: "agent", title: "New sidebar", summary: "Choose what to show.", changes: ["Hide quiet spaces"] },
+    { id: "first", space: "one", time: 90, source: "agent", title: "First fix", summary: "Ready", changes: ["First change"], tests: ["First check passed"] },
+    { id: "second", space: "one", time: 80, source: "agent", title: "Second fix", summary: "Ready", tests: ["Second check passed"] },
+  ]]]);
+  const view = new Brief(); view.init();
+  let root = view.render();
+  assert.doesNotMatch(textOf(root), /Hide quiet spaces/);
+  assert.ok(find(root, "brief-more-changes"));
+  assert.equal(find(root, "brief-more-second"), undefined);
+  find(root, "brief-more-first").handlers.click({}, { notify() {} });
+  root = view.render();
+  assert.match(textOf(root), /First change/);
+  assert.doesNotMatch(textOf(root), /Hide quiet spaces|First check passed|Second check passed|Show checks/);
 });
 
 test("a brief pane stays bound to its tab and never focuses a reused terminal in another space", () => {
