@@ -131,6 +131,30 @@ to an existing agent rechecks its folder and idle state. **Copy task** is also a
 These actions hand work to a Herdr agent; they do not change the ticket's Linear assignee
 or status. **Move to pane** preserves the current filters and binds the view to that tab.
 
+For parallel work, choose **Select tickets**, click the tickets you want, then **Launch N…**.
+**Select shown** selects only the currently visible, loaded results; selections survive
+searches and filters in the same space. Review the destination, starting commit, agent and
+recorded blockers, add optional shared instructions, and choose **Launch N agents**.
+Remove dependent tickets from the review if they should wait: the launcher starts all
+selected tickets and does not schedule dependencies.
+
+Each ticket gets a new branch and Git worktree under `~/.herdr/worktrees/` on the destination
+machine, starting at the same reviewed commit. A selected subfolder is preserved. Uncommitted
+changes stay in the source checkout; they are not copied into worktrees. Each agent opens in
+a worktree space with a ticket-named tab, leaving your current view selected. Ordinary
+single-ticket handoffs above still use the selected folder.
+
+**Launches** shows per-ticket startup progress and returns to each opened agent. Closing
+the panel does not stop launch preparation: its worker belongs to the `main-custom`
+toolbar. **Stop remaining launches** leaves existing agents and worktrees in place.
+**Retry failed** retries definite failures only, reusing a worktree when one was already
+created. An unconfirmed start or app reload is marked **Check workspace** and is never
+automatically replayed; **Allow new launch** releases that ticket after you check that
+it has no agent running. Active launches and live sessions, including parked terminals,
+prevent duplicate launches from another panel. Worktrees are retained for review, and
+changes are never merged automatically. The newest 20 finished launch records and all
+active records are kept in Herdr's shared state.
+
 The reader reuses an existing Claude Code Linear MCP login from its credential file or the
 standard macOS keychain entry. Claude continues to manage that login: if it expires, reconnect
 with Claude's `/mcp`. Herdr does not copy, refresh, or modify Claude's credentials. For a

@@ -1,8 +1,9 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Input, InputState, TextView, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { appHome, spaces, panes, agents, focused, props, exec, hc, readTextFile, theme, knownAgents, run } from "herdr";
+import { appHome, spaces, panes, agents, focused, props, exec, hc, readTextFile, theme, knownAgents, run, shared } from "herdr";
 import { moveToPaneButton } from "./panel-actions.js";
 import { contextFor, issueKey, issueId, priorityName, statusName, assigneeName, projectName, statusColor, taskFor, targetsFor, startArgs, descriptionBlocks } from "./model.js";
+import { LAUNCHES, PENDING, worktrees, queueLaunch, updateLaunch, retryLaunch } from "./launches.js";
 
 const nameOf = path => path?.split(/[\\/]/).filter(Boolean).pop() || "Choose a working folder";
 
@@ -16,6 +17,9 @@ export default class Linear extends View {
     this.includeDone = state.includeDone ?? localStorage.getItem("includeDone") === "true";
     this.items = []; this.projects = []; this.installed = []; this.selected = 0;
     this.descriptionOpen = new Set();
+    this.selecting = state.selecting ?? false;
+    this.picked = new Map((state.picked ?? []).map(issue => [issueId(issue), issue]));
+    this.launchId = state.launchId ?? null;
     this.query = state.query ?? "";
     this.search = InputState.new({ placeholder: "Search tickets…", value: this.query });
     this.projectSearch = InputState.new({ placeholder: "Find a Linear project…" });
@@ -41,16 +45,18 @@ export default class Linear extends View {
     this.context = this.location();
     this.restoreProject();
     this.refresh(cx);
-    cx.timer.every(60000, cx => { if (!this.detail && !this.setup && !this.pickingProject && !this.waiting) this.refresh(cx); });
+    cx.timer.every(60000, cx => { if (!this.detail && !this.setup && !this.pickingProject && !this.waiting && !this.draft && !this.launchId && !this.launchHistory) this.refresh(cx); });
   }
 
   close() {
+    this.draft = null;
     this.request = (this.request ?? 0) + 1; this.detailRequest = (this.detailRequest ?? 0) + 1;
     this.search.release(); this.projectSearch.release(); this.note.release();
     this.scroll.release();
   }
   location() { return contextFor(spaces(), panes(), focused(), props()?.tab, this.context); }
-  state() { return { scope: this.scope, project: this.project, query: this.query, includeDone: this.includeDone }; }
+  state() { return { scope: this.scope, project: this.project, query: this.query, includeDone: this.includeDone,
+    selecting: this.selecting, picked: [...this.picked.values()], launchId: this.launchId }; }
   visible() { return this.items.filter(issue => this.includeDone || !["completed", "canceled", "duplicate"].includes(issue.statusType)); }
   restoreProject() {
     if (props()?.panelState?.project !== undefined && !this.restored) { this.restored = true; return; }
@@ -139,6 +145,62 @@ export default class Linear extends View {
     });
   }
 
+  toggleTicket(issue, cx) {
+    const id = issueId(issue);
+    if (this.picked.has(id)) this.picked.delete(id); else this.picked.set(id, issue);
+    cx.notify();
+  }
+
+  prepareBatch(cx) {
+    if (!this.picked.size || this.draft) return;
+    this.note.set_value("");
+    const draft = this.draft = { context: { ...this.location() }, loading: true,
+      rows: [...this.picked.values()].map(issue => ({ id: issueId(issue), key: issueKey(issue), issue, loading: true })) };
+    cx.spawn(async cx => {
+      try {
+        if (!draft.context.cwd || !draft.context.space) throw new Error("Choose a project working folder first.");
+        const tasks = [
+          worktrees(draft.context, { op: "inspect", tickets: draft.rows.map(({ id, key }) => ({ id, key })) }).then(plan => { draft.plan = plan; }),
+          knownAgents({ on: draft.context.on }).then(agents => {
+            draft.agents = agents.filter(agent => agent.installed);
+            draft.agentKey = draft.agents.find(agent => agent.key === localStorage.getItem("launchAgent"))?.key ?? draft.agents[0]?.key;
+          }),
+        ];
+        // Fetch complete descriptions and blockers before any workspace or agent is created.
+        let next = 0;
+        for (let worker = 0; worker < Math.min(3, draft.rows.length); worker++) tasks.push((async () => {
+          while (next < draft.rows.length && this.draft === draft) {
+            const row = draft.rows[next++];
+            try { row.issue = { ...row.issue, ...await this.read({ op: "detail", id: row.id }) }; }
+            catch (error) { row.error = error.message; }
+            finally { row.loading = false; }
+          }
+        })());
+        const results = await Promise.allSettled(tasks);
+        const failed = results.find(result => result.status === "rejected");
+        if (failed) throw failed.reason;
+        if (!draft.agents?.length) throw new Error("No installed agents found on this machine.");
+      } catch (error) { draft.error = error.message || String(error); }
+      finally { draft.loading = false; if (this.draft === draft) cx.notify(); }
+    });
+    cx.notify();
+  }
+
+  launchBatch(cx) {
+    const draft = this.draft, agent = draft?.agents?.find(agent => agent.key === draft.agentKey);
+    if (!draft || draft.loading || draft.error || !draft.plan || !agent || !draft.rows.length || draft.rows.some(row => row.error || row.loading)) return;
+    try {
+      const launch = { id: draft.plan.runId, context: draft.context, plan: draft.plan,
+        agent: { key: agent.key, name: agent.name, run: agent.run }, created: Date.now(),
+        rows: draft.rows.map(row => ({ id: row.id, key: row.key, title: row.issue.title,
+          task: taskFor(row.issue, this.note.value()), status: "queued" })) };
+      queueLaunch(launch);
+      localStorage.setItem("launchAgent", agent.key);
+      this.launchId = launch.id; this.draft = null; this.selecting = false; this.picked.clear();
+    } catch (error) { draft.queueError = error.message || String(error); }
+    cx.notify();
+  }
+
   send(cx) {
     if (this.sending || this.sent || this.detailLoading || this.detailError || !this.target) return;
     const issue = this.detail, destination = this.destination, target = this.target;
@@ -187,7 +249,10 @@ export default class Linear extends View {
 
   back(cx) {
     if (this.sending) return;
-    if (this.handoff) { this.handoff = false; this.destination = null; }
+    if (this.draft || this.launchId || this.launchHistory) {
+      this.draft = null; this.launchId = null; this.launchHistory = false;
+      this.restoreProject(); this.refresh(cx, true);
+    } else if (this.handoff) { this.handoff = false; this.destination = null; }
     else { this.detail = null; this.detailRequest = (this.detailRequest ?? 0) + 1; this.detailLoading = false; this.setup = false; this.pickingProject = false; }
     cx.notify();
   }
@@ -202,8 +267,9 @@ export default class Linear extends View {
     const context = this.location();
     if (context.space !== this.context.space) {
       this.context = context;
-      if (!this.embedded) {
+      if (!this.embedded && !this.draft && !this.launchId && !this.launchHistory) {
         this.restoreProject(); this.detail = null; this.handoff = false; this.destination = null;
+        this.picked.clear(); this.selecting = false;
         this.detailRequest = (this.detailRequest ?? 0) + 1; this.refresh(cx, true);
       }
     } else this.context = context;
@@ -214,14 +280,16 @@ export default class Linear extends View {
       .text_color(t.foreground).text_size(13).track_focus(this.handle)
       .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
       .on_key_down((event, cx) => {
-        if (event.key === "escape" && (this.detail || this.setup || this.pickingProject)) { this.back(cx); cx.stop_propagation(); }
-        else if (!this.typing && !this.detail && !this.setup && !this.pickingProject) {
+        if (event.key === "escape" && (this.detail || this.setup || this.pickingProject || this.draft || this.launchId || this.launchHistory)) { this.back(cx); cx.stop_propagation(); }
+        else if (!this.typing && !this.detail && !this.setup && !this.pickingProject && !this.draft && !this.launchId && !this.launchHistory) {
           if (event.key === "down" || event.key === "up") {
             this.selected = Math.max(0, Math.min(visible.length - 1, this.selected + (event.key === "down" ? 1 : -1)));
             this.keyboardSelection = true;
             this.scroll.scroll_to_item(this.selected, "center");
           }
-          else if (event.key === "enter" && visible[this.selected]) this.open(visible[this.selected], cx);
+          else if ((event.key === "enter" || (this.selecting && ["space", " "].includes(event.key))) && visible[this.selected]) {
+            if (this.selecting) this.toggleTicket(visible[this.selected], cx); else this.open(visible[this.selected], cx);
+          }
           else return;
           cx.stop_propagation(); cx.notify();
         }
@@ -230,11 +298,14 @@ export default class Linear extends View {
         .child(svg("mods/linear/linear.svg").size(15).text_color(t.muted))
         .child(div().font_semibold().flex_1().child("Linear"))
         .child(Button.new("linear-connection").size(26).flex_none().rounded(6).text_color(t.muted)
+          .disabled(Boolean(this.draft || this.launchId || this.launchHistory))
           .hover(s => s.bg(t.hover)).tooltip("Linear connection").accessibility_label("Linear connection")
           .on_click((_e, cx) => { this.setup = !this.setup; cx.notify(); })
           .child(svg("mods/workspace-chrome-minimal/settings.svg").size(14)))
-        .child(this.button("linear-refresh", this.loading ? "Syncing…" : "Refresh", cx => this.refresh(cx), false, this.loading))
-        .when(!this.embedded, el => el.child(moveToPaneButton("linear", this.state(), t))));
+        .child(this.button("linear-refresh", this.loading ? "Syncing…" : "Refresh", cx => this.refresh(cx), false, this.loading || Boolean(this.draft || this.launchId || this.launchHistory)))
+        .when(!this.embedded && !this.draft, el => el.child(moveToPaneButton("linear", this.state(), t))));
+    if (this.draft) return root.child(this.renderBatchDraft(t));
+    if (this.launchId || this.launchHistory) return root.child(this.renderLaunches(t));
     if (this.setup || (this.authError && !this.items.length)) return root.child(this.connection(t));
     if (this.detail) return root.child(this.renderDetail(t));
     if (this.pickingProject) return root.child(this.projectPicker(t));
@@ -251,7 +322,15 @@ export default class Linear extends View {
               .child(svg("mods/workspace-chrome/folder.svg").size(13).flex_none())
               .child(div().flex_1().min_w(0).truncate().child(this.project?.name || "All projects"))
               .child(svg("mods/files-modal/chevron-down.svg").size(11).flex_none())))
-          .when(Boolean(this.project), el => el.child(this.button("linear-clear-project", "Clear", cx => this.chooseProject(null, cx))))))
+          .when(Boolean(this.project), el => el.child(this.button("linear-clear-project", "Clear", cx => this.chooseProject(null, cx)))))
+        .child(h_flex().gap(6).items_center()
+          .child(this.button("linear-select-tickets", this.selecting ? "Done selecting" : "Select tickets", cx => {
+            this.selecting = !this.selecting; cx.notify();
+          }, this.selecting))
+          .when(this.selecting, el => el.child(this.button("linear-select-shown", "Select shown", cx => {
+            for (const issue of this.visible()) this.picked.set(issueId(issue), issue); cx.notify();
+          })))
+          .when((shared(LAUNCHES) ?? []).length > 0 && !this.selecting, el => el.child(this.button("linear-launches", "Launches", cx => { this.launchHistory = true; cx.notify(); })))))
       .when(Boolean(this.error), el => el.child(div().flex_none().px(14).py(10).text_size(12).text_color(t.blocked).whitespace_normal().child(this.error)))
       .when(!visible.length && !this.error, el => el.child(this.message(
           this.loading || this.waiting ? "Loading tickets…" : "No tickets here",
@@ -262,11 +341,16 @@ export default class Linear extends View {
           .size_full().track_scroll(this.scroll)
           .on_item_click((id, cx) => {
             const issue = this.visible().find(issue => issueId(issue) === id);
-            if (issue) this.open(issue, cx);
+            if (issue) { if (this.selecting) this.toggleTicket(issue, cx); else this.open(issue, cx); }
           }))
         .child(Scrollbar.vertical("linear-list").viewport_from_layout().absolute().inset_0()))
       .when(this.hasMore, el => el.child(div().flex_none().px(14).py(8)
         .child(this.button("linear-more", this.loading ? "Loading…" : "Load more tickets", cx => this.refresh(cx, false, true), false, this.loading))))
+      .when(this.picked.size > 0, el => el.child(h_flex().px(14).py(10).gap(6).items_center().flex_none().border_t(1).border_color(t.border)
+        .child(div().flex_1().min_w(0).text_size(11.5).child(`${this.picked.size} selected`))
+        .child(this.button("linear-clear-selection", "Clear", cx => { this.picked.clear(); cx.notify(); }))
+        .child(this.button("linear-review-launch", `Launch ${this.picked.size}…`, cx => this.prepareBatch(cx), true)
+          .bg(t.solid).text_color(t.solid_foreground))))
       .child(h_flex().items_center().gap(6).flex_none().px(14).py(8).border_t(1).border_color(t.border).text_size(10.5).text_color(t.muted)
         .child(div().flex_1().min_w(0).truncate().tooltip(`${this.source || "Linear"} · ${this.items.length} loaded${this.hasMore ? "; more available" : ""}`)
           .child(`${visible.length} shown · ${this.items.length}${this.hasMore ? "+" : ""} loaded`))
@@ -280,14 +364,18 @@ export default class Linear extends View {
     const priority = priorityName(issue);
     const selected = Boolean(this.keyboardSelection && index === this.selected);
     return div().id(`linear-issue-${issueId(issue)}`).w_full().h(96).flex_none().px(9).py(10).rounded(6)
-      .role("list_box_option").aria_selected(selected).when(selected, el => el.aria_active_descendant().bg(t.selected))
+      .role("list_box_option").aria_selected(this.selecting ? this.picked.has(issueId(issue)) : selected)
+      .when(selected, el => el.aria_active_descendant().bg(t.selected))
+      .when(this.selecting && this.picked.has(issueId(issue)), el => el.bg(t.selected))
       .text_color(t.foreground).hover(s => s.bg(t.hover)).cursor_pointer()
-      .accessibility_label(`${issueKey(issue)}: ${issue.title}. Open ticket`).tooltip(issue.title)
+      .accessibility_label(`${issueKey(issue)}: ${issue.title}. ${this.selecting ? this.picked.has(issueId(issue)) ? "Selected" : "Select ticket" : "Open ticket"}`).tooltip(issue.title)
       .child(v_flex().w_full().min_w(0).gap(6)
         .child(h_flex().gap(7).items_center().text_size(10.5).text_color(t.muted)
           .child(div().size(6).rounded(3).flex_none().bg(t[statusColor(issue)]))
           .child(div().flex_none().child(issueKey(issue)))
           .child(div().flex_1().min_w(0).truncate().child(statusName(issue)))
+          .when(this.selecting, el => el.child(div().size(14).flex_none().rounded(3).border_1().border_color(t.muted)
+            .when(this.picked.has(issueId(issue)), el => el.child(svg("mods/workspace-chrome/check.svg").size(12).text_color(t.foreground)))))
           .when(priority === "Urgent" || priority === "High", el => el.child(div().flex_none().text_color(priority === "Urgent" ? t.blocked : t.muted).child(priority))))
         .child(div().h(34).max_h(34).overflow_hidden().text_size(12.5).font_medium().whitespace_normal().child(issue.title))
         .child(div().text_size(10.5).text_color(t.muted).truncate().child(`${projectName(issue)} · ${assigneeName(issue)}`)));
@@ -378,6 +466,116 @@ export default class Linear extends View {
         .when(open, el => el.child(div().pl(12).child(render(block.blocks))));
     }));
     return render(this.descriptionParts);
+  }
+
+  renderBatchDraft(t) {
+    const draft = this.draft;
+    const disabled = draft.loading || Boolean(draft.error) || !draft.rows.length || draft.rows.some(row => row.error || row.loading);
+    return v_flex().flex_1().min_h(0)
+      .child(h_flex().px(14).py(10).gap(10).flex_none().items_center()
+        .child(this.button("linear-batch-back", "Back", cx => this.back(cx)))
+        .child(div().font_medium().child(`Launch ${draft.rows.length} agents`)))
+      .child(v_flex().id("linear-batch-review").flex_1().min_h(0).overflow_y_scrollbar().px(14).pb(14).gap(14)
+        .child(div().text_size(12).text_color(t.muted).whitespace_normal()
+          .child(`${nameOf(draft.context.cwd)} · ${draft.context.on || "This computer"}`))
+        .child(div().text_size(12).whitespace_normal().child("One agent, branch and worktree per ticket. All selected tickets start in parallel."))
+        .when(draft.loading, el => el.child(div().text_color(t.muted).text_size(12).child("Checking repository, agents and ticket details…")))
+        .when(Boolean(draft.plan), el => el.child(v_flex().gap(5)
+          .child(div().text_size(11.5).text_color(t.muted).whitespace_normal()
+            .child(`Starting commit: ${draft.plan?.branch} · ${draft.plan?.base.slice(0, 8)}`))
+          .when(Boolean(draft.plan?.dirty), el => el.child(div().text_size(11.5).text_color(t.blocked).whitespace_normal()
+            .child("Uncommitted changes stay in your current checkout; new worktrees use the starting commit.")))))
+        .when(Boolean(draft.error || draft.queueError), el => el.child(div().text_size(12).text_color(t.blocked).whitespace_normal().child(draft.error || draft.queueError)))
+        .when(Boolean(draft.agents?.length), el => el.child(v_flex().gap(7)
+          .child(div().text_size(11.5).text_color(t.muted).child("Agent for each ticket"))
+          .child(h_flex().flex_wrap().gap(5).children((draft.agents ?? []).map(agent => this.button(`linear-batch-agent-${agent.key}`, agent.name, cx => {
+            draft.agentKey = agent.key; cx.notify();
+          }, draft.agentKey === agent.key))))))
+        .child(Input.new(this.note).w_full().h(32).px(9).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12)
+          .accessibility_label("Additional instructions for all selected tickets"))
+        .children(draft.rows.map(row => {
+          const plan = draft.plan?.workspaces.find(item => item.id === row.id);
+          const blockers = row.issue.relations?.blockedBy?.map(item => item.identifier || item.id).join(", ");
+          return v_flex().id(`linear-batch-ticket-${row.id}`).flex_none().py(10).gap(7).border_b(1).border_color(t.border)
+            .child(h_flex().gap(8).items_center()
+              .child(div().flex_1().text_size(11).text_color(t.muted).child(row.key))
+              .child(this.button(`linear-batch-remove-${row.id}`, "Remove", cx => {
+                draft.rows = draft.rows.filter(item => item.id !== row.id); this.picked.delete(row.id); cx.notify();
+              }, false, draft.loading)))
+            .child(div().text_size(12.5).font_medium().whitespace_normal().child(row.issue.title))
+            .when(Boolean(plan), el => el.child(div().text_size(10.5).text_color(t.muted).whitespace_normal().tooltip(plan?.root || "").child(plan?.branch || "")))
+            .when(Boolean(blockers), el => el.child(div().text_size(11.5).text_color(t.blocked).whitespace_normal().child(`Blocked by ${blockers}`)))
+            .when(Boolean(row.error), el => el.child(div().text_size(12).text_color(t.blocked).whitespace_normal().child(row.error)));
+        })))
+      .child(v_flex().px(14).py(12).gap(8).flex_none().border_t(1).border_color(t.border)
+        .child(this.button("linear-batch-launch", draft.loading ? "Preparing…" : `Launch ${draft.rows.length} agents`, cx => this.launchBatch(cx), true, disabled)
+          .bg(t.solid).text_color(t.solid_foreground))
+        .child(div().text_size(10.5).text_color(t.muted).whitespace_normal().child("Linear status and assignees stay unchanged.")));
+  }
+
+  renderLaunches(t) {
+    const launches = shared(LAUNCHES) ?? [];
+    const batch = launches.find(batch => batch.id === this.launchId);
+    if (!batch) return v_flex().flex_1().min_h(0).p(14).gap(12)
+      .child(h_flex().gap(10).items_center().flex_none()
+        .child(this.button("linear-launches-back", "Back", cx => this.back(cx)))
+        .child(div().font_medium().child("Launches")))
+      .child(v_flex().id("linear-launch-history").flex_1().min_h(0).overflow_y_scrollbar().gap(8)
+        .when(!launches.length, el => el.child(div().text_size(12).text_color(t.muted).child("No launches yet. Select tickets to start a batch.")))
+        .children([...launches].reverse().map(batch => Button.new(`linear-launch-${batch.id}`).w_full().flex_none().p(10).rounded(6)
+          .text_color(t.foreground).hover(s => s.bg(t.hover)).on_click((_e, cx) => { this.launchId = batch.id; cx.notify(); })
+          .child(v_flex().w_full().gap(6)
+            .child(div().font_medium().text_size(12).whitespace_normal().child(`${batch.rows.length} tickets · ${batch.agent.name}`))
+            .child(div().text_size(11).text_color(t.muted).whitespace_normal()
+              .child(`${nameOf(batch.context.cwd)} · ${batch.rows.filter(row => row.status === "launched").length} opened · ${new Date(batch.created).toLocaleString()}`))))));
+    const pending = batch.rows.some(row => PENDING.includes(row.status));
+    const failed = batch.rows.filter(row => row.status === "failed");
+    const labels = { queued: "Queued", creating: "Creating worktree…", starting: "Opening agent…", launched: "Agent opened", failed: "Could not launch", check: "Check workspace", stopped: "Not launched" };
+    return v_flex().flex_1().min_h(0)
+      .child(h_flex().px(14).py(10).gap(10).items_center().flex_none()
+        .child(this.button("linear-launch-progress-back", "Back", cx => this.back(cx)))
+        .child(div().font_medium().flex_1().child("Ticket launches"))
+        .child(this.button("linear-launch-progress-all", "All", cx => { this.launchId = null; this.launchHistory = true; cx.notify(); })))
+      .child(v_flex().id("linear-launch-progress").flex_1().min_h(0).overflow_y_scrollbar().px(14).pb(14).gap(12)
+        .child(div().text_size(12).text_color(t.muted).whitespace_normal()
+          .child(`${batch.agent.name} · ${nameOf(batch.context.cwd)} · ${batch.context.on || "This computer"}`))
+        .child(div().text_size(12).whitespace_normal()
+          .child(`${batch.rows.filter(row => row.status === "launched").length} of ${batch.rows.length} agents opened${pending ? " · Launching…" : ""}`))
+        .children(batch.rows.map(row => {
+          const pane = panes().find(pane => pane.terminal === row.terminal);
+          const liveAgent = agents().find(agent => agent.address === row.terminal);
+          const color = row.status === "launched" ? "done" : ["failed", "check"].includes(row.status) ? "blocked" : "muted";
+          return v_flex().id(`linear-launch-row-${row.id}`).flex_none().py(10).gap(7).border_b(1).border_color(t.border)
+            .child(h_flex().gap(7).items_center().text_size(11)
+              .child(div().flex_1().text_color(t.muted).child(row.key))
+              .child(div().text_color(t[color]).child(row.status === "launched" && !pane && !liveAgent ? "Session closed" : labels[row.status])))
+            .child(div().font_medium().text_size(12.5).whitespace_normal().child(row.title))
+            .when(Boolean(row.error), el => el.child(div().text_size(11.5).text_color(t.blocked).whitespace_normal().child(row.error)))
+            .when(Boolean(row.workspace), el => el.child(div().text_size(10.5).text_color(t.muted).whitespace_normal()
+              .tooltip(row.workspace?.cwd || "").child(row.workspace?.branch || "")))
+            .child(h_flex().flex_wrap().gap(6)
+              .when(Boolean(pane || liveAgent), el => el.child(this.button(`linear-launch-open-${row.id}`, "Open agent", () => {
+                const live = panes().find(pane => pane.terminal === row.terminal) || agents().find(agent => agent.address === row.terminal);
+                if (live) run("agent.focus", { terminal: row.terminal });
+              })))
+              .when(row.status === "check", el => el.child(this.button(`linear-launch-clear-${row.id}`, "Allow new launch", cx => {
+                updateLaunch(batch.id, value => ({ ...value, rows: value.rows.map(item => item.id === row.id
+                  ? { ...item, status: "stopped", error: "Marked as not launched. Existing worktree kept." } : item) })); cx.notify();
+              }).tooltip("Use after checking that this ticket has no agent running.")))
+              .when(Boolean(row.workspace), el => el.child(this.button(`linear-launch-copy-${row.id}`, "Copy folder", cx => cx.write_to_clipboard(row.workspace.cwd)))));
+        })))
+      .child(v_flex().flex_none().px(14).py(12).gap(8).border_t(1).border_color(t.border)
+        .when(Boolean(this.retryError), el => el.child(div().text_size(11.5).text_color(t.blocked).whitespace_normal().child(this.retryError)))
+        .when(pending && !batch.stop, el => el.child(this.button("linear-launch-stop", "Stop remaining launches", cx => {
+          updateLaunch(batch.id, value => ({ ...value, stop: true })); cx.notify();
+        })))
+        .when(!pending && failed.length > 0, el => el.child(this.button("linear-launch-retry", `Retry ${failed.length} failed`, cx => {
+          try { retryLaunch(batch.id); this.retryError = null; }
+          catch (error) { this.retryError = error.message; }
+          cx.notify();
+        })))
+        .child(div().text_size(10.5).text_color(t.muted).whitespace_normal()
+          .child(pending ? "You can close this panel. Launching continues while Herdr is open." : "Worktrees are kept for review. No changes are merged automatically.")));
   }
 
   renderHandoff(t) {

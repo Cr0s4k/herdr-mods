@@ -3,6 +3,7 @@ import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
 import { ReviewPanes } from "./review.js";
 import { BriefTracker } from "./brief-tracker.js";
+import { LaunchTracker } from "./linear-launches.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 
 function find(node, id) {
@@ -21,6 +22,8 @@ export default class Tabs extends View {
     this.review = new ReviewPanes();
     this.brief = new BriefTracker();
     this.brief.start(cx);
+    this.launches = new LaunchTracker();
+    this.launches.start(cx);
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();

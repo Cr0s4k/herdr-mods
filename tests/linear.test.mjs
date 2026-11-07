@@ -71,6 +71,16 @@ globalThis.__linearNative = {
     return world.defer ? new Promise(resolve => world.waiters.push(resolve)) : Promise.resolve({ code: 0, stdout: JSON.stringify({ data: { issues: [issue] }, source: "Claude login" }) });
   },
   hc: async args => { world.sends.push(args); return { code: 0 }; },
+  LAUNCHES: "linear.launches", PENDING: ["queued", "creating", "starting"],
+  shared: key => world.shared.get(key),
+  worktrees: async (context, payload) => {
+    world.worktrees.push({ context, payload });
+    if (world.worktreeError) throw new Error(world.worktreeError);
+    return { runId: "batch", base: "a".repeat(40), branch: "main", root: context.cwd, common: "/project/.git", workspaces: payload.tickets.map(ticket => ({ ...ticket, branch: `linear/${ticket.key}` })) };
+  },
+  queueLaunch: batch => world.shared.set("linear.launches", [...(world.shared.get("linear.launches") ?? []), batch]),
+  updateLaunch: (id, apply) => world.shared.set("linear.launches", world.shared.get("linear.launches").map(batch => batch.id === id ? apply(batch) : batch)),
+  retryLaunch() {},
   run: (command, args) => { world.calls.push([command, args]); if (command === "tab.new") world.spaces[0].tabs.push({ id: "new", name: args.name }); },
   moveToPaneButton: () => native(),
 };
@@ -83,7 +93,8 @@ function setup() {
   Object.assign(world, { spaces: [{ id: "space", active: true, folder: "/project", tabs: [{ id: "tab", active: true }] }],
     panes: [{ pane: "pane", tab: "tab", cwd: "/project", terminal: "t1" }], focus: { pane: "pane" },
     agents: [{ space: "space", address: "t1", status: "idle", program: { name: "Codex" } }],
-    tasks: [], execs: [], waiters: [], calls: [], sends: [], timers: [], scrolls: [], defer: false });
+    tasks: [], execs: [], waiters: [], calls: [], sends: [], timers: [], scrolls: [], defer: false,
+    shared: new Map(), worktrees: [], worktreeError: null });
   const view = new Linear(); view.script = "reader"; view.init({}, cx); return view;
 }
 function find(el, id) { return el?.styles?.id?.[0] === id ? el : (el?.nodes ?? []).map(child => find(child, id)).find(Boolean); }
@@ -178,4 +189,44 @@ test("arrow navigation visibly selects and scrolls to the ticket Enter opens", a
   view.render(cx).handlers.on_key_down({ key: "enter" }, cx);
   assert.equal(view.detail.uuid, "uuid-25");
   await Promise.all(world.tasks);
+});
+
+test("selection uses stable tickets, survives search, and moves to a pane with its state", async () => {
+  const view = setup(); await Promise.all(world.tasks);
+  find(view.render(cx), "linear-select-tickets").handlers.on_click({}, cx);
+  find(view.render(cx), "linear-list").handlers.on_item_click("uuid", cx);
+  assert.equal(view.detail, undefined); assert.equal(view.picked.size, 1);
+  view.items = [{ ...issue, id: "PRO-32", uuid: "second" }];
+  find(view.render(cx), "linear-select-shown").handlers.on_click({}, cx);
+  assert.deepEqual([...view.picked.keys()], ["uuid", "second"]);
+  assert.equal(view.state().picked.length, 2);
+  assert.ok(find(view.render(cx), "linear-review-launch"));
+});
+
+test("batch review fetches full tickets and captures the destination before any launch", async () => {
+  const view = setup(); await Promise.all(world.tasks);
+  view.toggleTicket(issue, cx);
+  view.toggleTicket({ ...issue, id: "PRO-32", uuid: "second" }, cx);
+  view.read = async payload => ({ ...issue, uuid: payload.id, description: `Full details ${payload.id}`, relations: { blockedBy: [{ id: "PRO-30" }] } });
+  view.prepareBatch(cx); await Promise.all(world.tasks);
+  assert.equal(world.calls.length, 0); assert.equal(world.sends.length, 0);
+  assert.equal(world.worktrees[0].payload.op, "inspect");
+  const root = view.render(cx);
+  assert.ok(find(root, "linear-batch-launch"));
+  world.spaces[0].folder = "/elsewhere"; world.panes[0].cwd = "/elsewhere";
+  view.launchBatch(cx); view.launchBatch(cx);
+  const launches = world.shared.get("linear.launches");
+  assert.equal(launches.length, 1); assert.equal(launches[0].context.cwd, "/project");
+  assert.equal(launches[0].rows.length, 2);
+  assert.ok(launches[0].rows[0].task.includes("Full details uuid"));
+  assert.equal(view.picked.size, 0); assert.equal(world.calls.length, 0);
+});
+
+test("repository preflight failure keeps selection and cannot enqueue agents", async () => {
+  const view = setup(); await Promise.all(world.tasks);
+  view.toggleTicket(issue, cx); world.worktreeError = "Not a Git repository";
+  view.prepareBatch(cx); await Promise.all(world.tasks);
+  assert.match(view.draft.error, /Not a Git repository/);
+  view.launchBatch(cx);
+  assert.equal(view.picked.size, 1); assert.equal(world.shared.size, 0); assert.equal(world.calls.length, 0);
 });
