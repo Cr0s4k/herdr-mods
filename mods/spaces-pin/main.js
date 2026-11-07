@@ -8,6 +8,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
 import { AgentTree, branch } from "./agent-tree.js";
+import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -80,6 +81,7 @@ export default class Spaces extends View {
 
   checkNew(cx) {
     const now = Date.now();
+    expireSpaces(now);
     const sp = spaces();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     const due = this.due(now, sp, panes());
@@ -253,7 +255,11 @@ export default class Spaces extends View {
 
   menu(w) {
     // A popup is as tall as its items; height is only the most.
-    openOverlay({ mod: "menu-pin", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
+    openOverlay({ mod: "menu-pin", kind: "popup", width: 200, height: 310, props: { tab: "space", target: { id: w.id } } });
+  }
+
+  hide(w) {
+    openOverlay({ mod: "space-hide", kind: "popup", width: 330, height: 350, props: { id: w.id } });
   }
 
   orderingDue(now) {
@@ -314,7 +320,14 @@ export default class Spaces extends View {
 
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
-    const rows = this.ordered();
+    // Filter after computing model order so hiding never moves other spaces.
+    // A visible worktree becomes a root while its checkout is hidden.
+    const hidden = hiddenSpaces();
+    let parentHidden = false;
+    const rows = this.ordered().flatMap(r => {
+      if (!r.tree) parentHidden = Boolean(hidden[r.w.id]);
+      return hidden[r.w.id] ? [] : [{ ...r, tree: parentHidden ? null : r.tree }];
+    });
     this.agents.order(rows);
     const clusters = [];
     for (const r of rows) {
@@ -515,6 +528,17 @@ export default class Spaces extends View {
               cx.notify();
             })
             .child(svg("mods/menu-pin/focus.svg").size(14))))
+          .when(this.hovered === w.id, el => el.child(div().id(`space-hide-${w.id}`).size(22).flex_none().flex().items_center().justify_center()
+            .rounded(4).text_color(t.dim).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
+            .role("button").accessibility_label(`Hide ${w.name}`).tooltip("Hide space until…")
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              this.pressed = null; this.over = null; this.hovered = null;
+              this.hide(w); cx.notify();
+            })
+            .child(svg("mods/space-hide/eye-off.svg").size(14))))
           .when(isPinned || this.hovered === w.id, el => el.child(
             div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(t.dim).cursor_pointer()
               .hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -544,6 +568,7 @@ export default class Spaces extends View {
       .hover((s) => s.bg(t.hover))
       .tooltip(w.name)
       .on_click(() => run("space.select", { id: w.id }))
+      .on_mouse_down("right", () => this.menu(w))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)));
   }
 
@@ -585,10 +610,13 @@ export default class Spaces extends View {
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
     const focusId = shared("spaces.focus");
-    const focus = sp.find(s => s.id === focusId);
+    const hidden = hiddenSpaces();
+    const visible = sp.filter(s => !hidden[s.id]);
+    const hiddenCount = sp.length - visible.length;
+    const focus = visible.find(s => s.id === focusId);
     if (focusId && !focus) setShared("spaces.focus", null);
     this.agents.update(sp, panes());
-    const attentionCount = this.agents.summary(sp.map(s => s.id)).blocked;
+    const attentionCount = this.agents.summary(visible.map(s => s.id)).blocked;
     const ids = new Set(sp.map(p => p.id));
     const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
     let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
@@ -627,10 +655,18 @@ export default class Spaces extends View {
             this.attention = false; localStorage.setItem("spaces.attention", "false"); cx.notify();
           }).child("Show all spaces"))))
         .when(!sp.length && !this.attention, el => el.child(div().px(8).pt(12).text_size(12).text_color(t.muted).child("Create a space to start working."))))
+      .when(hiddenCount > 0, el => el.child(h_flex().id("spaces-hidden").h(32).flex_none().px(collapsed ? 8 : 16).gap(7).items_center()
+        .when(collapsed, el => el.justify_center())
+        .text_size(11.5).text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
+        .role("button").accessibility_label(`Hidden spaces, ${hiddenCount}`).tooltip("Hidden spaces · Show a space early")
+        .on_click(() => openOverlay({ mod: "space-hide", kind: "popup", width: 350, height: 420, props: { list: true } }))
+        .child(svg("mods/space-hide/eye-off.svg").size(14).flex_none())
+        .when(!collapsed, el => el.child(div().flex_1().child("Hidden spaces")))
+        .child(String(hiddenCount))))
       .when(collapsed, el => el.child(div().id("spaces-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
         .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")
         .on_click(() => this.toggleSidebar()).child(svg("mods/spaces-pin/expand.svg").size(15))));
     return v_flex().id("spaces-views").relative().size_full().min_h(0).child(all)
-      .when(Boolean(focus), el => el.child(this.focusedSpace(focus, sp, t, collapsed)));
+      .when(Boolean(focus), el => el.child(this.focusedSpace(focus, visible, t, collapsed)));
   }
 }

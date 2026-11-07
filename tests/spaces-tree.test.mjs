@@ -35,18 +35,28 @@ globalThis.__spacesNative = {
   props: () => world.menu, keys: () => [], closeOverlay: id => world.closed.push(id), openOverlay: options => world.opened.push(options),
   window: () => ({ active: true, platform: "macos" }), layout: () => ({ id: "sidebar", size: { px: world.width } }),
 };
-let source = (await readFile(new URL("../mods/spaces-pin/agent-tree.js", import.meta.url), "utf8"))
+let source = (await readFile(new URL("../mods/space-hide/state.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { shared, setShared } = globalThis.__spacesNative;\n" + source;
+const hideState = await import("data:text/javascript," + encodeURIComponent(source));
+Object.assign(globalThis.__spacesNative, hideState);
+source = (await readFile(new URL("../mods/spaces-pin/agent-tree.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
 source = "const { div, image, svg, h_flex, v_flex, agents, terminals, focused, run, setAgentOrder } = globalThis.__spacesNative;\n" + source;
 const { AgentTree, branch } = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;
 const { default: Menu } = await import("data:text/javascript," + encodeURIComponent(source));
+globalThis.__spacesNative.Input = { new: element };
+globalThis.__spacesNative.InputState = { new: options => ({ text: options.value ?? "", handlers: {},
+  on(event, fn) { this.handlers[event] = fn; }, value() { return this.text; }, focus() {} }) };
+source = (await readFile(new URL("../mods/space-hide/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { View, div, svg, v_flex, h_flex, Input, InputState, props, spaces, theme, closeOverlay, openOverlay, hiddenSpaces, expireSpaces, hideSpace, restoreSpace, localTime, parseLocalTime, hideChoices } = globalThis.__spacesNative;\n" + source;
+const { default: SpaceHide } = await import("data:text/javascript," + encodeURIComponent(source));
 const program = { name: "Codex", key: "codex", icon: "icons/codex.png", agent: true };
 const space = (id, active = false) => ({ id, name: id, folder: `/work/${id}`, active, tabs: [{ id: `${id}-tab`, name: "1", named: false }] });
 const agent = (id, sp, status = "idle", extra = {}) => ({ address: id, pane: `${id}-pane`, space: sp, tab: `${sp}-tab`, tab_index: 1,
@@ -248,12 +258,12 @@ test("the menu focuses the right-clicked space, selects it, and offers a way bac
   world.menu = { tab: "space", target: { id: "other" }, overlay: "popup" };
   const menu = new Menu(); menu.init({}, cx);
   assert.match(text(menu.render(cx)), /Focus this space/);
-  menu.choose(2, cx);
+  menu.choose(3, cx);
   assert.equal(sharedState.get("spaces.focus"), "other");
   assert.deepEqual(world.calls, [["space.select", { id: "other" }]]);
   assert.deepEqual(world.closed, ["popup"]);
   assert.match(text(menu.render(cx)), /Show all spaces/);
-  menu.choose(2, cx);
+  menu.choose(3, cx);
   assert.equal(sharedState.get("spaces.focus"), null);
   assert.equal(world.calls.length, 1);
 });
@@ -261,7 +271,7 @@ test("the menu focuses the right-clicked space, selects it, and offers a way bac
 test("a stale focus menu never selects an unrelated space", () => {
   setup();
   world.menu = { tab: "space", target: { id: "gone" }, overlay: "popup" };
-  const menu = new Menu(); menu.init({}, cx); menu.choose(2, cx);
+  const menu = new Menu(); menu.init({}, cx); menu.choose(3, cx);
   assert.equal(sharedState.has("spaces.focus"), false);
   assert.deepEqual(world.calls, []);
 });
@@ -346,6 +356,112 @@ test("closing the focused space returns to all spaces without selecting another 
   assert.equal(sharedState.get("spaces.focus"), null);
   assert.ok(find(root, "space-other"));
   assert.deepEqual(world.calls, []);
+});
+
+test("hover hide precedes the pin and opens choices without selecting, dragging or changing pins", () => {
+  const view = setup(); sharedState.set("space.pinned", ["app"]);
+  find(view.render(), "space-app").handlers.hover(true, cx);
+  const row = find(view.render(), "space-app"), button = find(row, "space-hide-app");
+  const ids = row.nodes[0].nodes.map(n => n.styles?.id?.[0]);
+  assert.ok(ids.indexOf("space-hide-app") < ids.indexOf("space-pin-app"));
+  let stopped = 0;
+  const actionCx = { ...cx, stop_propagation() { stopped++; } };
+  button.handlers["mouse_down-left"]({}, actionCx); button.handlers["mouse_up-left"]({}, actionCx);
+  button.handlers.click({}, actionCx);
+  assert.equal(stopped, 3); assert.equal(view.pressed, null);
+  assert.deepEqual(world.calls, []);
+  assert.deepEqual(sharedState.get("space.pinned"), ["app"]);
+  assert.deepEqual(world.opened[0].props, { id: "app" });
+});
+
+test("the right-click menu offers hide before pin and rejects a stale target", () => {
+  setup(); world.menu = { tab: "space", target: { id: "other" }, overlay: "popup" };
+  const menu = new Menu(); menu.init({}, cx);
+  assert.match(text(menu.render(cx)).replace(/\s+/g, " "), /Rename Hide space until… Pin to top/);
+  menu.choose(1, cx);
+  assert.deepEqual(world.opened[0].props, { id: "other" });
+  assert.deepEqual(world.calls, []);
+  world.opened = []; world.menu.target.id = "gone"; menu.choose(1, cx);
+  assert.deepEqual(world.opened, []);
+});
+
+test("hiding persists across sidebar reloads, excludes attention, and leaves pin and model order intact", () => {
+  let view = setup(); world.agents[1].status = "blocked";
+  sharedState.set("space.pinned", ["app"]); sharedState.set("spaces.focus", "app");
+  hideState.hideSpace("app", Date.now() + 60000); hideState.hideSpace("other", Date.now() + 60000);
+  assert.equal(sharedState.get("spaces.focus"), null);
+  view = new Spaces(); view.init({}, cx);
+  let root = view.render();
+  assert.equal(find(root, "space-app"), undefined); assert.equal(find(root, "ag-two"), undefined);
+  assert.equal(text(find(root, "spaces-hidden")).trim(), "Hidden spaces 2");
+  click(root, "spaces-needs-you"); root = view.render();
+  assert.match(text(root), /No agents need you/);
+  assert.deepEqual(world.order, []); assert.deepEqual(world.calls, []);
+  assert.deepEqual(sharedState.get("space.pinned"), ["app"]);
+  click(root, "spaces-hidden"); assert.deepEqual(world.opened[0].props, { list: true });
+  world.width = 76; assert.ok(find(view.render(), "spaces-hidden"));
+  world.width = 268; hideState.restoreSpace("app"); click(view.render(), "spaces-needs-you");
+  assert.ok(find(view.render(), "space-app"));
+});
+
+test("the existing timer expires deadlines and returns spaces without a user action", () => {
+  const view = setup(); let timer;
+  const timerCx = { ...cx, timer: { every(ms, fn) { if (ms === 250) timer = fn; } } };
+  view.init({}, timerCx);
+  const now = Date.now(); sharedState.set("spaces.hidden", { app: now + 5000 });
+  assert.equal(find(view.render(), "space-app"), undefined);
+  const original = Date.now;
+  try { Date.now = () => now + 5000; timer(cx); }
+  finally { Date.now = original; }
+  assert.deepEqual(sharedState.get("spaces.hidden"), {});
+  assert.ok(find(view.render(), "space-app"));
+});
+
+test("hidden checkout roots promote visible worktrees and hidden children leave their checkout visible", () => {
+  const view = setup(); world.spaces = [space("app", true), space("worktree")];
+  world.agents = [agent("one", "app"), agent("two", "worktree")]; view.shown.add("worktree");
+  view.git = { '[null,"/work/app"]': { repo: "repo", name: "app", branch: "main", linked: false },
+    '[null,"/work/worktree"]': { repo: "repo", name: "app", branch: "feature", linked: true } };
+  hideState.hideSpace("app", Date.now() + 60000);
+  let root = view.render(); assert.ok(find(root, "space-worktree")); assert.ok(find(root, "ag-two"));
+  assert.equal(find(root, "space-app"), undefined);
+  hideState.restoreSpace("app"); hideState.hideSpace("worktree", Date.now() + 60000);
+  root = view.render(); assert.ok(find(root, "space-app")); assert.equal(find(root, "space-worktree"), undefined);
+  assert.deepEqual(world.calls, []);
+});
+
+test("preset picker hides the requested space and the hidden list restores early", () => {
+  const view = setup(); world.menu = { id: "other", overlay: "hide" };
+  const picker = new SpaceHide(); picker.init({}, cx);
+  const start = Date.now(); click(picker.render(), "space-hide-choice-0");
+  assert.ok(sharedState.get("spaces.hidden").other >= start + 30 * 60000);
+  assert.equal(find(view.render(), "space-other"), undefined); assert.deepEqual(world.closed, ["hide"]);
+  world.menu = { list: true, overlay: "hidden" };
+  const list = new SpaceHide(); list.init({}, cx); click(list.render(), "hidden-space-other");
+  assert.ok(find(view.render(), "space-other")); assert.match(text(list.render()), /No hidden spaces/);
+  assert.deepEqual(world.calls, []);
+});
+
+test("custom deadlines reject invalid, normalized and past times and accept a future local time", () => {
+  setup(); world.menu = { id: "other", custom: true, overlay: "custom" };
+  const picker = new SpaceHide(); picker.init({}, cx);
+  for (const invalid of ["bad", "2027-02-30 12:00", "2027-01-01 24:00", "2020-01-01 12:00"]) {
+    picker.input.text = invalid; picker.submit(cx);
+    assert.match(picker.error, /Enter a future/); assert.equal(sharedState.has("spaces.hidden"), false);
+  }
+  picker.input.text = hideState.localTime(Date.now() + 3600000); picker.submit(cx);
+  assert.equal(sharedState.get("spaces.hidden").other, hideState.parseLocalTime(picker.input.text));
+  assert.deepEqual(world.closed, ["custom"]);
+});
+
+test("deadline parsing and tomorrow preserve local calendar time and stale pickers cannot hide another space", () => {
+  setup(); const now = new Date(2026, 10, 7, 23, 30).getTime();
+  assert.equal(hideState.hideChoices(now)[3][1], new Date(2026, 10, 8, 9).getTime());
+  assert.equal(hideState.parseLocalTime("2028-02-29 08:05"), new Date(2028, 1, 29, 8, 5).getTime());
+  sharedState.set("spaces.hidden", { expired: now - 1, text: "9999999999999", other: now + 1000 });
+  assert.deepEqual(hideState.hiddenSpaces(now), { other: now + 1000 });
+  world.menu = { id: "gone", overlay: "hide" }; const picker = new SpaceHide(); picker.init({}, cx); picker.choose(0, cx);
+  assert.match(picker.error, /no longer available/); assert.deepEqual(world.calls, []);
 });
 
 test("the shipped custom layout mounts a single list and keeps the agent panel out", async () => {

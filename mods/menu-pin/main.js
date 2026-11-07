@@ -56,6 +56,7 @@ function items(p, git) {
     case "space":
       return [
         ["Rename", "space.rename", { id: tg.id }],
+        ["Hide space until…", "space.hide", { id: tg.id }],
         (shared("space.pinned") ?? []).includes(tg.id) ? ["Unpin", "space.pin", { id: tg.id, pin: false }] : ["Pin to top", "space.pin", { id: tg.id, pin: true }],
         shared("spaces.focus") === tg.id ? ["Show all spaces", "space.focus", { id: null }] : ["Focus this space", "space.focus", { id: tg.id }],
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
@@ -75,6 +76,7 @@ function items(p, git) {
 }
 
 function menuIcon(command, args) {
+  if (command === "space.hide") return "mods/space-hide/eye-off.svg";
   if (command === "space.pin") return `mods/workspace-chrome/${args.pin ? "pin" : "pin-off"}.svg`;
   if (command === "space.focus") return args.id ? "mods/menu-pin/focus.svg" : "mods/workspace-chrome/layers.svg";
   const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
@@ -109,7 +111,10 @@ export default class Menu extends View {
     const it = items(props(), this.git)[i];
     if (!it) return;
     closeOverlay(props()?.overlay);
-    if (it[1] === "space.pin") {
+    if (it[1] === "space.hide") {
+      if (!spaces().some(s => s.id === it[2].id)) return;
+      openOverlay({ mod: "space-hide", kind: "popup", width: 330, height: 350, props: it[2] });
+    } else if (it[1] === "space.pin") {
       const pins = (shared("space.pinned") ?? []).filter((id) => id !== it[2].id);
       setShared("space.pinned", it[2].pin ? [...pins, it[2].id] : pins);
     } else if (it[1] === "space.focus") {

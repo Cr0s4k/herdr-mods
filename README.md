@@ -281,6 +281,13 @@ the back button appears when agents in other spaces need you. Focus stays on the
 chosen space as agents finish or focus moves elsewhere; clicking its name shows
 that space again. Closing the space returns the sidebar to the full tree.
 
+Hover a space and click the hide icon just before the pin, or right-click →
+**Hide space until…**. Choose 30 minutes, 1 hour, 4 hours, tomorrow at 09:00,
+or a custom local date and time. The space and its agents leave the sidebar
+until then; terminals keep running. **Hidden spaces** at the bottom lets you
+show one early. Deadlines, pins and positions survive restarts. Hiding a checkout
+leaves its other worktree spaces visible.
+
 ### Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
@@ -310,7 +317,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
-| `mods/menu-pin/` | Herdr's right-click menu, cloned, with Pin / Unpin and Focus this space |
+| `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
+| `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
