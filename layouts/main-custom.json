@@ -145,6 +145,13 @@
                       },
                       "id": "skills",
                       "type": "block"
+                    },
+                    {
+                      "content": {
+                        "mod": "linear"
+                      },
+                      "id": "linear",
+                      "type": "block"
                     }
                   ],
                   "id": "panel-body",

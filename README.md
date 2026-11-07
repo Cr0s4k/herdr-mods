@@ -110,6 +110,40 @@ appear only in Personal library as unverified. Claude's built-ins that have no l
 manifest are not indexed. A plain repository `skills/` folder contains source files and
 does not itself install those skills for either agent.
 
+## Linear
+
+**Linear** in the toolbar opens your tickets beside the terminals. Choose **My tickets**,
+**Unassigned**, or **All**, search titles and descriptions, and filter by a Linear project.
+The project selection is remembered per space. Closed tickets start hidden; **Include done**
+shows them. Results load 50 at a time, with **Load more tickets** for the next page. The
+footer distinguishes visible tickets from loaded results. Refresh runs every minute while
+browsing; failed refreshes keep the last results and show the error.
+
+Open a ticket to read its full Markdown description or open it in Linear. Linear's collapsible
+description sections start closed; click their heading to expand or collapse them. Nested
+sections toggle independently, and agent handoffs always include the full description.
+**Assign to agent…**
+shows the working folder and machine, installed agents for a new session, and idle agents
+already in that exact folder and space. Add optional instructions, then **Start agent with
+ticket** or **Send task to agent**. The task includes the description, link, priority,
+project and recorded blockers. A new session opens in a tab named after the ticket; sending
+to an existing agent rechecks its folder and idle state. **Copy task** is also available.
+These actions hand work to a Herdr agent; they do not change the ticket's Linear assignee
+or status. **Move to pane** preserves the current filters and binds the view to that tab.
+
+The reader reuses an existing Claude Code Linear MCP login from its credential file or the
+standard macOS keychain entry. Claude continues to manage that login: if it expires, reconnect
+with Claude's `/mcp`. Herdr does not copy, refresh, or modify Claude's credentials. For a
+separate connection, use the header's **Linear connection** settings button, then **Connect
+with API key**. A local terminal asks privately for a key with Read permission, validates it,
+and saves it with owner-only permissions at `~/.config/herdr-app/linear/credentials.json`.
+Return to the panel and refresh. The same setup is available with `herdr-linear connect`.
+The reader prefers `LINEAR_API_KEY`, then its saved key, then Claude's login.
+
+Linear access uses the [official MCP server](https://linear.app/docs/mcp), with only read
+operations, and Python 3's standard library. Ticket access and credentials stay on this
+computer; a selected remote machine is only the destination for an agent handoff.
+
 ## Loops
 
 The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals** and **Claude

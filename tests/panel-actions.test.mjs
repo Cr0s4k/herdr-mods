@@ -49,6 +49,7 @@ test("each side panel opens its native pane with its current state and creates n
     ["loops", "loops-pane", { all: true, completed: true, showCodex: false, showClaude: true }],
     ["brief", "brief-pane", {}],
     ["skills", "skills-pane", { scope: "library", agent: "claude", query: "review", folded: ["builtin"] }],
+    ["linear", "linear-pane", { scope: "unassigned", project: { id: "project", name: "Office" }, query: "events", includeDone: false }],
   ]) {
     setup();
     moveToPane(kind, state, cx);
