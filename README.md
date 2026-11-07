@@ -216,28 +216,33 @@ are not included.
 ## Since you left
 
 The **Brief** toolbar button opens a persistent handoff for the current space. Its
-count shows unread updates. **Mark reviewed** clears that unread view; **History**
+count shows unread results and requests for input. **Mark as read** clears that view; **History**
 keeps reviewed updates available. Opening a space or focusing an agent does not
 mark its brief read. Each space has its own read receipts, even when several
 spaces share a project folder.
 
-While Herdr is open on `main-custom`, the toolbar observes agent requests for
-input and working → idle/done transitions across spaces. A finished turn is
-activity, not a verified successful outcome. The initial agent state is a
-baseline; closing an agent, losing a connection, or an unknown status never
-counts as completion. Activity while the app is closed is not reconstructed.
+While Herdr is open on `main-custom`, the toolbar records requests for input
+across spaces. Finishing a turn no longer creates an update. Existing finished-turn
+notices and routine reports whose title and opening sentence announce a commit or
+push are kept in **History**, without adding to the unread count. Reports with
+questions or reported failures remain in the main feed. The initial agent state
+is a baseline; activity while the app is closed is not reconstructed.
 
 For substantive results, Codex and Claude can leave a handoff using the installed
 `herdr-brief` skill and command:
 
 ```sh
-herdr-brief post --title "Login fix ready" --summary "Fixed the redirect after sign-in." \
-  --change "Updated src/auth.ts." --test "Passed: npm test (42 tests)." \
+herdr-brief post --title "Sign-in returns you to your page" \
+  --summary "After signing in, you now return to the page you were trying to open." \
+  --change 'Updated `src/auth.ts`.' --test "All 42 sign-in tests passed." \
   --question "Should expired sessions return to the original page?"
 ```
 
-Changes, validation and open questions are separate sections; validation is
-labeled **agent reported**. The optional flags repeat. **Open agent** returns to
+Briefs lead with a short title and a readable Markdown summary. Questions stay
+visible under **Needs your answer**; **Changes & checks** expands optional details
+and validation written by the agent. The installed skill asks for plain-language
+outcomes and skips routine commit, push and status notices. The optional flags
+repeat. **Open conversation** (or **Reply to agent**) returns to
 the handoff's exact live terminal in its original space. Handoffs are routed by
 terminal identity, with a unique working agent in the exact task folder as a
 fallback; ambiguous matches fail instead of using the focused space. The command

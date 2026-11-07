@@ -17,16 +17,30 @@ test("baseline, unknown, closed and replaced agents never imply successful work"
   assert.equal(result.events.length, 0);
 });
 
-test("completion and questions survive focus normalization without duplicate updates", () => {
+test("finishing a turn is quiet; requests for input are recorded once", () => {
   let result = observe({}, [agent("working")], 1);
   result = observe(result.next, [agent("done")], 2);
-  assert.deepEqual(result.events.map(item => item.kind), ["finished"]);
-  assert.match(result.events[0].summary, /finished a turn/);
+  assert.equal(result.events.length, 0);
   result = observe(result.next, [agent("idle")], 3);
   assert.equal(result.events.length, 0);
   result = observe(result.next, [agent("blocked")], 4);
   assert.deepEqual(result.events.map(item => item.kind), ["blocked"]);
   assert.equal(observe(result.next, [agent("blocked")], 5).events.length, 0);
+});
+
+test("routine legacy activity stays in history and does not inflate unread counts", () => {
+  const events = [{ id: "turn", space: "one", time: 3, kind: "finished" },
+    { id: "reply", space: "one", time: 4, kind: "blocked" }];
+  const reports = [{ id: "push", space: "one", time: 2, source: "agent", title: "Login committed and pushed",
+    summary: "Pushed abc1234 to origin/main. Working tree is clean.", tests: ["42 tests passed"] },
+    { id: "result", space: "one", time: 1, source: "agent", title: "Login fixed", summary: "Sign-in works again." }];
+  assert.deepEqual(entriesFor("one", events, reports).map(item => item.id), ["reply", "result"]);
+  assert.equal(unreadFor(entriesFor("one", events, reports), []).length, 2);
+  assert.deepEqual(entriesFor("one", events, reports, true).map(item => item.id), ["reply", "turn", "push", "result"]);
+  for (const extra of [{ questions: ["Deploy this?"] }, { tests: ["Push failed"] }, { summary: "Push rejected by the remote." },
+    { title: "Committed locally; push failed" }, { changes: ["Deployment is blocked"] }]) {
+    assert.equal(entriesFor("one", [], [{ ...reports[0], ...extra }]).length, 1);
+  }
 });
 
 test("review receipts isolate spaces and do not consume delayed handoffs", () => {
@@ -74,8 +88,16 @@ test("real rows show handoff evidence; marking reviewed preserves history and la
   world.agents = [agent("idle")];
   const view = new Brief(); view.init();
   let root = view.render();
+  assert.doesNotMatch(textOf(root), /42 passed/);
+  assert.match(textOf(root), /Ship it\?/);
+  find(root, "brief-details-handoff").handlers.click({}, { notify() {} });
+  root = view.render();
   assert.match(textOf(root), /42 passed/);
-  assert.match(textOf(root), /Validation · agent reported/);
+  assert.match(textOf(root), /Checks/);
+  find(root, "brief-details-handoff").handlers.click({}, { notify() {} });
+  root = view.render();
+  assert.doesNotMatch(textOf(root), /42 passed/);
+  assert.match(textOf(root), /Ship it\?/);
   find(root, "brief-open-handoff").handlers.click({}, {});
   assert.deepEqual(world.calls.at(-1), ["agent.focus", { terminal: "t1" }]);
   find(root, "brief-reviewed").handlers.click({}, {});
@@ -85,6 +107,7 @@ test("real rows show handoff evidence; marking reviewed preserves history and la
   assert.match(textOf(root), /Arrived later/);
   assert.doesNotMatch(textOf(root), /42 passed/);
   find(root, "brief-history").handlers.click({}, { notify() {} });
+  find(view.render(), "brief-details-handoff").handlers.click({}, { notify() {} });
   assert.match(textOf(view.render()), /42 passed/);
 });
 
@@ -97,7 +120,7 @@ test("a brief pane stays bound to its tab and never focuses a reused terminal in
   const view = new Brief(); view.init();
   assert.equal(view.space().id, "one");
   const root = view.render();
-  assert.match(textOf(root), /outcome unverified/);
+  assert.match(textOf(root), /Finished/);
   assert.equal(find(root, "brief-open-event"), undefined);
 });
 
@@ -110,11 +133,13 @@ const trackerSource = (await readFile(new URL("../mods/brief/tracker.js", import
 const { BriefTracker } = await import("data:text/javascript," + encodeURIComponent(modelSource.replaceAll("export ", "") +
   "\nconst { agents, appHome, exec, shared, setShared } = globalThis.__briefTrackerNative;\n" + trackerSource));
 
-test("the always-mounted tracker records background events once across redraws", () => {
+test("the always-mounted tracker skips completed turns and records requests once across redraws", () => {
   world.values = new Map(); world.agents = [agent("working")];
   const tracker = new BriefTracker(); tracker.previous = {};
   tracker.observe();
   world.agents = [agent("done")]; tracker.observe(); tracker.observe();
+  assert.equal(world.values.has("brief.activity"), false);
+  world.agents = [agent("blocked")]; tracker.observe(); tracker.observe();
   assert.equal(world.values.get("brief.activity").length, 1);
   assert.equal(world.values.get("brief.activity")[0].space, "one");
 });
