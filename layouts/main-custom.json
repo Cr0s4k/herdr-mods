@@ -138,6 +138,13 @@
                       },
                       "id": "brief",
                       "type": "block"
+                    },
+                    {
+                      "content": {
+                        "mod": "skills"
+                      },
+                      "id": "skills",
+                      "type": "block"
                     }
                   ],
                   "id": "panel-body",

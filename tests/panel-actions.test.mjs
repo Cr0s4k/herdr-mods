@@ -48,6 +48,7 @@ test("each side panel opens its native pane with its current state and creates n
     ["show", "show-pane", { all: true }],
     ["loops", "loops-pane", { all: true, completed: true, showCodex: false, showClaude: true }],
     ["brief", "brief-pane", {}],
+    ["skills", "skills-pane", { scope: "library", agent: "claude", query: "review", folded: ["builtin"] }],
   ]) {
     setup();
     moveToPane(kind, state, cx);

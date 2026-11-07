@@ -25,7 +25,7 @@ export default class Tabs extends View {
       for (;;) {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
-        else if (["files", "changes", "show", "loops", "brief"].includes(command)) this.togglePanel(command);
+        else if (["files", "changes", "show", "loops", "brief", "skills"].includes(command)) this.togglePanel(command);
       }
     });
   }
@@ -97,7 +97,7 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", "loops", "brief"];
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", "loops", "brief", "skills"];
     this.syncPanel(space, panel, body, enabled);
     const tab = shown.find(tab => tab.active)?.id;
     const review = panes().find(pane => pane.tab === tab && pane.mod === "review-pane");
@@ -132,6 +132,7 @@ export default class Tabs extends View {
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(panelButton("show", "Show", "mods/show/show.svg"))
       .child(panelButton("loops", "Loops", "mods/loops/loops.svg"))
+      .child(panelButton("skills", "Skills", "mods/skills/skills.svg"))
       .child(panelButton("brief", (() => {
         const count = unreadFor(entriesFor(space?.id, shared(ACTIVITY) ?? [], shared(REPORTS) ?? []), shared(receipt(space?.id))).length;
         return count ? `Brief (${count})` : "Brief";
