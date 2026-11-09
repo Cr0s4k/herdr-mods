@@ -94,6 +94,11 @@ sidebar keeps a compact view of the whole fight. The expanded view leaves room f
 full-length sword swings while keeping his face, armor and cape readable. Narrowing the sidebar
 reduces both the scene and its footer height. Animations use native image playback.
 
+For a show/hide shortcut, bind `ctrl-a g` to `layout.toggle:companion` in the
+`layout:main-custom` section of your Herdr `keys.json`. Press **Ctrl+A**, release,
+then **G**. Hiding Companion gives the space back to the sidebar; Herdr remembers his
+visibility separately from the animation pause setting.
+
 The reference-led sprite sheets, fixed blade layer and exact imagegen prompts are in `mods/companion/art/`.
 Rebuild the playback assets with `python3 mods/companion/build_sprites.py` (Python 3 and
 `ffmpeg`); the checked-in sprites need no build step or extra runtime dependency.
