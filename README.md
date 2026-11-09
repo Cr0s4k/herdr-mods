@@ -375,6 +375,20 @@ click it again to unpin. You can also right-click → **Pin to top**, or drag a 
 the line to pin it, below to unpin it. Pinned spaces stay above the rest, with a line under them. Pins are saved
 in Herdr's shared state (`space.pinned`), so they survive restarts.
 
+## Feature toggles
+
+The switch icon in the tab bar, after GitHub, opens **Features**: on/off switches for parts
+of the mods. Everything is on until you switch it off, and changes apply at once.
+
+- **Commit message box**: the message field and Commit button at the bottom of Changes.
+- **Loops**: the Loops button in the tab bar and its side panel.
+- **Companion**: the companion at the bottom of the sidebar. This one switches Herdr's own
+  visibility of his block, so it stays in step with the `layout.toggle:companion` shortcut.
+
+Switches live in Herdr's shared state (`features`), so they survive restarts. To add one,
+add a row to `FEATURES` in `mods/toggles/main.js` and check
+`shared("features")?.<key> !== false` where the feature is drawn.
+
 ## What's in here
 
 | Path | What it is |
@@ -399,6 +413,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/companion/` | Pixel Companion companion reacting to live agent starts, turns and requests for input |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
+| `mods/toggles/` | Feature toggles popup, opened from the tab bar |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
