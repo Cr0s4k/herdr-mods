@@ -619,6 +619,8 @@ export default class Spaces extends View {
   render() {
     const t = theme();
     const collapsed = narrow();
+    const needsYouOn = shared("features")?.needsYou !== false;
+    if (!needsYouOn) this.attention = false;
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
     const focusId = shared("spaces.focus");
@@ -647,7 +649,7 @@ export default class Spaces extends View {
       .child(h_flex().h(35).flex_none().pl(16).pr(10).gap(6).items_center().text_size(11.5).text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child(div().flex_1().child("Spaces")))
-        .when(!collapsed, el => el.child(div().id("spaces-needs-you").h(23).px(6).rounded(5).flex_none().flex().gap(4).items_center().cursor_pointer()
+        .when(!collapsed && needsYouOn, el => el.child(div().id("spaces-needs-you").h(23).px(6).rounded(5).flex_none().flex().gap(4).items_center().cursor_pointer()
           .text_size(10.5).text_color(this.attention ? t.blocked : t.muted)
           .when(this.attention, el => el.bg(t.blocked + "26"))
           .hover(s => s.bg(t.hover).text_color(t.foreground))

@@ -143,7 +143,7 @@ export default class Tabs extends View {
     const togglesButton = Button.new("open-toggles").h(26).px(8).flex_none().flex().items_center().rounded(6)
       .text_color(t.muted).tooltip("Feature toggles").accessibility_label("Feature toggles")
       .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-      .on_click(() => openOverlay({ mod: "toggles", kind: "popup", width: 340, height: 270 }))
+      .on_click(() => openOverlay({ mod: "toggles", kind: "popup", width: 340, height: 320 }))
       .child(svg("mods/toggles/toggles.svg").size(14));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })

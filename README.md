@@ -383,6 +383,8 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 - **Commit message box**: the message field and Commit button at the bottom of Changes.
 - **Loops**: the Loops button in the tab bar and its side panel.
 - **Skills**: the Skills button in the tab bar and its side panel.
+- **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
+  shows every space.
 - **Companion**: the companion at the bottom of the sidebar. This one switches Herdr's own
   visibility of his block, so it stays in step with the `layout.toggle:companion` shortcut.
 
