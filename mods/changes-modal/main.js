@@ -3,6 +3,7 @@ import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gp
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton } from "./panel-actions.js";
+import { isImage, stageImage, imageCompare } from "./images.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -264,7 +265,20 @@ export default class Changes extends View {
   show(index, cx) {
     if (index < 0 || index >= this.files.length) return;
     const file = this.files[index], context = key();
-    this.index = index; this.open = file.path; this.setLines([]); this.split = null; this.loadingDiff = true;
+    this.index = index; this.open = file.path; this.setLines([]); this.split = null; this.loadingDiff = true; this.pictures = null;
+    if (isImage(file.path) && !this.on) {
+      cx.spawn(async (cx) => {
+        const stage = (rev) => stageImage(this.root, file.path, rev).catch(() => null);
+        const [before, after] = await Promise.all([
+          this.hasHead && !file.fresh && file.status !== "A" ? stage("HEAD") : undefined,
+          file.status !== "D" ? stage() : undefined,
+        ]);
+        if (this.index !== index) return;
+        this.pictures = { before, after }; this.loadingDiff = false;
+        cx.notify();
+      });
+      return cx.notify();
+    }
     cx.spawn(async (cx) => {
       try { await this.load(file.path, context); }
       catch (e) { this.setLines([`Cannot preview this diff (too large or unreadable): ${e}`]); }
@@ -341,25 +355,26 @@ export default class Changes extends View {
         .when(file.add > 0, (e) => e.child(div().text_size(12).text_color(t.ansi2).child(`+${file.add}`)))
         .when(file.del > 0, (e) => e.child(div().text_size(12).text_color(t.ansi1).child(`−${file.del}`)))
         .child(div().flex_1())
-        .child(h_flex().gap(4)
+        .when(!this.pictures, (e) => e.child(h_flex().gap(4)
           .child(this.button("cm-unified", "Unified", () => setShared(SPLIT, false), !split, t))
-          .child(this.button("cm-split", "Split", () => setShared(SPLIT, true), split, t)))
+          .child(this.button("cm-split", "Split", () => setShared(SPLIT, true), split, t))))
         .child(div().w(8))
         .child(this.button("cm-prev", "↑", (cx) => step(-1, cx), false, t))
         .child(div().text_size(12).text_color(t.dim).child(`${this.index + 1} / ${this.files.length}`))
         .child(this.button("cm-next", "↓", (cx) => step(1, cx), false, t))
         .child(div().w(8))
         .child(this.button("cm-close", "✕", () => closeOverlay(props().overlay), false, t)))
-      .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
+      .when(Boolean(this.pictures), (e) => e.child(imageCompare(this.pictures.before, this.pictures.after, t)))
+      .when(!this.pictures, (e) => e.child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
         .when(split, (e) => e.child(v_virtual_list("changes-modal-diff", rows.length, 22, (i) => String(i),
           (range) => rows.slice(range.start, range.end).map((r) => this.splitRow(r, t))).size_full()))
         .when(!split, (e) => e.child(div().id("changes-modal-x").size_full().overflow_x_scrollbar()
           .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-modal-diff", rows.length, 22, (i) => String(i),
             (range) => rows.slice(range.start, range.end).map((r) => this.row(r, t))).size_full()))))
         .child(Scrollbar.vertical("changes-modal-diff").viewport_from_layout().absolute().inset_0())
-        .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.dim).child("Loading…"))))
+        .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.dim).child("Loading…")))))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
-        .child("↑ ↓ file").child("S split / unified").child("Esc close"));
+        .child("↑ ↓ file").when(!this.pictures, (e) => e.child("S split / unified")).child("Esc close"));
   }
 
   diffRow({ kind, number, text }, t) {

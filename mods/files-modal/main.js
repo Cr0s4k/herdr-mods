@@ -4,6 +4,7 @@ import { v_flex, h_flex, Button, Editor, EditorState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay } from "herdr";
 import { iconsReady, fileIcon } from "./icons.js";
 import { moveToPaneButton } from "./panel-actions.js";
+import { isImage, stageImage, imageView } from "./images.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -168,8 +169,16 @@ export default class Files extends View {
 
   show(index, cx) {
     if (index < 0 || index >= this.files.length) return;
-    this.code?.release(); this.code = null; this.fileError = null; this.index = index;
+    this.code?.release(); this.code = null; this.fileError = null; this.picture = undefined; this.index = index;
     const { root, on } = props(), path = this.files[index];
+    if (isImage(path)) {
+      if (on) { this.fileError = "Image previews only work for local folders"; cx.notify(); return; }
+      cx.spawn(async cx => {
+        const pic = await stageImage(root, path).catch(() => null);
+        if (this.index === index) { this.picture = pic; cx.notify(); }
+      });
+      return cx.notify();
+    }
     cx.spawn(async cx => {
       try {
         const text = await readTextFile(`${root}/${path}`, { on });
@@ -216,7 +225,7 @@ export default class Files extends View {
         .child(this.button("fm-next", "↓", cx => step(1, cx), t))
         .child(div().w(8))
         .child(this.button("fm-close", "✕", () => closeOverlay(p.overlay), t)))
-      .child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().flex_1().p(16).text_color(t.dim).child(this.fileError || "Loading file…"))
+      .child(this.picture !== undefined ? imageView(this.picture, t) : this.code ? Editor.new(this.code).flex_1().min_h(0) : div().flex_1().p(16).text_color(t.dim).child(this.fileError || "Loading file…"))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
         .child("↑ ↓ file (before clicking into the text)").child("Esc close"));
   }

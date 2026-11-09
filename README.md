@@ -59,6 +59,10 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 - **Changes** shows the diff, **Split** (old and new side by side) or **Unified** (`S` toggles,
   and the choice sticks). Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
   when it's installed (`brew install bat`), in the theme's terminal colors; without it they're plain.
+- Images (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, TIFF) show as pictures: in Files on their own,
+  in Changes as **Before** (`HEAD`) and **After** (working copy) side by side, like GitHub. SVGs
+  stay text. Local folders only; the copies Herdr needs to load them live in
+  `~/.config/herdr-app/data/image-preview/` and are deleted after a day.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
