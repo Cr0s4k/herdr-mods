@@ -12,6 +12,11 @@ Install copies `mods/*` and `layouts/*` into `~/.config/herdr-app`, links any ex
 top of a mod folder into `~/.local/bin`, and links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex).
 `ctrl-shift-l` switches back to Herdr's own layouts.
 
+**GitHub** in the tab bar opens the current project in a new Firefox tab. It follows the
+focused terminal's folder, including subfolders and worktrees, and reads HTTPS or SSH
+GitHub remotes. It prefers `origin`, then the first GitHub fetch remote. Remote spaces
+read Git on their machine and open Firefox on this computer. Firefox must be installed.
+
 ## Show
 
 A **Show** panel (top right, next to Files and Changes). Claude or Codex posts screenshots there; you

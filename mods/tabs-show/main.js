@@ -1,7 +1,8 @@
 import { View, div, svg, image } from "gpui-kit";
-import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { h_flex, Button } from "gpui-base";
+import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
 import { ReviewPanes } from "./review.js";
+import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
 import { LaunchTracker } from "./linear-launches.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
@@ -20,6 +21,7 @@ export default class Tabs extends View {
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     this.review = new ReviewPanes();
+    this.github = new GitHubRepo();
     this.brief = new BriefTracker();
     this.brief.start(cx);
     this.launches = new LaunchTracker();
@@ -28,6 +30,7 @@ export default class Tabs extends View {
       for (;;) {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
+        else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
         else if (["files", "changes", "show", "loops", "brief", "skills", "linear"].includes(command)) this.togglePanel(command);
       }
     });
@@ -124,11 +127,22 @@ export default class Tabs extends View {
       .hover(s => s.bg(tab && !opening ? t.hover : t.chrome)).on_mouse_down("left", stop)
       .on_click((_e, cx) => { if (tab && !opening) this.review.open(cx); })
       .child(svg("mods/tabs-show/review.svg").size(15)).child(reviewLabel);
+    const repository = repositoryContext(spaces(), panes(), focused());
+    const githubEnabled = Boolean(repository.cwd) && !this.github.opening;
+    const githubButton = Button.new("open-github").h(26).px(8).gap(5).flex_none().flex().items_center().rounded(6)
+      .text_size(12).text_color(githubEnabled ? t.muted : t.dim).disabled(!githubEnabled)
+      .accessibility_label("Open GitHub repository in a new Firefox tab")
+      .tooltip(this.github.opening ? "Opening GitHub in Firefox…" : repository.cwd
+        ? `Open this repository in a new Firefox tab\n${repository.cwd}` : "Select a project to open its GitHub repository")
+      .hover(s => s.bg(githubEnabled ? t.hover : t.chrome)).on_mouse_down("left", stop)
+      .on_click((_e, cx) => this.github.open(cx, repository, w?.platform))
+      .child(svg("mods/tabs-show/github.svg").size(14)).child("GitHub");
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+      .child(githubButton)
       .when(enabled.includes("changes"), el => el.child(reviewButton)
         .child(div().w(1).h(16).mx(7).flex_none().bg(t.border)))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))

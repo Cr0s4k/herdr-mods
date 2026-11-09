@@ -107,6 +107,8 @@ function element() {
 }
 Object.assign(globalThis.__reviewNative, {
   View: class {}, div: element, svg: element, image: element, h_flex: element, ReviewPanes,
+  Button: { new: id => element().id(id) },
+  GitHubRepo: class { constructor() { this.opening = false; } }, repositoryContext: () => ({ cwd: null }),
   shared: key => preferences.get(key),
   layout: () => world.layout,
   window: () => ({ platform: "macos" }), settings: () => ({ zoom: 1 }),
@@ -117,7 +119,7 @@ Object.assign(globalThis.__reviewNative, {
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, spaces, panes, run, theme, window, shared, layout, settings, ReviewPanes, BriefTracker, LaunchTracker, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
