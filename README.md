@@ -79,6 +79,25 @@ navigation, drag, split, zoom and close controls. Use the toolbar toggle wheneve
 the side panel again. Moving a panel does not start a terminal; **Changes + terminal**
 remains the shortcut for the paired layout.
 
+## Companion
+
+A detailed pixel-art **Companion from fan art** stands above the sidebar footer. He raises
+the sword when a new agent appears or starts a turn, then cuts down a zombie
+when an agent finishes a turn. The zombie dissolves into pixels. This follows live
+Codex, Claude and other agent reports across spaces; the caption also highlights
+agents waiting for your input. A finished turn is a celebration of activity, not a claim that its task succeeded.
+
+Click Companion to spar with a zombie. The small pause button stops animations and remembers
+your choice. macOS Reduce Motion also keeps him still. He rests between events and while the window is inactive. Parallel events
+are grouped into short sequences, and reloading never replays old activity. The narrow
+sidebar keeps a compact view of the whole fight. The expanded view leaves room for
+full-length sword swings while keeping his face, armor and cape readable. Narrowing the sidebar
+reduces both the scene and its footer height. Animations use native image playback.
+
+The reference-led sprite sheets, fixed blade layer and exact imagegen prompts are in `mods/companion/art/`.
+Rebuild the playback assets with `python3 mods/companion/build_sprites.py` (Python 3 and
+`ffmpeg`); the checked-in sprites need no build step or extra runtime dependency.
+
 ## Skills
 
 **Skills** in the top toolbar opens a searchable inventory for the working folder and
@@ -372,6 +391,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 | `mods/brief/`, `mods/brief-pane/` | Since you left: per-space activity, persistent handoffs, unread history and pane view |
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
+| `mods/companion/` | Pixel Companion companion reacting to live agent starts, turns and requests for input |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |

@@ -34,6 +34,16 @@
         },
         {
           "content": {
+            "mod": "companion"
+          },
+          "id": "companion",
+          "size": {
+            "px": 268
+          },
+          "type": "block"
+        },
+        {
+          "content": {
             "mod": "workspace-chrome",
             "props": {
               "footer": true
