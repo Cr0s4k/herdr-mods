@@ -115,9 +115,53 @@ appear only in Personal library as unverified. Claude's built-ins that have no l
 manifest are not indexed. A plain repository `skills/` folder contains source files and
 does not itself install those skills for either agent.
 
+## Tasks and Plane
+
+**Tasks** in the toolbar opens a Plane backlog beside your terminals. Connect your
+self-hosted instance, then choose the Plane project for the working
+repository. A local repository's subfolders and Git worktrees share its project mapping.
+Remote mappings belong to the exact folder on that machine. Each instance and workspace
+has separate mappings. **Unlink** removes the mapping without changing anything in Plane.
+
+Choose **My tickets**, **Unassigned**, or **All**, search task identifiers, titles and
+descriptions, and use **Include done** to show completed or cancelled tasks. The Plane v1
+API does not filter these list requests, so the adapter checks actual rows: it reads up to
+three pages of 100 tasks per request, stopping earlier after at least 50 matches or the
+last page. **Load more tickets** continues from the next unchecked page. A sparse search
+can require several loads; an empty partial result says to keep searching. Projects use
+the same bounded pagination. Refresh runs every minute while browsing and keeps the last
+results when a request fails.
+
+**New task** captures a title, description and priority directly into the linked Plane
+project. Descriptions are saved as escaped rich text; existing Plane rich text is converted
+to Markdown for reading and agent handoffs. A save with an uncertain result is not retried:
+open the project in Plane to check whether the task was created. Starting an agent does
+not change Plane status or assignee.
+
+Open a task to read its full description, open it in Plane, copy the agent task, or
+**Assign to agent…**. Start a new agent or send the task to an idle agent in the same
+folder. For isolated work, **Select tickets → Launch N…** reviews the destination,
+starting commit and agent before creating one `plane/` branch and Git worktree per task.
+The shared launcher and its retry safeguards work as described below for Linear.
+**Move to pane** preserves the filters and selection. Finish or leave task capture before
+moving the panel.
+
+The Tasks connection settings open a local terminal for your instance URL, workspace slug
+and personal access token. The same setup is available with `herdr-plane connect`.
+Credentials are saved with owner-only permissions in
+`~/.config/herdr-app/plane/credentials.json`; mappings are in `plane/projects.json`.
+`PLANE_BASE_URL`, `PLANE_WORKSPACE` and `PLANE_API_KEY` override the corresponding saved
+values. Credentials and API requests stay on this computer when the agent destination
+is remote. Python 3 and access to the Plane instance are required; private Tailscale
+addresses require an active connection. The adapter uses the public Plane v1 REST API.
+
+This integration supports backlog capture and manual launches. Durable scheduled agent
+runs and a phone scheduling page are follow-up work; Plane's planning dates do not
+automatically launch agents.
+
 ## Linear
 
-**Linear** in the toolbar opens your tickets beside the terminals. Choose **My tickets**,
+**Open Linear** in **Tasks → connection settings** opens your tickets beside the terminals. Choose **My tickets**,
 **Unassigned**, or **All**, search titles and descriptions, and filter by a Linear project.
 The project selection is remembered per space. Closed tickets start hidden; **Include done**
 shows them. Results load 50 at a time, with **Load more tickets** for the next page. The

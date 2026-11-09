@@ -9,6 +9,7 @@ const PANELS = {
   brief: { mod: "brief-pane", name: "Brief" },
   skills: { mod: "skills-pane", name: "Skills" },
   linear: { mod: "linear-pane", name: "Linear" },
+  plane: { mod: "plane-pane", name: "Tasks" },
 };
 const opening = new Set();
 

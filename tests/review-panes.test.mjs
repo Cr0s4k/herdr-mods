@@ -133,9 +133,9 @@ function find(el, id) {
 }
 function text(el) { return typeof el === "string" ? el : (el?.nodes ?? []).map(text).join(" "); }
 
-test("Files, Changes, Show, Loops, Brief and Skills toggle side panels without creating panes", () => {
+test("Files, Changes, Show, Loops, Brief, Skills and Tasks toggle side panels without creating panes", () => {
   const tabs = setupTabs(), root = tabs.render();
-  for (const id of ["files", "changes", "show", "loops", "brief", "skills"]) {
+  for (const id of ["files", "changes", "show", "loops", "brief", "skills", "plane"]) {
     world.calls = [];
     find(root, `panel-${id}`).handlers.click({}, cx);
     assert.deepEqual(world.calls, [

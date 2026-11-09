@@ -1,0 +1,166 @@
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+import urllib.error
+
+
+SOURCE = Path(__file__).resolve().parents[1] / "mods/plane/herdr-plane"
+loader = importlib.machinery.SourceFileLoader("plane_adapter", str(SOURCE))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+plane = importlib.util.module_from_spec(spec)
+loader.exec_module(plane)
+PROJECT = {"id": "11111111-1111-4111-8111-111111111111", "name": "Herdr Mods", "identifier": "HMOD"}
+ITEM_ID = "22222222-2222-4222-8222-222222222222"
+CONFIG = {"baseUrl": "https://plane.example.test", "workspace": "herdr", "apiKey": "secret-token"}
+
+
+def item(**changes):
+    return {"id": ITEM_ID, "name": "Capture task", "sequence_id": 12,
+            "description_html": "<p>Full <strong>requirements</strong></p>",
+            "state": {"name": "Review", "group": "started"}, "assignees": [], "priority": "high", **changes}
+
+
+class PlaneTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.home = Path(self.temporary.name)
+        plane.private_json(self.home / "plane/credentials.json", CONFIG)
+        self.environment = patch.dict(os.environ, {"PLANE_API_KEY": "", "PLANE_BASE_URL": "", "PLANE_WORKSPACE": ""})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def test_configuration_stays_private_and_connection_response_never_contains_key(self):
+        self.assertEqual((self.home / "plane/credentials.json").stat().st_mode & 0o777, 0o600)
+        connection = plane.request(self.home, {"op": "connection"})
+        self.assertEqual(connection, {"baseUrl": CONFIG["baseUrl"], "workspace": "herdr"})
+        self.assertNotIn("secret-token", json.dumps(connection))
+        for base in ["file:///etc/passwd", "https://user:password@example.test", "https://example.test/?token=secret"]:
+            with patch.dict(os.environ, {"PLANE_BASE_URL": base}):
+                with self.assertRaises(plane.PlaneError):
+                    plane.configuration(self.home)
+
+    def test_html_preserves_requirements_lists_code_and_links_without_executing_markup(self):
+        source = '<h2>Acceptance</h2><ul><li>Keep <strong>all</strong> requirements</li></ul><pre><code>a &lt; b\nnext()</code></pre><a href="https://example.test/spec">Spec</a><script>secret</script><a href="javascript:alert(1)">Text</a>'
+        text = plane.markdown(source)
+        for expected in ["## Acceptance", "- Keep **all** requirements", "```\na < b\nnext()\n```", "[Spec](https://example.test/spec)", "Text"]:
+            self.assertIn(expected, text)
+        self.assertNotIn("secret", text)
+        self.assertNotIn("javascript", text)
+
+    def test_normalization_keeps_identity_workflow_and_full_description(self):
+        result = plane.normalized(item(state={"name": "Cancelled", "group": "cancelled"},
+            assignees=[{"id": "me", "display_name": "Sam"}]), PROJECT, CONFIG)
+        self.assertEqual(result["uuid"], f"plane:{PROJECT['id']}:{ITEM_ID}")
+        self.assertEqual(result["identifier"], "HMOD-12")
+        self.assertEqual(result["statusType"], "canceled")
+        self.assertEqual(result["assignee"], "Sam")
+        self.assertIn("**requirements**", result["description"])
+        self.assertTrue(result["url"].startswith(CONFIG["baseUrl"] + "/herdr/"))
+
+    def test_procedure_order_nested_requirements_and_code_delimiters_survive_handoff(self):
+        source = '<ol start="3"><li><p>Start DB</p><ul><li><p>Wait for ready</p></li></ul></li><li><p>Run migration</p></li></ol>'
+        text = plane.markdown(source)
+        self.assertIn("3. Start DB", text)
+        self.assertIn("   - Wait for ready", text)
+        self.assertIn("4. Run migration", text)
+        self.assertEqual(plane.markdown('<code>a`b</code>'), '``a`b``')
+        self.assertEqual(plane.markdown('<code>`wrapped`</code>'), '`` `wrapped` ``')
+        self.assertEqual(plane.markdown('<pre><code>```\nexample</code></pre>'), '````\n```\nexample\n````')
+
+    def test_search_and_assignment_filter_actual_rows_when_v1_ignores_query_parameters(self):
+        records = [item(), item(id="other", name="Scheduler", assignees=[{"id": "me"}], description_html="<p>Run tomorrow</p>")]
+        def call(_config, path, params=None, **_kwargs):
+            if path == "users/me/":
+                return {"id": "me"}
+            if path.endswith("work-items/"):
+                return {"results": records, "next_page_results": False}
+            return PROJECT
+        with patch.object(plane, "call", side_effect=call):
+            for scope, query, titles in [("mine", "", ["Scheduler"]), ("unassigned", "", ["Capture task"]),
+                                          ("all", "tomorrow", ["Scheduler"]), ("all", "no-such-task", [])]:
+                response = plane.request(self.home, {"op": "issues", "project": PROJECT["id"], "scope": scope, "query": query})
+                self.assertEqual([i["title"] for i in response["issues"]], titles)
+
+    def test_sparse_search_follows_pages_then_returns_a_bounded_continuation_without_skipping_rows(self):
+        def call(_config, _path, params):
+            page = int(params.get("cursor") or "0")
+            return {"results": [item(name="Match" if page == 4 else "Other", sequence_id=page)],
+                    "next_page_results": page < 4, "next_cursor": str(page + 1)}
+        with patch.object(plane, "call", side_effect=call) as transport:
+            found, cursor, more = plane.scan(CONFIG, "path", None, lambda i: i["name"] == "Match")
+            self.assertEqual(found, [])
+            self.assertEqual(cursor, "3")
+            self.assertTrue(more)
+            self.assertEqual(transport.call_count, 3)
+            found, cursor, more = plane.scan(CONFIG, "path", cursor, lambda i: i["name"] == "Match")
+            self.assertEqual([i["sequence_id"] for i in found], [4])
+            self.assertFalse(more)
+
+    def test_mapping_is_shared_by_subfolders_and_worktrees_and_scoped_to_connection(self):
+        repo = self.home / "repo"
+        repo.mkdir()
+        def git(*args):
+            return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
+        git("init", "-q")
+        (repo / "file").write_text("base")
+        (repo / "nested").mkdir()
+        git("add", ".")
+        git("-c", "user.name=Test", "-c", "user.email=test@example.test", "-c", "commit.gpgsign=false", "commit", "-qm", "base")
+        worktree = self.home / "worktree"
+        git("worktree", "add", "--detach", str(worktree))
+        root_key = plane.mapping_key({"context": {"cwd": str(repo)}})
+        self.assertEqual(root_key, plane.mapping_key({"context": {"cwd": str(repo / "nested")}}))
+        self.assertEqual(root_key, plane.mapping_key({"context": {"cwd": str(worktree)}}))
+        self.assertNotEqual(root_key, plane.mapping_key({"context": {"cwd": str(repo), "on": "remote"}}))
+        with patch.object(plane, "call", return_value=PROJECT):
+            plane.request(self.home, {"op": "map", "project": PROJECT["id"], "context": {"cwd": str(repo)}})
+        mappings = json.loads((self.home / "plane/projects.json").read_text())
+        self.assertEqual(mappings[CONFIG["baseUrl"] + "/herdr"][root_key], PROJECT["id"])
+        with patch.dict(os.environ, {"PLANE_WORKSPACE": "different"}):
+            self.assertTrue(plane.request(self.home, {"op": "issues", "context": {"cwd": str(repo)}})["needsProject"])
+
+    def test_capture_escapes_html_and_never_follows_a_successful_write_with_another_request(self):
+        calls = []
+        def call(_config, path, params=None, method="GET", body=None):
+            calls.append((path, method, body))
+            return item() if method == "POST" else PROJECT
+        with patch.object(plane, "call", side_effect=call):
+            result = plane.request(self.home, {"op": "create", "project": PROJECT["id"], "title": " New task ",
+                "description": '<script>example</script>\n**literal**', "priority": "high"})
+        self.assertEqual(result["identifier"], "HMOD-12")
+        self.assertEqual([method for _, method, _ in calls], ["GET", "POST"])
+        self.assertEqual(calls[-1][2]["name"], "New task")
+        self.assertIn("&lt;script&gt;", calls[-1][2]["description_html"])
+        self.assertNotIn("<script>", calls[-1][2]["description_html"])
+
+    def test_transport_errors_are_redacted_and_unconfirmed_writes_are_distinct(self):
+        for code, expected in [(401, "auth"), (403, "auth"), (429, "rate_limit"), (500, "request")]:
+            error = urllib.error.HTTPError("https://secret-token", code, "secret-token", {}, None)
+            with patch.object(plane.urllib.request.OpenerDirector, "open", side_effect=error):
+                with self.assertRaises(plane.PlaneError) as caught:
+                    plane.call(CONFIG, "users/me/")
+            self.assertEqual(caught.exception.kind, expected)
+            self.assertNotIn("secret-token", str(caught.exception))
+        with patch.object(plane.urllib.request.OpenerDirector, "open", side_effect=TimeoutError()):
+            with self.assertRaises(plane.PlaneError) as caught:
+                plane.call(CONFIG, "work-items/", method="POST", body={"name": "Task"})
+            self.assertEqual(caught.exception.kind, "uncertain")
+
+    def test_connect_validates_before_replacing_existing_credentials(self):
+        before = (self.home / "plane/credentials.json").read_text()
+        with patch("builtins.input", side_effect=["", ""]), patch.object(plane.getpass, "getpass", return_value="invalid"), \
+                patch.object(plane, "call", side_effect=plane.PlaneError("Denied", "auth")):
+            with self.assertRaises(plane.PlaneError):
+                plane.connect(self.home)
+        self.assertEqual((self.home / "plane/credentials.json").read_text(), before)
+
+
+if __name__ == "__main__":
+    unittest.main()

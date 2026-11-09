@@ -31,7 +31,7 @@ export default class Tabs extends View {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
         else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
-        else if (["files", "changes", "show", "loops", "brief", "skills", "linear"].includes(command)) this.togglePanel(command);
+        else if (["files", "changes", "show", "loops", "brief", "skills", "linear", "plane"].includes(command)) this.togglePanel(command);
       }
     });
   }
@@ -103,7 +103,7 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", "loops", "brief", "skills", "linear"];
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", "loops", "brief", "skills", "linear", "plane"];
     this.syncPanel(space, panel, body, enabled);
     const tab = shown.find(tab => tab.active)?.id;
     const review = panes().find(pane => pane.tab === tab && pane.mod === "review-pane");
@@ -150,7 +150,7 @@ export default class Tabs extends View {
       .child(panelButton("show", "Show", "mods/show/show.svg"))
       .child(panelButton("loops", "Loops", "mods/loops/loops.svg"))
       .child(panelButton("skills", "Skills", "mods/skills/skills.svg"))
-      .child(panelButton("linear", "Linear", "mods/linear/linear.svg"))
+      .child(panelButton("plane", "Tasks", "mods/plane/plane.svg"))
       .child(panelButton("brief", (() => {
         const count = unreadFor(entriesFor(space?.id, shared(ACTIVITY) ?? [], shared(REPORTS) ?? []), shared(receipt(space?.id))).length;
         return count ? `Brief (${count})` : "Brief";

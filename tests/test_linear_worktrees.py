@@ -88,6 +88,14 @@ class WorktreeTest(unittest.TestCase):
         root.relative_to(self.home / ".herdr/worktrees")
         self.assertNotIn("..", plan["workspaces"][0]["branch"])
 
+    def test_plane_launches_use_their_own_branch_and_worktree_namespace(self):
+        plan = helper.inspect(self.repo, self.tickets, "plane")
+        workspace = helper.create(self.repo, plan, self.tickets[0])
+        self.assertTrue(workspace["branch"].startswith("plane/"))
+        self.assertEqual(Path(workspace["root"]).parent.name, "plane")
+        with self.assertRaisesRegex(ValueError, "Unsupported"):
+            helper.inspect(self.repo, self.tickets, "../../escape")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+"""Plane v1 adapter for Herdr. Credentials and repository mappings stay local."""
+import argparse
+import getpass
+import html
+from html.parser import HTMLParser
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+
+class PlaneError(Exception):
+    def __init__(self, message, kind="request"):
+        super().__init__(message)
+        self.kind = kind
+
+
+def private_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(data, stream)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def load_json(path, default):
+    try:
+        return json.loads(Path(path).read_text())
+    except FileNotFoundError:
+        return default
+    except (ValueError, OSError):
+        raise PlaneError("Cannot read the saved Plane configuration. Reconnect Plane.", "auth")
+
+
+def configuration(home):
+    saved = load_json(Path(home) / "plane/credentials.json", {})
+    if not isinstance(saved, dict):
+        raise PlaneError("Reconnect Plane to replace its invalid configuration.", "auth")
+    config = {"baseUrl": os.environ.get("PLANE_BASE_URL") or saved.get("baseUrl", ""),
+              "workspace": os.environ.get("PLANE_WORKSPACE") or saved.get("workspace", ""),
+              "apiKey": os.environ.get("PLANE_API_KEY") or saved.get("apiKey", "")}
+    parsed = urllib.parse.urlsplit(config["baseUrl"])
+    if (parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or parsed.path not in ("", "/")):
+        raise PlaneError("Connect Plane with its instance URL, workspace slug and API key.", "auth")
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", config["workspace"]) or not config["apiKey"]:
+        raise PlaneError("Connect Plane with a workspace slug and API key.", "auth")
+    config["baseUrl"] = config["baseUrl"].rstrip("/")
+    return config
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def call(config, path, params=None, method="GET", body=None):
+    url = config["baseUrl"] + "/api/v1/" + path
+    if params:
+        url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    request = urllib.request.Request(url, method=method,
+        headers={"X-API-Key": config["apiKey"], "Content-Type": "application/json", "Accept": "application/json"},
+        data=json.dumps(body).encode() if body is not None else None)
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=18) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            raise PlaneError("Plane denied access. Check your API key and project membership.", "auth")
+        if error.code == 429:
+            raise PlaneError("Plane is limiting requests. Wait a minute, then refresh.", "rate_limit")
+        if error.code == 404:
+            raise PlaneError("Plane could not find this workspace, project or task. Check your connection and project.")
+        if method != "GET" and error.code >= 500:
+            raise PlaneError("Plane could not confirm the save. Check the task in Plane before trying again.", "uncertain")
+        if error.code in (400, 422):
+            raise PlaneError("Plane rejected the task. Check its title, project and workflow state.")
+        raise PlaneError("Plane could not complete the request. Check the instance URL and try refreshing.")
+    except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, ValueError):
+        if method != "GET":
+            raise PlaneError("The save could not be confirmed. Check Plane before trying again.", "uncertain")
+        raise PlaneError("Cannot reach Plane. Check your network or Tailscale connection, then refresh.", "offline")
+
+
+def rows(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        return data["results"]
+    raise PlaneError("This Plane response format is unsupported. Check the instance API version.")
+
+
+def pages(config, path):
+    result, cursor, seen = [], None, set()
+    for _ in range(20):
+        data = call(config, path, {"per_page": 100, "cursor": cursor})
+        result.extend(rows(data))
+        if isinstance(data, list) or not data.get("next_page_results"):
+            return result
+        cursor = data.get("next_cursor")
+        if not cursor or cursor in seen:
+            break
+        seen.add(cursor)
+    raise PlaneError("Plane returned too many metadata pages. Choose a smaller workspace.")
+
+
+def valid_id(value):
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        raise PlaneError("Invalid Plane project or task identifier. Refresh and choose it again.")
+
+
+class Markdown(HTMLParser):
+    """Render Plane rich text without losing procedural structure or code delimiters."""
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = {"tag": "document", "attrs": {}, "children": []}
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = {"tag": tag, "attrs": dict(attrs), "children": []}
+        self.stack[-1]["children"].append(node)
+        if tag not in self.VOID:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, 0, -1):
+            if self.stack[index]["tag"] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        self.stack[-1]["children"].append(data)
+
+    def plain(self, node):
+        if isinstance(node, str):
+            return node
+        if node["tag"] in ("script", "style"):
+            return ""
+        if node["tag"] == "br":
+            return "\n"
+        return "".join(self.plain(child) for child in node["children"])
+
+    def children(self, node):
+        return "".join(self.render(child) for child in node["children"])
+
+    @staticmethod
+    def target(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            if value.startswith("/") or urllib.parse.urlsplit(value).scheme in ("https", "http", "mailto"):
+                return value.replace(")", "%29").replace(" ", "%20")
+        except ValueError:
+            pass
+        return None
+
+    def render(self, node):
+        if isinstance(node, str):
+            return node
+        tag, attrs = node["tag"], node["attrs"]
+        if tag in ("script", "style"):
+            return ""
+        if tag == "br":
+            return "\n"
+        if tag == "hr":
+            return "\n\n---\n\n"
+        if tag == "pre":
+            text = self.plain(node)
+            longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+            fence = "`" * max(3, longest + 1)
+            return "\n" + fence + "\n" + text.rstrip("\n") + "\n" + fence + "\n"
+        if tag == "code":
+            text = self.plain(node).replace("\n", " ")
+            longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+            delimiter = "`" * (longest + 1)
+            padding = " " if text.startswith("`") or text.endswith("`") or (text.startswith(" ") and text.endswith(" ") and text.strip()) else ""
+            return delimiter + padding + text + padding + delimiter
+        if tag in ("ul", "ol"):
+            items = [child for child in node["children"] if isinstance(child, dict) and child["tag"] == "li"]
+            try:
+                number = int(attrs.get("start", 1))
+            except (ValueError, TypeError):
+                number = 1
+            lines = []
+            for child in items:
+                try:
+                    number = int(child["attrs"].get("value", number))
+                except (ValueError, TypeError):
+                    pass
+                marker = str(number) + ". " if tag == "ol" else "- "
+                content = self.children(child).strip().splitlines() or [""]
+                lines.append(marker + content[0])
+                lines.extend(" " * len(marker) + line for line in content[1:])
+                number += 1
+            return "\n" + "\n".join(lines) + "\n"
+        if tag == "table":
+            def table_rows(parent):
+                if isinstance(parent, str):
+                    return []
+                if parent["tag"] == "tr":
+                    return [[self.children(cell).strip().replace("\n", " ").replace("|", "\\|")
+                             for cell in parent["children"] if isinstance(cell, dict) and cell["tag"] in ("td", "th")]]
+                return [row for child in parent["children"] for row in table_rows(child)]
+            records = table_rows(node)
+            if not records:
+                return self.children(node)
+            lines = ["| " + " | ".join(row) + " |" for row in records]
+            lines.insert(1, "| " + " | ".join("---" for _ in records[0]) + " |")
+            return "\n\n" + "\n".join(lines) + "\n\n"
+        if tag == "img":
+            label = attrs.get("alt", "Image attachment")
+            target = self.target(attrs.get("src", ""))
+            return f"![{label}]({target})" if target else label
+        content = self.children(node)
+        if tag in ("p", "div"):
+            return "\n" + content + "\n"
+        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            return "\n\n" + "#" * int(tag[1]) + " " + content.strip() + "\n\n"
+        if tag in ("strong", "b"):
+            return "**" + content + "**"
+        if tag in ("em", "i"):
+            return "*" + content + "*"
+        if tag in ("s", "del", "strike"):
+            return "~~" + content + "~~"
+        if tag == "blockquote":
+            return "\n" + "\n".join("> " + line for line in content.strip().splitlines()) + "\n"
+        if tag == "a":
+            target = self.target(attrs.get("href", ""))
+            return f"[{content}]({target})" if target else content
+        return content
+
+
+def markdown(source):
+    parser = Markdown()
+    parser.feed(source or "")
+    return parser.render(parser.root).strip()
+
+
+def project_info(project):
+    return {"id": project["id"], "name": project["name"], "identifier": project.get("identifier", "TASK")}
+
+
+def scan(config, path, cursor, matches, expand=None):
+    """v1 list endpoints ignore search/assignee filters. Filter actual rows, with bounded continuation."""
+    found, seen, more = [], set(), False
+    for _ in range(3):
+        data = call(config, path, {"per_page": 100, "cursor": cursor, "expand": expand, "order_by": "-created_at"})
+        found.extend(item for item in rows(data) if matches(item))
+        more = bool(isinstance(data, dict) and data.get("next_page_results"))
+        next_cursor = data.get("next_cursor") if isinstance(data, dict) else None
+        if not more:
+            return found, None, False
+        if not next_cursor or next_cursor == cursor or next_cursor in seen:
+            raise PlaneError("Plane returned an invalid pagination cursor. Refresh the task list.")
+        cursor = next_cursor
+        seen.add(cursor)
+        if len(found) >= 50:
+            break
+    return found, cursor, more
+
+
+def normalized(item, project, config):
+    state = item.get("state_detail") or item.get("state") or {}
+    if not isinstance(state, dict):
+        state = {"name": "Unknown"}
+    assignees = item.get("assignee_details") or item.get("assignees") or []
+    names = [a.get("display_name") or a.get("first_name") or a.get("email", "Assigned")
+             for a in assignees if isinstance(a, dict)]
+    key = f"{project.get('identifier', 'TASK')}-{item.get('sequence_id', '?')}"
+    return {"id": item["id"], "uuid": f"plane:{project['id']}:{item['id']}", "identifier": key,
+            "title": item.get("name", "Untitled task"), "provider": "plane", "projectId": project["id"],
+            "url": f"{config['baseUrl']}/{config['workspace']}/browse/{key}/",
+            "description": markdown(item.get("description_html")) or item.get("description_stripped") or "",
+            "status": state.get("name", "Unknown"),
+            "statusType": {"cancelled": "canceled", "unstarted": "unstarted"}.get(state.get("group"), state.get("group", "backlog")),
+            "priority": {"name": str(item.get("priority", "none")).capitalize()},
+            "assignee": ", ".join(names) or ("Assigned" if assignees else "Unassigned"),
+            "project": project["name"], "startDate": item.get("start_date"), "dueDate": item.get("target_date")}
+
+
+def mapping_key(payload):
+    context = payload.get("context") or {}
+    cwd, machine = context.get("cwd"), context.get("on") or "local"
+    if not cwd:
+        return None
+    if machine == "local":
+        try:
+            result = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                cwd = str(Path(result.stdout.strip()).resolve())
+            else:
+                cwd = str(Path(cwd).resolve())
+        except (OSError, subprocess.TimeoutExpired):
+            cwd = str(Path(cwd).resolve())
+    return machine + ":" + cwd
+
+
+def request(home, payload):
+    config = configuration(home)
+    prefix = "workspaces/" + config["workspace"] + "/"
+    op = payload.get("op", "issues")
+    if op == "connection":
+        return {"baseUrl": config["baseUrl"], "workspace": config["workspace"]}
+    if op == "projects":
+        query = str(payload.get("query", "")).casefold()
+        items, cursor, more = scan(config, prefix + "projects/", payload.get("cursor"), lambda p: query in p["name"].casefold())
+        return {"projects": [project_info(p) for p in items], "cursor": cursor, "hasNextPage": more}
+    maps_path = Path(home) / "plane/projects.json"
+    mappings = load_json(maps_path, {})
+    key = mapping_key(payload)
+    account_key = config["baseUrl"] + "/" + config["workspace"]
+    mapping = mappings.get(account_key, {})
+    if op == "map":
+        if not key:
+            raise PlaneError("Choose a project working folder before linking Plane.")
+        project_id = payload.get("project")
+        if project_id:
+            project_id = valid_id(project_id)
+            call(config, prefix + "projects/" + project_id + "/")
+            mapping[key] = project_id
+        else:
+            mapping.pop(key, None)
+        mappings[account_key] = mapping
+        private_json(maps_path, mappings)
+        return {"mapped": bool(project_id)}
+    project_id = payload.get("project") or mapping.get(key)
+    if op == "detail":
+        parts = str(payload.get("id", "")).split(":")
+        if len(parts) != 3 or parts[0] != "plane":
+            raise PlaneError("Invalid Plane task. Refresh the task list.")
+        project_id, item_id = valid_id(parts[1]), valid_id(parts[2])
+    if not project_id:
+        if op == "issues":
+            return {"issues": [], "needsProject": True, "cursor": None, "hasNextPage": False}
+        raise PlaneError("Choose a Plane project first.")
+    project_id = valid_id(project_id)
+    project_path = prefix + "projects/" + project_id + "/"
+    project = project_info(call(config, project_path))
+    if op == "issues":
+        scope = payload.get("scope", "all")
+        me = call(config, "users/me/")["id"] if scope == "mine" else None
+        query = str(payload.get("query", "")).casefold()
+        def matches(item):
+            assignees = item.get("assignees") or []
+            ids = [a.get("id") if isinstance(a, dict) else a for a in assignees]
+            if scope == "mine" and me not in ids:
+                return False
+            if scope == "unassigned" and ids:
+                return False
+            content = normalized(item, project, config)
+            return query in (content["identifier"] + " " + content["title"] + " " + content["description"]).casefold()
+        items, cursor, more = scan(config, project_path + "work-items/", payload.get("cursor"), matches, "state,assignees")
+        return {"issues": [normalized(i, project, config) for i in items], "project": project,
+                "cursor": cursor, "hasNextPage": more}
+    if op == "detail":
+        item = call(config, project_path + "work-items/" + item_id + "/", {"expand": "state,assignees"})
+        return normalized(item, project, config)
+    if op == "create":
+        title = str(payload.get("title", "")).strip()
+        if not title or len(title) > 255:
+            raise PlaneError("Enter a task title between 1 and 255 characters.", "validation")
+        priority = payload.get("priority", "none")
+        if priority not in ("none", "urgent", "high", "medium", "low"):
+            raise PlaneError("Choose a valid priority.", "validation")
+        description = html.escape(str(payload.get("description", "")))
+        body = {"name": title, "description_html": "<p>" + description.replace("\n", "<br>") + "</p>", "priority": priority}
+        item = call(config, project_path + "work-items/", method="POST", body=body)
+        # Do not follow a successful write with a request whose failure could invite a duplicate save.
+        return normalized(item, project, config)
+    raise PlaneError("Unsupported Plane operation.")
+
+
+def connect(home):
+    saved = load_json(Path(home) / "plane/credentials.json", {})
+    base = input(f"Plane instance URL [{saved.get('baseUrl', 'https://app.plane.so')}]: ").strip() or saved.get("baseUrl", "https://app.plane.so")
+    workspace = input(f"Workspace slug [{saved.get('workspace', '')}]: ").strip() or saved.get("workspace", "")
+    config = {"baseUrl": base.rstrip("/"), "workspace": workspace, "apiKey": getpass.getpass("Plane personal access token: ").strip()}
+    # Validate the entire connection before replacing an existing credential.
+    with tempfile.TemporaryDirectory() as temporary:
+        private_json(Path(temporary) / "plane/credentials.json", config)
+        with_env = {name: os.environ.pop(name) for name in ("PLANE_BASE_URL", "PLANE_WORKSPACE", "PLANE_API_KEY") if name in os.environ}
+        try:
+            config = configuration(temporary)
+            call(config, "workspaces/" + config["workspace"] + "/projects/", {"per_page": 1})
+        finally:
+            os.environ.update(with_env)
+    private_json(Path(home) / "plane/credentials.json", config)
+    print("Connected Plane. Return to the Tasks panel and refresh.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--home", default=os.environ.get("HERDR_APP_HOME", str(Path.home() / ".config/herdr-app")))
+    parser.add_argument("command", choices=("request", "connect"))
+    parser.add_argument("payload", nargs="?", default="{}")
+    args = parser.parse_args()
+    try:
+        if args.command == "connect":
+            connect(args.home)
+        else:
+            print(json.dumps({"data": request(args.home, json.loads(args.payload)), "source": "Plane"}))
+        return 0
+    except PlaneError as error:
+        print(json.dumps({"error": str(error), "kind": error.kind}))
+    except (OSError, ValueError, TypeError, KeyError):
+        print(json.dumps({"error": "Cannot read Plane data or configuration. Check the connection and refresh.", "kind": "request"}))
+    except (EOFError, KeyboardInterrupt):
+        print("\nPlane connection cancelled.")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

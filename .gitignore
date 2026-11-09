@@ -1,3 +1,5 @@
 gpui-kit.d.ts
 jsconfig.json
 .DS_Store
+.impeccable/review/
+__pycache__/

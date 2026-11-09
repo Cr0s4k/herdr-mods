@@ -152,6 +152,13 @@
                       },
                       "id": "linear",
                       "type": "block"
+                    },
+                    {
+                      "content": {
+                        "mod": "plane"
+                      },
+                      "id": "plane",
+                      "type": "block"
                     }
                   ],
                   "id": "panel-body",

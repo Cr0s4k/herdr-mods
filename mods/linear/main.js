@@ -8,11 +8,18 @@ import { LAUNCHES, PENDING, worktrees, queueLaunch, updateLaunch, retryLaunch } 
 const nameOf = path => path?.split(/[\\/]/).filter(Boolean).pop() || "Choose a working folder";
 
 export default class Linear extends View {
+  get provider() { return "linear"; }
+  get service() { return "Linear"; }
+  get title() { return this.service; }
+  get defaultScope() { return "mine"; }
+  get allProjectLabel() { return "All projects"; }
+  get clearProjectLabel() { return "Clear"; }
+
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.scroll = VirtualListScrollHandle.new();
     const state = props()?.panelState ?? {};
-    this.scope = state.scope ?? localStorage.getItem("scope") ?? "mine";
+    this.scope = state.scope ?? localStorage.getItem("scope") ?? this.defaultScope;
     this.project = state.project ?? null;
     this.includeDone = state.includeDone ?? localStorage.getItem("includeDone") === "true";
     this.items = []; this.projects = []; this.installed = []; this.selected = 0;
@@ -22,7 +29,7 @@ export default class Linear extends View {
     this.launchId = state.launchId ?? null;
     this.query = state.query ?? "";
     this.search = InputState.new({ placeholder: "Search tickets…", value: this.query });
-    this.projectSearch = InputState.new({ placeholder: "Find a Linear project…" });
+    this.projectSearch = InputState.new({ placeholder: `Find a ${this.service} project…` });
     this.note = InputState.new({ placeholder: "Extra instructions (optional)…" });
     this.search.on("change", (_e, cx) => {
       this.query = this.search.value();
@@ -45,7 +52,7 @@ export default class Linear extends View {
     this.context = this.location();
     this.restoreProject();
     this.refresh(cx);
-    cx.timer.every(60000, cx => { if (!this.detail && !this.setup && !this.pickingProject && !this.waiting && !this.draft && !this.launchId && !this.launchHistory) this.refresh(cx); });
+    cx.timer.every(60000, cx => { if (!this.capture && !this.mapping && !this.detail && !this.setup && !this.pickingProject && !this.waiting && !this.draft && !this.launchId && !this.launchHistory) this.refresh(cx); });
   }
 
   close() {
@@ -65,15 +72,16 @@ export default class Linear extends View {
   }
 
   async read(payload) {
-    this.script ??= await readTextFile(`${appHome()}/mods/linear/herdr-linear`);
-    if (!this.script) throw new Error("The Linear reader is missing. Reinstall the mods and refresh.");
+    this.script ??= await readTextFile(`${appHome()}/mods/${this.provider}/herdr-${this.provider}`);
+    if (!this.script) throw new Error(`The ${this.service} reader is missing. Reinstall the mods and refresh.`);
     // Account access stays on this computer, even when the destination agent is remote.
-    const result = await exec("python3", ["-c", this.script, "--home", appHome(), "request", JSON.stringify(payload)]);
+    const result = await exec("python3", ["-c", this.script, "--home", appHome(), "request", JSON.stringify(payload)],
+      ...(this.provider === "plane" ? [{ timeout: 120000 }] : []));
     let response;
     try { response = JSON.parse(result.stdout); }
-    catch { throw new Error("Cannot read Linear. Check Python 3 on this computer, then refresh."); }
+    catch { throw new Error(`Cannot read ${this.service}. Check Python 3 on this computer, then refresh.`); }
     if (response.error || result.code !== 0) {
-      const error = new Error(response.error || "Cannot load Linear. Try refreshing.");
+      const error = new Error(response.error || `Cannot load ${this.service}. Try refreshing.`);
       error.kind = response.kind; throw error;
     }
     this.source = response.source;
@@ -81,8 +89,8 @@ export default class Linear extends View {
   }
 
   refresh(cx, reset = false, more = false) {
-    if (this.loading && !reset) return;
     if (reset) { this.items = []; this.cursor = null; this.hasMore = false; this.selected = 0; this.scroll.scroll_to_item(0); }
+    if (this.mapping || this.captureSaving || (this.loading && !reset)) return;
     this.waiting = false; this.loading = true; this.error = null;
     const request = this.request = (this.request ?? 0) + 1;
     const payload = { op: "issues", scope: this.scope, query: this.query.trim(), project: this.project?.id,
@@ -91,6 +99,7 @@ export default class Linear extends View {
       try {
         const data = await this.read(payload);
         if (this.request !== request) return;
+        this.received?.(data);
         this.items = [...new Map([...(more ? this.items : []), ...data.issues].map(item => [issueId(item), item])).values()];
         this.cursor = data.cursor; this.hasMore = Boolean(data.hasNextPage && data.cursor);
         this.authError = false; this.updated = Date.now();
@@ -160,7 +169,7 @@ export default class Linear extends View {
       try {
         if (!draft.context.cwd || !draft.context.space) throw new Error("Choose a project working folder first.");
         const tasks = [
-          worktrees(draft.context, { op: "inspect", tickets: draft.rows.map(({ id, key }) => ({ id, key })) }).then(plan => { draft.plan = plan; }),
+          worktrees(draft.context, { op: "inspect", provider: this.provider, tickets: draft.rows.map(({ id, key }) => ({ id, key })) }).then(plan => { draft.plan = plan; }),
           knownAgents({ on: draft.context.on }).then(agents => {
             draft.agents = agents.filter(agent => agent.installed);
             draft.agentKey = draft.agents.find(agent => agent.key === localStorage.getItem("launchAgent"))?.key ?? draft.agents[0]?.key;
@@ -190,7 +199,7 @@ export default class Linear extends View {
     const draft = this.draft, agent = draft?.agents?.find(agent => agent.key === draft.agentKey);
     if (!draft || draft.loading || draft.error || !draft.plan || !agent || !draft.rows.length || draft.rows.some(row => row.error || row.loading)) return;
     try {
-      const launch = { id: draft.plan.runId, context: draft.context, plan: draft.plan,
+      const launch = { id: draft.plan.runId, provider: this.provider, context: draft.context, plan: draft.plan,
         agent: { key: agent.key, name: agent.name, run: agent.run }, created: Date.now(),
         rows: draft.rows.map(row => ({ id: row.id, key: row.key, title: row.issue.title,
           task: taskFor(row.issue, this.note.value()), status: "queued" })) };
@@ -248,7 +257,8 @@ export default class Linear extends View {
   }
 
   back(cx) {
-    if (this.sending) return;
+    if (this.sending || this.captureSaving || this.mapping) return;
+    if (this.capture) { this.capture = false; cx.notify(); return; }
     if (this.draft || this.launchId || this.launchHistory) {
       this.draft = null; this.launchId = null; this.launchHistory = false;
       this.restoreProject(); this.refresh(cx, true);
@@ -265,10 +275,10 @@ export default class Linear extends View {
 
   render(cx) {
     const context = this.location();
-    if (context.space !== this.context.space) {
+    if (context.space !== this.context.space || (this.provider === "plane" && (context.cwd !== this.context.cwd || context.on !== this.context.on))) {
       this.context = context;
-      if (!this.embedded && !this.draft && !this.launchId && !this.launchHistory) {
-        this.restoreProject(); this.detail = null; this.handoff = false; this.destination = null;
+      if ((!this.embedded || this.provider === "plane") && !this.draft && !this.launchId && !this.launchHistory) {
+        this.restoreProject(); this.capture = false; this.detail = null; this.handoff = false; this.destination = null;
         this.picked.clear(); this.selecting = false;
         this.detailRequest = (this.detailRequest ?? 0) + 1; this.refresh(cx, true);
       }
@@ -280,8 +290,8 @@ export default class Linear extends View {
       .text_color(t.foreground).text_size(13).track_focus(this.handle)
       .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
       .on_key_down((event, cx) => {
-        if (event.key === "escape" && (this.detail || this.setup || this.pickingProject || this.draft || this.launchId || this.launchHistory)) { this.back(cx); cx.stop_propagation(); }
-        else if (!this.typing && !this.detail && !this.setup && !this.pickingProject && !this.draft && !this.launchId && !this.launchHistory) {
+        if (event.key === "escape" && (this.capture || this.detail || this.setup || this.pickingProject || this.draft || this.launchId || this.launchHistory)) { this.back(cx); cx.stop_propagation(); }
+        else if (!this.typing && !this.capture && !this.detail && !this.setup && !this.pickingProject && !this.draft && !this.launchId && !this.launchHistory) {
           if (event.key === "down" || event.key === "up") {
             this.selected = Math.max(0, Math.min(visible.length - 1, this.selected + (event.key === "down" ? 1 : -1)));
             this.keyboardSelection = true;
@@ -294,36 +304,39 @@ export default class Linear extends View {
           cx.stop_propagation(); cx.notify();
         }
       })
-      .child(h_flex().h(42).px(14).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
-        .child(svg("mods/linear/linear.svg").size(15).text_color(t.muted))
-        .child(div().font_semibold().flex_1().child("Linear"))
+      .child(h_flex().h(42).px(12).gap(6).items_center().flex_none().border_b(1).border_color(t.border)
+        .child(svg(`mods/${this.provider}/${this.provider}.svg`).size(15).text_color(t.muted))
+        .child(div().font_semibold().flex_1().min_w(0).truncate().child(this.title))
         .child(Button.new("linear-connection").size(26).flex_none().rounded(6).text_color(t.muted)
-          .disabled(Boolean(this.draft || this.launchId || this.launchHistory))
-          .hover(s => s.bg(t.hover)).tooltip("Linear connection").accessibility_label("Linear connection")
+          .disabled(Boolean(this.capture || this.mapping || this.draft || this.launchId || this.launchHistory))
+          .hover(s => s.bg(t.hover)).tooltip(`${this.service} connection`).accessibility_label(`${this.service} connection`)
           .on_click((_e, cx) => { this.setup = !this.setup; cx.notify(); })
           .child(svg("mods/workspace-chrome-minimal/settings.svg").size(14)))
-        .child(this.button("linear-refresh", this.loading ? "Syncing…" : "Refresh", cx => this.refresh(cx), false, this.loading || Boolean(this.draft || this.launchId || this.launchHistory)))
-        .when(!this.embedded && !this.draft, el => el.child(moveToPaneButton("linear", this.state(), t))));
+        .child(this.button("linear-refresh", this.loading ? "Syncing…" : "Refresh", cx => this.refresh(cx), false, this.loading || Boolean(this.capture || this.mapping || this.draft || this.launchId || this.launchHistory)))
+        .when(!this.embedded && !this.draft && !this.capture && !this.mapping, el => el.child(moveToPaneButton(this.provider, this.state(), t))));
     if (this.draft) return root.child(this.renderBatchDraft(t));
     if (this.launchId || this.launchHistory) return root.child(this.renderLaunches(t));
     if (this.setup || (this.authError && !this.items.length)) return root.child(this.connection(t));
+    const custom = this.renderCustom?.(t);
+    if (custom) return root.child(custom);
     if (this.detail) return root.child(this.renderDetail(t));
     if (this.pickingProject) return root.child(this.projectPicker(t));
     return root
       .child(v_flex().px(14).py(12).gap(10).flex_none()
         .child(h_flex().gap(5).children([["mine", "My tickets"], ["unassigned", "Unassigned"], ["all", "All"]].map(([id, label]) =>
           this.button(`linear-scope-${id}`, label, cx => { this.scope = id; localStorage.setItem("scope", id); this.refresh(cx, true); }, this.scope === id))))
-        .child(Input.new(this.search).w_full().h(32).px(9).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Search Linear tickets"))
+        .child(Input.new(this.search).w_full().h(32).px(9).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label(`Search ${this.service} tickets`))
         .child(h_flex().items_center().gap(6)
           .child(Button.new("linear-project").flex_1().min_w(0).h(28).px(8).rounded(6).text_color(t.muted).text_size(11.5)
-            .hover(s => s.bg(t.hover)).tooltip(this.project?.name || "Filter by a Linear project")
-            .on_click((_e, cx) => { this.pickingProject = true; this.loadProjects(cx); cx.notify(); })
+            .hover(s => s.bg(t.hover)).tooltip(this.project?.name || `Filter by a ${this.service} project`)
+            .on_click((_e, cx) => { if (this.mapping) return; this.pickingProject = true; this.loadProjects(cx); cx.notify(); })
             .child(h_flex().w_full().items_center().gap(6)
               .child(svg("mods/workspace-chrome/folder.svg").size(13).flex_none())
               .child(div().flex_1().min_w(0).truncate().child(this.project?.name || "All projects"))
               .child(svg("mods/files-modal/chevron-down.svg").size(11).flex_none())))
-          .when(Boolean(this.project), el => el.child(this.button("linear-clear-project", "Clear", cx => this.chooseProject(null, cx)))))
-        .child(h_flex().gap(6).items_center()
+          .when(Boolean(this.project), el => el.child(this.button("linear-clear-project", this.clearProjectLabel, cx => this.chooseProject(null, cx), false, this.mapping))))
+        .child(h_flex().gap(6).items_center().flex_wrap()
+          .children(this.listActions?.(t) ?? [])
           .child(this.button("linear-select-tickets", this.selecting ? "Done selecting" : "Select tickets", cx => {
             this.selecting = !this.selecting; cx.notify();
           }, this.selecting))
@@ -334,8 +347,8 @@ export default class Linear extends View {
       .when(Boolean(this.error), el => el.child(div().flex_none().px(14).py(10).text_size(12).text_color(t.blocked).whitespace_normal().child(this.error)))
       .when(!visible.length && !this.error, el => el.child(this.message(
           this.loading || this.waiting ? "Loading tickets…" : "No tickets here",
-          this.loading || this.waiting ? "Getting the latest from Linear." : this.items.length ? "The loaded tickets are closed. Include done or load more tickets below." : this.query ? "Try another search or project." : "Choose All or another project to find work to pick up.", t)))
-      .child(div().flex_1().min_h(0).relative().overflow_hidden().px(5).role("list_box").accessibility_label("Linear tickets")
+          this.loading || this.waiting ? `Getting the latest from ${this.service}.` : this.emptyHint?.() || (this.items.length ? "The loaded tickets are closed. Include done or load more tickets below." : this.query ? "Try another search or project." : "Choose All or another project to find work to pick up."), t)))
+      .child(div().flex_1().min_h(0).relative().overflow_hidden().px(5).role("list_box").accessibility_label(`${this.service} tickets`)
         .child(v_virtual_list("linear-list", visible.length, 96, index => issueId(visible[index]),
           range => visible.slice(range.start, range.end).map((issue, offset) => this.issueRow(issue, t, range.start + offset)))
           .size_full().track_scroll(this.scroll)
@@ -352,7 +365,7 @@ export default class Linear extends View {
         .child(this.button("linear-review-launch", `Launch ${this.picked.size}…`, cx => this.prepareBatch(cx), true)
           .bg(t.solid).text_color(t.solid_foreground))))
       .child(h_flex().items_center().gap(6).flex_none().px(14).py(8).border_t(1).border_color(t.border).text_size(10.5).text_color(t.muted)
-        .child(div().flex_1().min_w(0).truncate().tooltip(`${this.source || "Linear"} · ${this.items.length} loaded${this.hasMore ? "; more available" : ""}`)
+        .child(div().flex_1().min_w(0).truncate().tooltip(`${this.source || this.service} · ${this.items.length} loaded${this.hasMore ? "; more available" : ""}`)
           .child(`${visible.length} shown · ${this.items.length}${this.hasMore ? "+" : ""} loaded`))
         .child(this.button("linear-include-done", "Include done", cx => {
           this.includeDone = !this.includeDone; this.selected = 0; this.scroll.scroll_to_item(0);
@@ -389,13 +402,13 @@ export default class Linear extends View {
   projectPicker(t) {
     return v_flex().flex_1().min_h(0).gap(12).p(14)
       .child(h_flex().items_center().gap(10).flex_none()
-        .child(this.button("linear-project-back", "Back", cx => this.back(cx)))
+        .child(this.button("linear-project-back", "Back", cx => this.back(cx), false, this.mapping))
         .child(div().font_medium().child("Choose a project")))
-      .child(Input.new(this.projectSearch).w_full().flex_none().text_size(12).accessibility_label("Search Linear projects"))
+      .child(Input.new(this.projectSearch).w_full().flex_none().text_size(12).accessibility_label(`Search ${this.service} projects`))
       .child(v_flex().id("linear-project-list").flex_1().min_h(0).overflow_y_scrollbar().gap(4)
-        .child(this.button("linear-all-projects", "All projects", cx => this.chooseProject(null, cx)))
+        .child(this.button("linear-all-projects", this.allProjectLabel, cx => this.chooseProject(null, cx), false, this.mapping))
         .when(Boolean(this.projectError), el => el.child(div().text_color(t.blocked).whitespace_normal().child(this.projectError)))
-        .children(this.projects.map(project => Button.new(`linear-project-${project.id}`).w_full().flex_none().px(9).py(10).rounded(6)
+        .children(this.projects.map(project => Button.new(`linear-project-${project.id}`).w_full().flex_none().px(9).py(10).rounded(6).disabled(Boolean(this.mapping))
           .text_color(t.foreground).hover(s => s.bg(t.hover)).on_click((_e, cx) => this.chooseProject(project, cx))
           .child(div().w_full().whitespace_normal().text_size(12).child(project.name))))
         .when(this.projectLoading, el => el.child(div().py(10).text_color(t.muted).child("Loading projects…")))
@@ -420,13 +433,17 @@ export default class Linear extends View {
       .child(this.button("linear-connection-back", "Back to tickets", cx => { this.setup = false; this.authError = false; this.refresh(cx); cx.notify(); }));
   }
 
+  openBrowser(issue, cx) {
+    if (/^https:\/\/linear\.app\//.test(issue.url || "")) cx.open_url(issue.url);
+  }
+
   renderDetail(t) {
     const issue = this.detail;
     return v_flex().flex_1().min_h(0)
       .child(h_flex().px(14).py(10).gap(8).flex_none().items_center()
         .child(this.button("linear-back", "Back", cx => this.back(cx), false, this.sending))
         .child(div().flex_1().text_size(11).text_color(t.muted).child(issueKey(issue)))
-        .child(this.button("linear-open-browser", "Open in Linear", cx => { if (/^https:\/\/linear\.app\//.test(issue.url || "")) cx.open_url(issue.url); })))
+        .child(this.button("linear-open-browser", `Open in ${this.service}`, cx => this.openBrowser(issue, cx))))
       .child(v_flex().id("linear-detail").flex_1().min_h(0).overflow_y_scrollbar().px(14).pb(14).gap(14)
         .child(div().font_semibold().text_size(17).whitespace_normal().child(issue.title))
         .child(div().text_size(11.5).text_color(t.muted).whitespace_normal().child(`${statusName(issue)} · ${priorityName(issue)} · ${assigneeName(issue)}`))
@@ -438,6 +455,7 @@ export default class Linear extends View {
         .when(!this.handoff, el => el.child(this.renderDescription(issue, t)))
         .when(Boolean(this.handoff), el => el.child(this.renderHandoff(t))))
       .when(!this.handoff, el => el.child(h_flex().px(14).py(12).gap(7).flex_none().border_t(1).border_color(t.border)
+        .flex_wrap()
         .child(this.button("linear-assign", "Assign to agent…", cx => this.prepare(cx), true, this.detailLoading || Boolean(this.detailError)))
         .child(this.button("linear-copy-task", "Copy task", cx => { cx.write_to_clipboard(taskFor(issue)); this.copied = true; cx.notify(); }, false, this.detailLoading || Boolean(this.detailError)))
         .when(Boolean(this.copied), el => el.child(div().text_size(11).text_color(t.done).child("Copied")))));
@@ -510,11 +528,11 @@ export default class Linear extends View {
       .child(v_flex().px(14).py(12).gap(8).flex_none().border_t(1).border_color(t.border)
         .child(this.button("linear-batch-launch", draft.loading ? "Preparing…" : `Launch ${draft.rows.length} agents`, cx => this.launchBatch(cx), true, disabled)
           .bg(t.solid).text_color(t.solid_foreground))
-        .child(div().text_size(10.5).text_color(t.muted).whitespace_normal().child("Linear status and assignees stay unchanged.")));
+        .child(div().text_size(10.5).text_color(t.muted).whitespace_normal().child(`${this.service} status and assignees stay unchanged.`)));
   }
 
   renderLaunches(t) {
-    const launches = shared(LAUNCHES) ?? [];
+    const launches = (shared(LAUNCHES) ?? []).filter(batch => (batch.provider || "linear") === this.provider);
     const batch = launches.find(batch => batch.id === this.launchId);
     if (!batch) return v_flex().flex_1().min_h(0).p(14).gap(12)
       .child(h_flex().gap(10).items_center().flex_none()
@@ -598,7 +616,7 @@ export default class Linear extends View {
       }, this.target?.kind === "existing" && this.target.key === agent.address, this.sending || Boolean(this.sent))))
       .when(!this.sent, el => el.child(Input.new(this.note).w_full().text_size(12).accessibility_label("Additional instructions for the agent")))
       .child(div().text_size(11.5).text_color(t.muted).whitespace_normal()
-        .child("The agent receives the full description, ticket link and your instructions. Linear status and assignee stay as they are."))
+        .child(`The agent receives the full description, ticket link and your instructions. ${this.service} status and assignee stay as they are.`))
       .when(Boolean(this.sendError), el => el.child(div().text_size(12).text_color(t.blocked).whitespace_normal().child(this.sendError)))
       .when(Boolean(this.sent), el => el.child(v_flex().gap(10)
         .child(div().text_color(t.done).whitespace_normal().child(`Task handed to ${this.sent.label}.`))

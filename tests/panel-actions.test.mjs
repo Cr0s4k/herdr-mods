@@ -50,6 +50,7 @@ test("each side panel opens its native pane with its current state and creates n
     ["brief", "brief-pane", {}],
     ["skills", "skills-pane", { scope: "library", agent: "claude", query: "review", folded: ["builtin"] }],
     ["linear", "linear-pane", { scope: "unassigned", project: { id: "project", name: "Office" }, query: "events", includeDone: false }],
+    ["plane", "plane-pane", { scope: "all", project: { id: "project", name: "Herdr Mods" }, query: "schedule", includeDone: false }],
   ]) {
     setup();
     moveToPane(kind, state, cx);
