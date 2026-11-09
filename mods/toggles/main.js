@@ -14,6 +14,7 @@ function find(node, id) {
 export const FEATURES = [
   ["commitBox", "Commit message box", "Message field and Commit button in Changes"],
   ["loops", "Loops", "Loops button and side panel"],
+  ["skills", "Skills", "Skills button and side panel"],
   ["companion", "Companion", "Companion at the bottom of the sidebar", {
     get: () => { const block = find(layout(), "companion"); return Boolean(block) && !block.hidden; },
     set: on => run(on ? "layout.show" : "layout.hide", { id: "companion" }),
@@ -29,7 +30,7 @@ export default class Toggles extends View {
   set(key, on) {
     setShared("features", { ...(shared("features") ?? {}), [key]: on });
     const body = find(layout(), "panel-body");
-    if (key === "loops" && !on && body?.active === "loops") run("layout.hide", { id: "panel" });
+    if ((key === "loops" || key === "skills") && !on && body?.active === key) run("layout.hide", { id: "panel" });
   }
 
   render() {

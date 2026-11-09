@@ -31,7 +31,7 @@ export default class Tabs extends View {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
         else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
-        else if (command === "loops" && shared("features")?.loops === false) continue;
+        else if ((command === "loops" || command === "skills") && shared("features")?.[command] === false) continue;
         else if (["files", "changes", "show", "loops", "brief", "skills", "linear", "plane"].includes(command)) this.togglePanel(command);
       }
     });
@@ -105,7 +105,8 @@ export default class Tabs extends View {
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
     const loopsOn = shared("features")?.loops !== false;
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", ...(loopsOn ? ["loops"] : []), "brief", "skills", "linear", "plane"];
+    const skillsOn = shared("features")?.skills !== false;
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", ...(loopsOn ? ["loops"] : []), "brief", ...(skillsOn ? ["skills"] : []), "linear", "plane"];
     this.syncPanel(space, panel, body, enabled);
     const tab = shown.find(tab => tab.active)?.id;
     const review = panes().find(pane => pane.tab === tab && pane.mod === "review-pane");
@@ -142,7 +143,7 @@ export default class Tabs extends View {
     const togglesButton = Button.new("open-toggles").h(26).px(8).flex_none().flex().items_center().rounded(6)
       .text_color(t.muted).tooltip("Feature toggles").accessibility_label("Feature toggles")
       .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-      .on_click(() => openOverlay({ mod: "toggles", kind: "popup", width: 340, height: 220 }))
+      .on_click(() => openOverlay({ mod: "toggles", kind: "popup", width: 340, height: 270 }))
       .child(svg("mods/toggles/toggles.svg").size(14));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
@@ -157,7 +158,7 @@ export default class Tabs extends View {
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .child(panelButton("show", "Show", "mods/show/show.svg"))
       .when(loopsOn, el => el.child(panelButton("loops", "Loops", "mods/loops/loops.svg")))
-      .child(panelButton("skills", "Skills", "mods/skills/skills.svg"))
+      .when(skillsOn, el => el.child(panelButton("skills", "Skills", "mods/skills/skills.svg")))
       .child(panelButton("plane", "Tasks", "mods/plane/plane.svg"))
       .child(panelButton("brief", (() => {
         const count = unreadFor(entriesFor(space?.id, shared(ACTIVITY) ?? [], shared(REPORTS) ?? []), shared(receipt(space?.id))).length;
