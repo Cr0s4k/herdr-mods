@@ -68,6 +68,9 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
   have. It fetches when the folder changes and every 3 minutes (**↻** fetches now). A branch
   with no upstream shows **Publish** (`git push -u origin HEAD`). Pull runs plain `git pull`, so
   your `pull.rebase` setting applies; failures show in red above the bar.
+  The bottom status bar shows the same counts beside the space's branch (`main ↑2 ↓1`), only when
+  there is something to push or pull. It checks every 10 seconds, fetches every 3 minutes, and
+  clicking the counts fetches now.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
@@ -428,6 +431,8 @@ add a row to `FEATURES` in `mods/toggles/main.js` and check
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
 | `mods/toggles/` | Feature toggles popup, opened from the tab bar |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
+| `mods/workspace-status-git/` | Herdr's bottom status bar, cloned, with commits to push and pull beside the branch |
+| `mods/changes-modal/sync.js` | Reads the branch's ahead/behind counts, shared with the status bar and review pane through symlinks |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |

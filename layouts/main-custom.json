@@ -192,7 +192,7 @@
         },
         {
           "content": {
-            "mod": "workspace-status"
+            "mod": "workspace-status-git"
           },
           "id": "status",
           "size": {

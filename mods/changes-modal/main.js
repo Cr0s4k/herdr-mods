@@ -4,6 +4,7 @@ import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, setting
 import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton } from "./panel-actions.js";
 import { isImage, stageImage, imageCompare } from "./images.js";
+import { parseBranch, remoteGit } from "./sync.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -103,15 +104,6 @@ function paint(rows, { old, now }) {
     if (spans && spans.map((s) => s.text).join("") === r.text) r.spans = spans;
   }
 }
-
-function parseBranch(header) {
-  const m = /^## (?:No commits yet on )?(.+?)(?:\.\.\.(\S+))?(?: \[(.*)\])?$/.exec(header ?? "");
-  if (!m || m[1].startsWith("HEAD (")) return null;
-  const n = (word) => Number(new RegExp(`${word} (\\d+)`).exec(m[3] ?? "")?.[1] ?? 0);
-  return { branch: m[1], upstream: m[2] ?? null, gone: m[3] === "gone", ahead: n("ahead"), behind: n("behind") };
-}
-
-const remoteGit = (args, root, on, timeout) => exec("env", ["GIT_TERMINAL_PROMPT=0", "git", ...args], { cwd: root, on, timeout });
 
 const statusColor = (s, t) => s === "A" ? t.ansi2 : s === "D" || s === "U" ? t.ansi1 : t.blocked;
 

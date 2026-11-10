@@ -1,8 +1,38 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, theme, run, window, keys } from "herdr";
+import { spaces, agents, theme, run, window, keys, exec } from "herdr";
+import { parseBranch, remoteGit } from "./sync.js";
+
+const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false"];
+const where = () => { const s = spaces().find(s => s.active); return { folder: s?.folder, on: s?.machine ?? null }; };
 
 export default class WorkspaceStatus extends View {
+  init(_props, cx) {
+    this.sync = null;
+    cx.timer.every(10000, cx => this.check(cx, false));
+    cx.timer.every(180000, cx => this.check(cx, true));
+  }
+
+  check(cx, fetch) {
+    const { folder, on } = where(), key = JSON.stringify([folder, on]);
+    if (key !== this.key) { this.key = key; this.sync = null; fetch = true; }
+    if (!folder || this.checking) return;
+    this.checking = true;
+    cx.spawn(async cx => {
+      try {
+        if (fetch) await remoteGit(["fetch", "--quiet"], folder, on, 30000).catch(() => null);
+        const r = await exec("git", [...READ, "status", "--porcelain=v1", "--branch", "-z", "--untracked-files=no"], { cwd: folder, on });
+        if (this.key === key) this.sync = r.code === 0 ? parseBranch(r.stdout.split("\0")[0]) : null;
+      } finally { this.checking = false; cx.notify(); }
+    });
+  }
+
+  counts(t) {
+    const { ahead, behind } = this.sync;
+    return div().id("branch-sync").flex().gap(6).cursor_pointer().text_color(t.foreground).on_click((_e, cx) => this.check(cx, true))
+      .when(behind > 0, el => el.child(`↓${behind}`)).when(ahead > 0, el => el.child(`↑${ahead}`));
+  }
+
   // The palette key as actually bound, not a hardcoded one; without a
   // binding the hint stays useful ("commands") instead of lying.
   hint(t) {
@@ -14,7 +44,8 @@ export default class WorkspaceStatus extends View {
     return key ? `${key}  commands` : "commands";
   }
 
-  render() {
+  render(cx) {
+    if (JSON.stringify([where().folder, where().on]) !== this.key) this.check(cx, true);
     const t = theme();
     const space = spaces().find(s => s.active);
     const list = agents();
@@ -23,6 +54,7 @@ export default class WorkspaceStatus extends View {
     return h_flex().size_full().px(14).gap(16).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
       .child(label(space?.machine ? "server" : "monitor", space?.machine ?? "This computer"))
       .when(Boolean(space?.branch), el => el.child(label("branch", space.branch)))
+      .when(Boolean(this.sync?.ahead || this.sync?.behind), el => el.child(this.counts(t)))
       .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
         .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
       .child(div().flex_1())
