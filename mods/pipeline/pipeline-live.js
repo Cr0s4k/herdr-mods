@@ -43,6 +43,25 @@ export const fixRequest = (command, output) => ["The check command failed after 
 export class LiveRunner {
   constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); }
 
+  // Open pull requests are asked about once a minute; merging on GitHub finishes the task.
+  watchPullRequest(id, state, task, cx) {
+    const key = `pr/${id}/${task.id}`, now = this.host.now();
+    if (this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < 60000) return;
+    this.polled.set(key, now); this.polling.add(key);
+    cx.spawn(async () => {
+      try {
+        const { state: github } = await this.host.delivery(state.context, { op: "pr_state", root: state.context.cwd, url: task.pr.url });
+        const now = this.task(id, task.id);
+        if (now?.status !== "merging" || now.pr?.url !== task.pr.url) return;
+        if (github === "MERGED") {
+          this.apply(id, { type: "merged", id: task.id, target: `${task.workspace?.target ?? "the base branch"} on GitHub (#${task.pr.number})` });
+          try { await this.clean(state.context, now, true); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
+          this.apply(id, { type: "cleaned", id: task.id });
+        } else if (github === "CLOSED") this.apply(id, { type: "prClosed", id: task.id });
+      } catch { /* Try again next minute. */ } finally { this.polling.delete(key); }
+    });
+  }
+
   pipelines() { return Object.entries(this.host.shared(STORE) ?? {}).filter(([, state]) => state?.live); }
   task(id, taskId) { return this.host.shared(STORE)?.[id]?.tasks.find(task => task.id === taskId); }
   apply(id, action) {
@@ -87,7 +106,10 @@ export class LiveRunner {
       if (change) this.apply(id, { type: "observe", id: task.id, ...change });
       else this.watchStartup(id, task, cx);
     }
-    for (const [id, state] of this.pipelines()) for (const task of state.tasks) if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
+    for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
+      if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
+      if (task.status === "merging" && task.pr && !task.merge && !task.discard) this.watchPullRequest(id, state, task, cx);
+    }
     if (this.busy) return;
     for (const [id, state] of this.pipelines()) {
       const task = state.tasks.find(task => task.discard) ?? state.tasks.find(task => task.status === "merging" && task.merge)
@@ -174,7 +196,20 @@ export class LiveRunner {
   }
 
   async merge(id, task) {
-    const context = this.host.shared(STORE)[id].context, ws = task.workspace;
+    const state = this.host.shared(STORE)[id], context = state.context, ws = task.workspace;
+    if (state.delivery === "pr") {
+      try {
+        if (!ws) throw new Error("This task has no worktree to open a pull request from.");
+        const body = [task.description?.trim() || task.title, task.plane?.url ? `Plane: ${task.plane.url}` : null,
+          task.checked === "passed" && state.check?.command ? `Checks passed: \`${state.check.command}\`` : null, `Opened by Herdr Pipeline from ${ws.branch}.`].filter(Boolean).join("\n\n");
+        const opened = await this.host.delivery(context, { op: "publish", root: context.cwd, worktree: ws.root, branch: ws.branch, base: ws.base, target: ws.target,
+          title: task.plane ? `${task.plane.key}: ${task.title}` : task.title, body });
+        this.apply(id, { type: "prOpened", id: task.id, url: opened.url, number: opened.number });
+      } catch (error) {
+        this.apply(id, { type: "mergeFailed", id: task.id, error: error?.message || String(error) });
+      }
+      return;
+    }
     try {
       if (!ws) throw new Error("This task has no worktree to merge.");
       const result = await this.host.delivery(context, { op: "merge", root: context.cwd, worktree: ws.root, branch: ws.branch, base: ws.base, title: `${task.id} ${task.title}` });

@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -132,6 +134,57 @@ class DeliveryTest(unittest.TestCase):
         delivery.remove(self.payload("remove", force=True))
         self.assertFalse(self.tree.exists())
         self.assertEqual(self.git(self.repo, "branch", "--list", self.workspace["branch"]), "")
+
+    def stub_gh(self, reply):
+        bin_dir = self.home / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        log = self.home / "gh.log"
+        (bin_dir / "gh").write_text("#!/bin/sh\n" + f'printf "%s\\n" "$*" >> "{log}"\n' + reply)
+        (bin_dir / "gh").chmod(0o755)
+        patcher = patch.dict(os.environ, {"PATH": str(bin_dir) + os.pathsep + os.environ["PATH"]})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return log
+
+    def with_origin(self):
+        remote = self.home / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        self.git(self.repo, "remote", "add", "origin", str(remote))
+        self.git(self.repo, "push", "-q", "origin", "main")
+        return remote
+
+    def test_publish_pushes_the_branch_and_opens_a_pull_request_into_the_start_branch(self):
+        remote = self.with_origin()
+        log = self.stub_gh('echo "https://github.com/me/project/pull/12"\n')
+        (self.tree / "notes.txt").write_text("left over\n")
+        result = delivery.publish(self.payload("publish", target="main", body="Details"))
+        self.assertEqual(result, {"url": "https://github.com/me/project/pull/12", "number": 12})
+        self.assertEqual(self.git(remote, "log", "-1", "--format=%s", self.workspace["branch"]), "T-1 Add notes")
+        args = log.read_text()
+        self.assertIn("pr create --head " + self.workspace["branch"] + " --base main --title T-1 Add notes --body Details", args)
+        self.assertFalse((self.repo / "notes.txt").exists(), "the project folder is never touched")
+
+    def test_publishing_again_reuses_the_open_pull_request(self):
+        self.with_origin()
+        self.stub_gh('echo "a pull request for branch already exists:" >&2\necho "https://github.com/me/project/pull/7" >&2\nexit 1\n')
+        self.agent_commits()
+        self.assertEqual(delivery.publish(self.payload("publish", target="main"))["number"], 7)
+
+    def test_publish_explains_a_missing_remote_or_gh(self):
+        self.agent_commits()
+        with self.assertRaisesRegex(ValueError, "no origin remote"):
+            delivery.publish(self.payload("publish", target="main"))
+        self.with_origin()
+        only_git = self.home / "only-git"
+        only_git.mkdir()
+        (only_git / "git").symlink_to(shutil.which("git"))
+        with patch.dict(os.environ, {"PATH": str(only_git)}):
+            with self.assertRaisesRegex(ValueError, "GitHub CLI"):
+                delivery.publish(self.payload("publish", target="main"))
+
+    def test_pull_request_state_comes_from_gh(self):
+        self.stub_gh('echo \'{"state":"MERGED"}\'\n')
+        self.assertEqual(delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"}), {"state": "MERGED"})
 
     def test_command_line_reports_errors_as_json(self):
         run = subprocess.run([sys.executable, str(ROOT / "mods/pipeline/delivery.py"), json.dumps(self.payload("merge"))], capture_output=True, text=True)

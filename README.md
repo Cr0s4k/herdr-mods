@@ -195,6 +195,15 @@ task, so parallel agents never touch each other or your checkout.
    worktree and branch are removed. **Discard** (asked twice) stops the agent and deletes the
    worktree and branch.
 
+   To review on GitHub instead, set **Delivery** to **Open a pull request** in Settings. The
+   approve action becomes **Open PR**: Pipeline commits anything the agent left, pushes the
+   branch to `origin` and runs `gh pr create` into the branch the worktree started from, with
+   the task details, the Plane link and the check result in the description (a Plane task's
+   PR is titled with its key). The card waits as **PR #12 open** with a link; Pipeline asks
+   GitHub once a minute and finishes the task when the PR is merged (then cleans up as
+   above), or returns it to review if the PR is closed. Needs `gh`, signed in, and a GitHub
+   `origin`. An interrupted push or PR is safe to repeat: an open PR is reused.
+
 Agents run in herdr-core, so they keep going when the Pipeline tab or Herdr is closed; the
 tab-bar tracker catches up when Herdr opens. A start that Herdr can't confirm after a
 restart is never repeated: the task stops with a note to check before retrying. Live needs

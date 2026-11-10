@@ -467,3 +467,23 @@ test("failed checks offer Fix on the card and the full choice in the inspector",
   assert.equal(row(view, "T-1").status, "testing");
   assert.match(text(find(view.render(cx), "card-T-1")), /Running checks/);
 });
+
+test("pull request delivery changes the approve wording and links the open PR", () => {
+  const view = setupLive();
+  click(view, "agent"); click(view, "deliver-pr");
+  assert.equal(view.state().delivery, "pr");
+  view.act({ type: "create", title: "A" }, cx);
+  view.act({ type: "create", title: "B" }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null });
+  agentTask(view, "T-2", { status: "merging", slot: null, pr: { url: "https://github.com/me/shop/pull/12", number: 12 } });
+  const scene = view.render(cx);
+  assert.ok(find(scene, "approve-T-1").nodes.includes("Open PR"));
+  assert.ok(find(scene, "approve-all").nodes.includes("Open 1 PR"));
+  assert.match(text(find(scene, "card-T-2")), /PR #12 open/);
+  assert.ok(find(scene, "pr-T-2"));
+  assert.match(text(find(scene, "status")), /Opens pull requests into main/);
+  view.inspect("T-2", cx);
+  assert.ok(find(view.render(cx), "pr-link-T-2"));
+  click(view, "approve-T-1");
+  assert.match(text(find(view.render(cx), "card-T-1")), /Opening PR/);
+});

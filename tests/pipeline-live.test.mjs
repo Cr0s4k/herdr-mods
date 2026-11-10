@@ -398,3 +398,95 @@ test("check settings are per project and an empty command turns checks off", () 
   assert.equal(reduce(state, { type: "check", command: "" }, 0).check, null);
   assert.equal(live.tail("a\nb\nc", 2), "b\nc");
 });
+
+async function reviewed(world, runner) {
+  await step(runner);
+  world.panes = [{ terminal: "t9" }];
+  world.agents = [{ address: "t9", status: "working" }]; await step(runner);
+  world.agents = [{ address: "t9", status: "done" }]; await step(runner);
+}
+const prHost = (github = { state: "OPEN" }) => {
+  let now = 0;
+  const world = host(reduce(reduce(typed("Add a dark mode toggle"), { type: "deliver", value: "pr" }, 0), { type: "run" }, 0), {
+    now: () => now,
+    async delivery(_context, payload) {
+      world.scripts.push(["delivery", payload]);
+      if (payload.op === "publish") return { url: "https://github.com/me/shop/pull/12", number: 12 };
+      if (payload.op === "pr_state") return typeof github === "function" ? github() : github;
+      return {};
+    },
+  });
+  world.clock = value => { now = value; };
+  return world;
+};
+const settle = async runner => { const spawned = []; runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) }); await Promise.all(spawned); };
+
+test("with pull request delivery, approving pushes the branch and opens a PR into the start branch", async () => {
+  const world = prHost();
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  assert.match(world.state().events[0].message, /opening a pull request into main/);
+  world.scripts = [];
+  await step(runner);
+  const publish = world.scripts[0][1];
+  assert.deepEqual([publish.op, publish.target, publish.title, publish.branch], ["publish", "main", "Add a dark mode toggle", "pipeline/T-1-add-a-dark-mode-toggle-abc"]);
+  assert.match(publish.body, /^Add a dark mode toggle\n\nOpened by Herdr Pipeline from pipeline\//);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.merge, task.pr], ["merging", false, { url: "https://github.com/me/shop/pull/12", number: 12 }]);
+  assert.ok(task.workspace && task.terminal, "nothing is cleaned up while the PR is open");
+});
+
+test("a merged PR finishes the task and cleans up; a closed one returns it to review", async () => {
+  let github = { state: "OPEN" };
+  const world = prHost(() => github);
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.scripts = [];
+  world.clock(1000); await settle(runner);
+  assert.equal(row(world.state(), "T-1").status, "merging");
+  world.clock(30000); await settle(runner);
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_state").length, 1, "asked once a minute");
+  github = { state: "MERGED" };
+  world.clock(62000); await settle(runner);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.workspace, task.terminal], ["done", null, null]);
+  assert.deepEqual(world.scripts.at(-1)[1].op === "remove" && world.scripts.at(-1)[1].force, true, "the merged branch is deleted locally");
+  assert.match(world.state().events.find(event => /merged into/.test(event.message)).message, /merged into main on GitHub \(#12\)/);
+
+  github = { state: "CLOSED" };
+  const closed = prHost(() => github);
+  const again = new live.LiveRunner(closed.host);
+  await reviewed(closed, again);
+  closed.store = { [id]: reduce(closed.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(again);
+  closed.clock(1000); await settle(again);
+  const back = row(closed.state(), "T-1");
+  assert.deepEqual([back.status, back.pr, back.error], ["review", null, "Pull request #12 was closed without merging."]);
+});
+
+test("a refused publish stays in review with gh's reason", async () => {
+  const world = prHost();
+  world.host.delivery = async (_context, payload) => { if (payload.op === "publish") throw new Error("The GitHub CLI (gh) isn't installed here."); return {}; };
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").error], ["review", "The GitHub CLI (gh) isn't installed here."]);
+});
+
+test("Plane tasks title their PR with the ticket key and link the ticket", async () => {
+  const world = prHost();
+  world.store = { [id]: reduce(reduce(createLive(context, 0), { type: "deliver", value: "pr" }, 0), { type: "addPlane", issues: [{ uuid: "plane:p:4", identifier: "HMOD-4", title: "Fix login", description: "Details.", url: "https://plane.test/HMOD-4/", status: "Ready", priority: { name: "High" } }] }, 0) };
+  world.store = { [id]: reduce(world.state(), { type: "run" }, 0) };
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "HMOD-4" }, 0) };
+  world.scripts = [];
+  await step(runner);
+  assert.equal(world.scripts[0][1].title, "HMOD-4: Fix login");
+  assert.match(world.scripts[0][1].body, /^Details\.\n\nPlane: https:\/\/plane\.test\/HMOD-4\//);
+  assert.equal(reduce(world.state(), { type: "deliver", value: "pr" }, 0), world.state());
+});

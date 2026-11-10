@@ -108,7 +108,8 @@ function approve(state, task, repos) {
   if (state.live) {
     if (task?.status !== "review" || task.merge) return 0;
     task.status = "merging"; task.merge = true; task.error = null;
-    event(state, `${task.id} · merging into ${task.workspace?.target ?? "your branch"}.`, task.id);
+    event(state, state.delivery === "pr" ? `${task.id} · opening a pull request into ${task.workspace?.target ?? "your branch"}.`
+      : `${task.id} · merging into ${task.workspace?.target ?? "your branch"}.`, task.id);
     return 1;
   }
   if (task?.status !== "review" || task.delivery === "direct") return 0;
@@ -363,6 +364,27 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || !task) return state;
       if (task.status === "input" && task.reason === "trust") { task.status = "working"; task.reason = null; }
       event(next, `${task.id} · trusted its new worktree${action.manual ? "" : " automatically"}.`, task.id);
+      break;
+    }
+    case "deliver": {
+      const value = action.value === "pr" ? "pr" : "merge";
+      if (!next.live || next.delivery === value) return state;
+      next.delivery = value;
+      event(next, value === "pr" ? "Finished work opens a pull request." : "Finished work merges locally.");
+      break;
+    }
+    case "prOpened": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "merging") return state;
+      Object.assign(task, { merge: false, error: null, pr: { url: action.url, number: action.number } });
+      event(next, `${task.id} · pull request #${action.number} opened. It finishes when it's merged on GitHub.`, task.id);
+      break;
+    }
+    case "prClosed": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "merging" || !task.pr) return state;
+      Object.assign(task, { status: "review", error: `Pull request #${task.pr.number} was closed without merging.`, pr: null });
+      event(next, `${task.id} · pull request closed without merging.`, task.id);
       break;
     }
     case "merged": {
