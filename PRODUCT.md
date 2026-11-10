@@ -32,6 +32,14 @@ when a refresh fails. No new visual identity is part of this extension.
 
 ## Remote access and future work
 
+Pipeline is an interactive native prototype of visual agent orchestration. It uses labeled
+example tasks to simulate planning, parallel work, quota reserves, dependency scheduling,
+cross-repository PR approval and merge. A project may be one repository or a parent folder
+containing several, and a task may touch multiple repositories. The current prototype
+does not start agents, change tickets or perform Git delivery. Live agent planning and
+task-provider integration are follow-up work. Execution is initially scoped to Herdr
+being open; the tab-bar tracker keeps simulations progressing when their view is closed.
+
 The user wants to capture and plan work while away from the development machine. Plane's
 existing web interface and the user's private network provide backlog access. Durable
 scheduled agent execution and a small phone scheduling page are follow-up work. A task

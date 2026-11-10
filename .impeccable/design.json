@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-10T09:24:51Z",
+  "title": "Design System: Herdr Mods",
+  "extensions": {
+    "typographyMeta": {
+      "body": { "displayName": "Native body", "purpose": "Default Tasks, Loops and Pipeline content; font family inherited from Herdr." },
+      "label": { "displayName": "Native label", "purpose": "Pipeline actions, task titles, search fields and descriptions; weight follows each native component." },
+      "compact-label": { "displayName": "Compact panel label", "purpose": "Existing Tasks and Loops controls." },
+      "metadata": { "displayName": "Secondary metadata", "purpose": "Status strips, activity text and quiet supporting content." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "pipeline-position", "value": "750ms ease-out", "purpose": "Native left/top transitions between task positions." },
+      { "name": "pipeline-size", "value": "400ms ease-out", "purpose": "Native width/height transitions between task cards and compact nodes." },
+      { "name": "pipeline-active-pulse", "value": "opacity 0.35 to 1; period 1400ms", "purpose": "Small active-task mark; disabled together with task motion." },
+      { "name": "pipeline-motion-gate", "value": "local motion preference && !reducedMotion && appWindow()?.active !== false", "purpose": "Honor the local preference, macOS Reduce Motion check and inactive window state." }
+    ],
+    "breakpoints": [
+      { "name": "pipeline-header-motion", "value": "790px", "purpose": "Standalone Motion action is hidden below this logical width." },
+      { "name": "pipeline-footer-note", "value": "800px", "purpose": "Secondary simulation note appears only above this logical width." },
+      { "name": "pipeline-docked-inspector", "value": "1180px", "purpose": "Inspector is docked above this logical width and overlays at or below it." }
+    ],
+    "native": {
+      "framework": "GPUI via gpui-kit and gpui-base",
+      "units": "GPUI logical lengths before host zoom; px strings in DESIGN.md encode these observed lengths for portable token storage.",
+      "themeSource": "herdr.theme() during render",
+      "fontSource": "Inherited Herdr UI font; no font-family override in inspected components.",
+      "themeRoles": {
+        "accent": "Primary Pipeline action, planner outline/icon, active indicator and focus border.",
+        "accent_foreground": "Text and icons on accent-filled actions.",
+        "solid": "Existing Tasks create/launch action background.",
+        "solid_foreground": "Foreground paired with the host solid action role.",
+        "background": "Existing native panel background.",
+        "canvas": "Pipeline root and scene background.",
+        "chrome": "Workspace tab bar and inactive tabs.",
+        "surface": "Pipeline buttons, task nodes and inspector.",
+        "raised": "Compact existing controls, active tabs, badge and progress track.",
+        "input": "Native editable field background.",
+        "foreground": "Primary readable content.",
+        "muted": "Secondary content, queued state and quiet icons.",
+        "dim": "Unavailable workspace action content.",
+        "border": "Thin boundaries, dividers, connection paths and dashed planner orbit.",
+        "hover": "Pointer feedback.",
+        "selected": "Persistent selection fill.",
+        "blocked": "Failure and quota wait in Pipeline.",
+        "ansi2": "Completed task state in Pipeline.",
+        "ansi5": "Review and merging states in Pipeline.",
+        "working": "Existing workspace working status.",
+        "done": "Existing host completion feedback."
+      },
+      "pipelineGeometry": {
+        "source": "mods/pipeline/geometry.js:layoutScene",
+        "visibleSlotCount": "max(state.parallel, highest active task.slot + 1)",
+        "canvasWidth": "max(visibleSlotCount > 3 ? 1200 : 900, available logical width)",
+        "canvasHeight": "max(540, available logical height)",
+        "plannerCenter": "[0.37w, 0.49h]",
+        "slotColumns": "0.61w for indices 0-2; 0.76w for indices 3-5",
+        "slotRows": "[0.26h, 0.50h, 0.74h][index % 3]",
+        "queuePreview": "First five queued tasks: [112, 100 + 80i]",
+        "routing": "[planner.x + (slot % 2 ? 30 : -30), planner.y - 105 + 32slot]",
+        "reviewPreview": "First four review/merging/failed tasks: [w - 112, 110 + 91i]",
+        "completedPreview": "Latest three completed tasks: [w - 112 - 32i, h - 54]",
+        "viewport": "Native scrollbar on both axes; control and status strips scroll horizontally.",
+        "fixedVerticalRegions": "86 title + 52 controls + 37 status + 44 activity = 219",
+        "inspectorWidth": "min(330, logical pane width - 16); subtract 330 from available scene width only when docked",
+        "inspectorScroll": "Shrinkable vertical body owns scrolling; rows retain content height and full queue access.",
+        "zoomNormalization": "bounds.width and bounds.height divided by Number(settings().zoom) || 1",
+        "paths": "PathBuilder.stroke(1), cubic connections derived from the same node/slot coordinates as hit targets.",
+        "planner": "110 diameter; orbit radius 86 with dash array [3, 7]",
+        "compactNode": "20 diameter for routing and completed tasks"
+      },
+      "preview": {
+        "supported": false,
+        "reason": "The design panel's HTML/CSS shadow-DOM renderer cannot faithfully render native GPUI controls or obtain Herdr's dynamic theme and UI font. Native constructions and semantic bindings are retained below; empty html/css fields deliberately avoid a fabricated browser substitute.",
+        "staticColorPrimitives": "Omitted: dynamic host roles have no canonical fixed color value in this repository.",
+        "tonalRamps": "Omitted: no mod-owned tonal ramp exists, and synthesizing one would introduce a separate palette.",
+        "fontFamilyPrimitive": "Omitted: supplied by host settings."
+      },
+      "sources": [
+        "mods/plane/main.js",
+        "mods/plane/tickets.js",
+        "mods/loops/main.js",
+        "mods/tabs-show/main.js",
+        "mods/pipeline/main.js",
+        "mods/pipeline/geometry.js"
+      ],
+      "shippingRasterAssets": []
+    }
+  },
+  "components": [
+    {
+      "name": "Compact panel button",
+      "kind": "button",
+      "refersTo": "compact-button",
+      "description": "Native compact action used by Loops; selected fill and hover follow Herdr roles.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/loops/main.js:render button helper", "construction": "Button.new(id).h(26).px(8).rounded(6).text_size(11.5)", "default": "t.raised / t.muted", "selected": "t.selected / t.foreground", "hover": "t.hover / t.foreground" }
+    },
+    {
+      "name": "Tasks panel button",
+      "kind": "button",
+      "refersTo": "task-button",
+      "description": "Native ticket action inherited by the Plane Tasks extension.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/plane/tickets.js:button", "construction": "Button.new(id).h(28).px(9).rounded(6).text_size(11.5)", "default": "t.raised / t.muted", "selected": "t.selected / t.foreground", "primary": "Create and launch actions use t.solid / t.solid_foreground.", "disabled": "Native disabled state; custom hover is gated by !disabled." }
+    },
+    {
+      "name": "Pipeline action",
+      "kind": "button",
+      "refersTo": "pipeline-action",
+      "description": "Native bordered Pipeline action, including selection, primary and icon-only variants.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/pipeline/main.js:button", "construction": "Button.new(id).h(32).px(iconOnly ? 8 : 11).gap(6).rounded(6).text_size(12).border_1().tab_index(0)", "default": "t.surface / t.foreground; t.border border", "selected": "t.selected fill", "primary": "t.accent / t.accent_foreground; t.accent border", "hover": "t.hover for ordinary actions; primary fill remains t.accent", "focus": "t.accent border", "disabled": "Native disabled state and opacity 0.45", "accessibility": "Accessible label; tooltips for hinted actions; native SVG icons." }
+    },
+    {
+      "name": "Native search and capture input",
+      "kind": "input",
+      "refersTo": "capture-search-input",
+      "description": "Native editable field used by Pipeline search and Plane task capture.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/pipeline/main.js:picker; mods/plane/main.js:renderCapture", "construction": "Input.new(state).w_full().h(34).px(9).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12)", "behavior": "InputState supplies editing, change events and focus; use accessibility_label.", "variant": "Existing Tasks list search is 32 high." }
+    },
+    {
+      "name": "Workspace tab",
+      "kind": "nav",
+      "refersTo": "workspace-tab",
+      "description": "Compact native navigation whose background distinguishes active and inactive tabs.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/tabs-show/main.js:tab item", "construction": "h_flex().h(29).px(10).gap(7).rounded(7).text_size(12.8)", "active": "t.raised fill, t.border border, t.foreground text", "inactive": "t.chrome fill/border, t.muted text", "content": "14-unit icon; truncated name up to width 170; optional native status indicator.", "overflow": "Native horizontal scrollbar on tab strip." }
+    },
+    {
+      "name": "Pipeline task node",
+      "kind": "custom",
+      "refersTo": "pipeline-task-node",
+      "description": "Interactive spatial task card with semantic status, repository context and shared path geometry.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/pipeline/main.js:scene", "construction": "Button.new(id).absolute().w(164).h(68).rounded(9).border_1().text_size(12).tab_index(0); child v_flex().p(10).gap(5)", "default": "t.surface / t.foreground; t.border border", "selected": "t.selected fill; t.accent border", "hover": "t.hover fill; t.accent border", "focus": "t.accent border", "compact": "Routing and completed nodes use 20 diameter and radius 10.", "accessibility": "Task identifier, title, state and repositories in accessible name; title and state/wait reason in tooltip." }
+    },
+    {
+      "name": "Pipeline task row",
+      "kind": "card",
+      "refersTo": "pipeline-task-row",
+      "description": "Content-height native picker, queue and history row inside the inspector scroll area.",
+      "html": "",
+      "css": "",
+      "native": { "source": "mods/pipeline/main.js:taskRow", "construction": "Button.new(id).w_full().p(10).rounded(6).border_1().tab_index(0); child v_flex().gap(6)", "default": "t.surface / t.foreground; t.border border", "selected": "t.selected fill; t.accent border; picker check icon", "hover": "t.hover fill", "focus": "t.accent border", "content": "State dot, identifier, medium task title, repositories and textual status.", "overflow": "Row remains content-height within the inspector's vertical scroll owner; no canvas preview limit applies." }
+    }
+  ],
+  "narrative": {
+    "northStar": "Herdr's native workspace",
+    "overview": "Herdr Mods extends a native GPUI desktop workspace. Its controls, typography, focus behavior and semantic colors belong to Herdr. The visual character is compact, quiet and practical: clear text, small icons, restrained rounding and thin separators keep project context close to terminal work.\n\nPipeline inherits this system. Its approved spatial constellation gives dispatch room to be understood, while its controls and inspector keep the same native character. This document records the incumbent implementation; it introduces no new visual identity or raster artwork. Pipeline's surface strategy remains in [its direction contract](docs/pipeline.md).",
+    "keyCharacteristics": [
+      "Dynamic host theme and inherited UI font.",
+      "Compact controls, explicit states and keyboard access.",
+      "Flat surfaces separated by tone and thin strokes.",
+      "Spatial geometry for Pipeline, with scrolling for constrained panes."
+    ],
+    "rules": [
+      { "name": "The Native Theme Rule", "body": "Resolve colors from Herdr at render time; preserve semantic foreground/background pairs instead of freezing a screenshot's palette.", "section": "colors" },
+      { "name": "The State Has Words Rule", "body": "Pair state color with a readable label, icon or accessible name. A colored dot alone does not explain dispatch, waiting, failure or review.", "section": "colors" }
+    ],
+    "dos": [
+      "**Do** use Herdr's dynamic semantic theme roles and inherited UI font.",
+      "**Do** reuse native buttons, fields, tooltips, focus handles and list scrolling.",
+      "**Do** keep state names visible alongside color and explain why work waits.",
+      "**Do** normalize painted bounds by app zoom before applying Pipeline geometry.",
+      "**Do** preserve occupied work slots and full queue access when limits or pane sizes change.",
+      "**Do** preserve immediate, understandable state updates when motion is disabled."
+    ],
+    "donts": [
+      "**Don't** freeze host colors or the UI font into a separate mod identity.",
+      "**Don't** replace native controls with web-style imitations or inferred browser tokens.",
+      "**Don't** turn Pipeline's constellation into a required layout for ordinary list panels.",
+      "**Don't** hide queued work behind the canvas preview's item limit.",
+      "**Don't** add decorative shadows or raster artwork to describe this incumbent system."
+    ]
+  }
+}

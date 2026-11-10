@@ -151,6 +151,30 @@ appear only in Personal library as unverified. Claude's built-ins that have no l
 manifest are not indexed. A plain repository `skills/` folder contains source files and
 does not itself install those skills for either agent.
 
+## Pipeline prototype
+
+**Pipeline** in the top toolbar opens a visual task pipeline in its own tab. This is an
+interactive **simulation** with example tasks and repositories: it does not start real
+agents, update Plane or Linear, create PRs, or change Git repositories.
+
+Choose **Start pipeline** to watch tasks travel from the queue through the planner into
+parallel work slots. Dependencies wait for their prerequisite changes to merge. Select a
+task to inspect its repositories, status and history; when checks pass, approve each
+repository's example PR to release the coordinated merge. **Add tasks** picks from the
+example backlog. **Watch column** continuously feeds the same queue; its **Move example
+task** button simulates a new board arrival.
+The **Queue** heading opens every queued task, including those beyond the scene's first
+five, so they can be inspected or removed while intake is paused.
+
+Configure 1–6 parallel tasks, the outstanding PR limit, and PR approval or direct merge
+under Settings. **Quota** can simulate exhaustion and replenishment, with a configurable
+reserve. Settings also offers a failed-check scenario, retry through the affected task,
+motion controls, and **Reset example pipeline**. System Reduce Motion is respected.
+
+The tab-bar tracker keeps simulations progressing while their view is closed. State is
+saved per project folder and machine, and resumes without fast-forwarding while Herdr was
+closed. The agreed design and future live-execution scope are in [docs/pipeline.md](docs/pipeline.md).
+
 ## Tasks and Plane
 
 **Tasks** in the toolbar opens a Plane backlog beside your terminals. Connect your

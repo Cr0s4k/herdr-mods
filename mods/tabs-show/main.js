@@ -5,6 +5,7 @@ import { ReviewPanes } from "./review.js";
 import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
 import { LaunchTracker } from "./linear-launches.js";
+import { PipelineTracker } from "./pipeline-tracker.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 const brighter = (t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(t.muted.slice(i, i + 2), 16) * 0.65 + parseInt(t.foreground.slice(i, i + 2), 16) * 0.35).toString(16).padStart(2, "0")).join("");
 
@@ -27,11 +28,14 @@ export default class Tabs extends View {
     this.brief.start(cx);
     this.launches = new LaunchTracker();
     this.launches.start(cx);
+    this.pipeline = new PipelineTracker();
+    this.pipeline.start(cx);
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
         else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
+        else if (command === "pipeline") this.openPipeline();
         else if ((command === "loops" || command === "skills") && shared("features")?.[command] === false) continue;
         else if (["files", "changes", "show", "loops", "brief", "skills", "linear", "plane"].includes(command)) this.togglePanel(command);
       }
@@ -42,6 +46,18 @@ export default class Tabs extends View {
     const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
     if (panel && !panel.hidden && body?.active === id) run("layout.hide", { id: "panel" });
     else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
+  }
+
+  openPipeline() {
+    const space = spaces().find(space => space.active);
+    if (!space) return;
+    const existing = panes().find(pane => pane.mod === "pipeline" && space.tabs.some(tab => tab.id === pane.tab));
+    if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
+    const context = repositoryContext(spaces(), panes(), focused());
+    const cwd = context.cwd || space.folder || "";
+    run("tab.new", { space: space.id, name: "Pipeline", mod: "pipeline", props: {
+      context: { id: JSON.stringify([context.on || null, cwd]), cwd, on: context.on || null, name: cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || space.name },
+    } });
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -146,12 +162,18 @@ export default class Tabs extends View {
       .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => openOverlay({ mod: "toggles", kind: "popup", width: 340, height: 320 }))
       .child(svg("mods/toggles/toggles.svg").size(14));
+    const pipelineButton = Button.new("open-pipeline").h(26).px(8).gap(5).flex_none().flex().items_center().rounded(6)
+      .text_size(12).text_color(t.muted).disabled(!space).accessibility_label("Open Pipeline simulation")
+      .tooltip("Open the visual Pipeline prototype in its own tab")
+      .hover(el => el.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openPipeline())
+      .child(svg("mods/pipeline/pipeline.svg").size(14)).child("Pipeline");
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .child(githubButton)
+      .child(pipelineButton)
       .child(togglesButton)
       .when(enabled.includes("changes"), el => el.child(reviewButton)
         .child(div().w(1).h(16).mx(7).flex_none().bg(t.border)))

@@ -115,11 +115,12 @@ Object.assign(globalThis.__reviewNative, {
   theme: () => new Proxy({}, { get: (_, key) => key }),
   BriefTracker: class { start() {} observe() {} },
   LaunchTracker: class { start() {} },
+  PipelineTracker: class { start() {} },
   ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -184,4 +185,18 @@ test("Changes is a distinct action that explains the terminal before opening", a
   await Promise.all(world.tasks);
   assert.match(text(find(tabs.render(), "review-changes")), /Focus changes/);
   assert.equal(world.panes.length, 3);
+});
+
+test("Pipeline opens as a mod-only tab and focuses an existing view without duplicating it", () => {
+  const tabs = setupTabs();
+  find(tabs.render(), "open-pipeline").handlers.click({}, cx);
+  assert.equal(world.calls.at(-1)[0], "tab.new");
+  assert.equal(world.calls.at(-1)[1].mod, "pipeline");
+  assert.equal(world.calls.at(-1)[1].props.context.cwd, "/stale");
+  assert.ok(!world.calls.at(-1)[1].argv);
+  world.spaces[0].tabs.push({ id: "pipeline-tab", active: false });
+  world.panes.push({ pane: "pipeline-pane", mod: "pipeline", tab: "pipeline-tab" });
+  world.calls = [];
+  find(tabs.render(), "open-pipeline").handlers.click({}, cx);
+  assert.deepEqual(world.calls, [["tab.select", { id: "pipeline-tab" }], ["pane.focus", { pane: "pipeline-pane" }]]);
 });
