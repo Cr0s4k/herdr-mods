@@ -186,7 +186,7 @@ class PlaneTest(unittest.TestCase):
                  elsewhere_id: item(id=elsewhere_id, name="Auth", sequence_id=9, state={"name": "Cancelled", "group": "cancelled"})}
         def call(_config, path, params=None, **_kwargs):
             if path.endswith(ITEM_ID + "/relations/"):
-                return {"blocked_by": [open_id, {"id": done_id}, gone_id, {"id": elsewhere_id, "project_id": other_project["id"]}, "junk"], "blocking": [open_id]}
+                return {"blocked_by": [open_id, {"id": done_id}, gone_id, {"issue_id": elsewhere_id, "project_id": other_project["id"]}, "junk"], "blocking": [open_id]}
             if "/relations/" in path:
                 raise plane.PlaneError("Plane could not find this workspace, project or task.", "missing")
             if "/work-items/" in path:

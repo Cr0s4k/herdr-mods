@@ -317,7 +317,7 @@ def blockers(config, prefix, ticket):
         raise
     found, projects = [], {}
     for entry in ((relations or {}).get("blocked_by") if isinstance(relations, dict) else None) or []:
-        blocker = entry.get("id") if isinstance(entry, dict) else entry
+        blocker = (entry.get("issue_id") or entry.get("id")) if isinstance(entry, dict) else entry
         home = (entry.get("project_id") or entry.get("project")) if isinstance(entry, dict) else None
         try:
             blocker, home = valid_id(blocker), valid_id(home or project_id)
