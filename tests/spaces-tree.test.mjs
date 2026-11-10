@@ -23,7 +23,7 @@ function element() {
   } });
   return el;
 }
-const cx = { notify() {}, stop_propagation() {}, spawn() {}, timer: { every() {} }, focus_handle() { return { focus() {} }; } };
+const cx = { notify() {}, stop_propagation() {}, spawn() {}, timer: { every() {} }, focus_handle() { return { focus() {}, is_focused: () => false }; } };
 globalThis.__spacesNative = {
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element,
   spaces: () => world.spaces, panes: () => world.panes, agents: () => world.agents,
@@ -49,7 +49,7 @@ const { AgentTree, branch } = await import("data:text/javascript," + encodeURICo
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;
@@ -474,4 +474,33 @@ test("the shipped custom layout mounts a single list and keeps the agent panel o
   walk(layout);
   assert.equal(mods.filter(m => m === "spaces-pin").length, 1);
   assert.equal(mods.includes("agents"), false);
+});
+
+test("the sidebar walks spaces and agents with the keyboard", () => {
+  const view = setup();
+  view.keyboard = true;
+  view.render();
+  const key = (k) => view.key({ key: k, modifiers: {} }, cx);
+  world.calls = [];
+  key("down");
+  assert.equal(view.cursor, "space:app");
+  key("down");
+  assert.equal(view.cursor, "agent:one");
+  key("enter");
+  assert.deepEqual(world.calls, [["pane.focus", { pane: "one-pane" }]]);
+  key("left");
+  assert.equal(view.cursor, "space:app");
+  key("end");
+  assert.equal(view.cursor, "agent:two");
+  key("up");
+  world.calls = [];
+  key("enter");
+  assert.deepEqual(world.calls, [["space.select", { id: "other" }]]);
+  key("p");
+  assert.deepEqual(sharedState.get("space.pinned"), ["other"]);
+  view.render();
+  assert.equal(view.nav[0].key, "space:other");
+  key("escape");
+  assert.equal(view.keyboard, false);
+  assert.deepEqual(world.calls.at(-1), ["pane.go", { direction: "right" }]);
 });

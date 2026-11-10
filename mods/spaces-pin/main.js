@@ -6,7 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand } from "herdr";
 import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 import { ink, watchMotion } from "./ui.js";
@@ -81,6 +81,85 @@ export default class Spaces extends View {
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
+    this.handle = cx.focus_handle();
+    this.keyboard = false;
+    this.cursor = null;
+    this.nav = [];
+    cx.spawn(async (cx) => {
+      for (;;) {
+        if (await nextCommand() !== "focus") continue;
+        this.keyboard = true;
+        this.held = false;
+        if (!this.nav.some(n => n.key === this.cursor)) this.cursor = shared("spaces.focus") ? null : `space:${spaces().find(s => s.active)?.id}`;
+        cx.notify();
+        cx.timer.after(30, (cx) => { this.handle.focus(); cx.notify(); });
+      }
+    });
+  }
+
+  navigable(key, item) {
+    this.nav.push({ key, ...item });
+    return this.keyboard && this.cursor === key;
+  }
+
+  ring(t, radius) {
+    return div().absolute().inset_0().rounded(radius).border_1().border_color(t.accent);
+  }
+
+  key(e, cx) {
+    if (e.modifiers.control || e.modifiers.platform || e.modifiers.alt) return;
+    const nav = this.nav;
+    if (!nav.length) return;
+    const at = nav.findIndex(n => n.key === this.cursor);
+    if (at === -1 && ["down", "up", "j", "k", "home", "end", "left", "right"].includes(e.key)) {
+      this.cursor = nav[Math.max(0, nav.findIndex(n => n.w?.active))].key;
+      cx.stop_propagation();
+      cx.notify();
+      return;
+    }
+    const item = nav[Math.max(0, at)];
+    const move = (to) => { this.cursor = nav[Math.max(0, Math.min(nav.length - 1, to))].key; };
+    const space = item.kind === "space";
+    switch (e.key) {
+      case "down": case "j": move(at + 1); break;
+      case "up": case "k": move(at - 1); break;
+      case "home": move(0); break;
+      case "end": move(nav.length - 1); break;
+      case "enter": case "space":
+        if (space) run("space.select", { id: item.w.id });
+        else run("pane.focus", { pane: item.a.pane });
+        break;
+      case "right":
+        if (space && item.hasChildren && !item.open && !this.attention) item.toggle(cx);
+        else if (space && item.hasChildren) move(at + 1);
+        break;
+      case "left":
+        if (space && item.hasChildren && item.open && !this.attention) item.toggle(cx);
+        else if (item.parent) this.cursor = item.parent;
+        break;
+      case "p": {
+        if (!space) return;
+        const pins = shared("space.pinned") ?? [];
+        setShared("space.pinned", pins.includes(item.w.id) ? pins.filter(id => id !== item.w.id) : [...pins, item.w.id]);
+        break;
+      }
+      case "h": if (!space) return; this.hide(item.w); break;
+      case "m": if (!space) return; this.menu(item.w); break;
+      case "f":
+        if (!space) return;
+        setShared("spaces.focus", item.w.id);
+        run("space.select", { id: item.w.id });
+        this.cursor = null;
+        break;
+      case "n": openOverlay({ mod: "space-new", kind: "popup", width: 300, height: 114 }); break;
+      case "escape":
+        if (shared("spaces.focus")) { setShared("spaces.focus", null); this.cursor = null; }
+        else { this.keyboard = false; run("pane.go", { direction: "right" }); }
+        break;
+      default: return;
+    }
+    cx.stop_propagation();
+    cx.notify();
   }
 
   checkNew(cx) {
@@ -403,17 +482,19 @@ export default class Spaces extends View {
     });
   }
 
-  spaceTree(r, t) {
+  spaceTree(r, t, parent = null) {
     const members = this.agents.members(r.w.id, this.attention);
     const kids = r.kids.filter(k => !this.attention || k.summary.blocked > 0);
     const hasChildren = members.length + kids.length > 0;
     const open = this.attention || (this.expanded[r.w.id] ?? !r.tree);
+    const key = `space:${r.w.id}`;
+    const cursor = this.navigable(key, { kind: "space", w: r.w, parent, open, hasChildren, toggle: (cx) => this.toggleSpace(r, cx) });
     const children = [
-      ...members.map(a => ({ id: `agent-branch-${a.address}`, view: () => this.agents.agent(a, t, this.attention) })),
-      ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t) })),
+      ...members.map(a => ({ id: `agent-branch-${a.address}`, view: () => this.agents.agent(a, t, this.attention, false, new Set(), { ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: key }) }) })),
+      ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t, key) })),
     ];
     return v_flex().id(`space-tree-${r.w.id}`).flex_none().min_w(0)
-      .child(this.row({ ...r, open, hasChildren }, t))
+      .child(this.row({ ...r, open, hasChildren, cursor }, t))
       .when(open && hasChildren, el => el.child(v_flex().pl(r.tree ? 17 : 35).pr(3).flex_none().min_w(0)
         .children(children.map((c, i) => branch(c.view(), i === children.length - 1, t, c.id)))));
   }
@@ -453,7 +534,7 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree, pinned, open, hasChildren }, t) {
+  row({ w, i, g, tree, pinned, open, hasChildren, cursor }, t) {
     const on = w.active;
     const isPinned = (shared("space.pinned") ?? []).includes(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
@@ -566,10 +647,12 @@ export default class Spaces extends View {
                 cx.notify();
               })
               .child(svg(`mods/workspace-chrome/${isPinned && this.hovered === w.id ? "pin-off" : "pin"}.svg`).size(13)))),
-      );
+      )
+      .when(Boolean(cursor), (el) => el.child(this.ring(t, 8)));
   }
 
   compact({ w, i }, t) {
+    const cursor = this.navigable(`space:${w.id}`, { kind: "space", w, parent: null, open: false, hasChildren: false });
     return railCell(h_flex()
       .id(`space-${w.id}`)
       .relative()
@@ -583,7 +666,8 @@ export default class Spaces extends View {
       .tooltip(w.name)
       .on_click(() => run("space.select", { id: w.id }))
       .on_mouse_down("right", () => this.menu(w))
-      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1))));
+      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
+      .when(cursor, (el) => el.child(this.ring(t, 6))));
   }
 
   focusedSpace(s, sp, t, collapsed) {
@@ -610,7 +694,7 @@ export default class Spaces extends View {
         .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(s.name))
           .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.muted).child(s.machine)))))
       .child(v_flex().id(`spaces-focus-list-${s.id}`).flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
-        .children(members.map(a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed })))
+        .children(members.map(a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed, ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: null }) })))
         .when(!members.length, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
           .tooltip("No agents in this space.").child(collapsed ? "0" : "No agents in this space."))))
       .when(collapsed, el => el.child(div().id("spaces-focus-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
@@ -620,6 +704,9 @@ export default class Spaces extends View {
 
   render() {
     const t = theme();
+    this.nav = [];
+    if (this.keyboard && this.handle.is_focused()) this.held = true;
+    else if (this.keyboard && this.held) this.keyboard = false;
     const collapsed = narrow();
     const needsYouOn = shared("features")?.needsYou !== false;
     if (!needsYouOn) this.attention = false;
@@ -683,7 +770,10 @@ export default class Spaces extends View {
       .when(collapsed, el => el.child(div().id("spaces-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
         .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")
         .on_click(() => this.toggleSidebar()).child(svg("mods/spaces-pin/expand.svg").size(15))));
-    return v_flex().id("spaces-views").relative().size_full().min_h(0).child(all)
+    if (focus) this.nav = [];
+    return v_flex().id("spaces-views").relative().size_full().min_h(0)
+      .when(this.keyboard, (el) => el.track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx)))
+      .child(all)
       .when(Boolean(focus), el => el.child(this.focusedSpace(focus, visible, t, collapsed)));
   }
 }

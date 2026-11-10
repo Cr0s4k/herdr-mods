@@ -119,7 +119,7 @@ export class AgentTree {
   }
 
   agent(a, t, attention, sub = false, seen = new Set(), options = {}) {
-    const { prefix = "", compact = false } = options;
+    const { prefix = "", compact = false, ring = false } = options;
     const visited = new Set(seen);
     visited.add(a.address);
     const kids = (this.children.get(a.address) ?? []).filter(k => !visited.has(k.address) && (!attention || this.needs(k)));
@@ -154,7 +154,8 @@ export class AgentTree {
         .text_color(t.muted).hover(s => s.text_color(t.foreground)).tooltip(a.pinned ? "Unpin agent" : "Pin agent in this space")
         .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); this.hovered = null; cx.notify(); })
         .child(svg(`mods/workspace-chrome/${a.pinned ? "pin-off" : "pin"}.svg`).size(12))))
-      .child(this.indicator(t, state, true));
+      .child(this.indicator(t, state, true))
+      .when(ring, el => el.relative().child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)));
     return v_flex().min_w(0).flex_none().child(row)
       .when(!compact && open && kids.length > 0, el => el.child(v_flex().pl(12).flex_none()
         .children(kids.map((k, i) => branch(this.agent(k, t, attention, true, visited, options), i === kids.length - 1, t, `${prefix}agent-branch-${k.address}`)))));

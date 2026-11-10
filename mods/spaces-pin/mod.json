@@ -3,6 +3,7 @@
     "name": "spaces",
     "version": "0.1.14"
   },
+  "focusable": true,
   "place": "none",
   "title": "Spaces"
 }
