@@ -6,6 +6,7 @@ import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
 import { LaunchTracker } from "./linear-launches.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
+const brighter = (t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(t.muted.slice(i, i + 2), 16) * 0.65 + parseInt(t.foreground.slice(i, i + 2), 16) * 0.35).toString(16).padStart(2, "0")).join("");
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -113,7 +114,7 @@ export default class Tabs extends View {
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
-        .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
+        .text_size(13).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : brighter(t))
         .tooltip(`${on ? "Hide" : "Show"} ${label} side panel`)
         .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
         .on_click(() => this.togglePanel(id)).child(svg(icon).size(14)).child(label);
@@ -124,7 +125,7 @@ export default class Tabs extends View {
       : "Open Changes with a terminal underneath in this tab. Both use normal pane shortcuts.";
     const reviewButton = h_flex().id("review-changes").h(27).px(9).gap(6).flex_none().items_center().rounded(6)
       .border_1().border_color(t.border).bg(review ? t.selected : t.chrome)
-      .text_size(12).text_color(tab && !opening ? t.foreground : t.dim)
+      .text_size(13).text_color(tab && !opening ? t.foreground : t.dim)
       .tooltip(opening ? "Opening Changes and a terminal in this tab…" : reviewHint)
       .accessibility_label(`${reviewLabel}. ${reviewHint}`)
       .hover(s => s.bg(tab && !opening ? t.hover : t.chrome)).on_mouse_down("left", stop)
@@ -133,7 +134,7 @@ export default class Tabs extends View {
     const repository = repositoryContext(spaces(), panes(), focused());
     const githubEnabled = Boolean(repository.cwd) && !this.github.opening;
     const githubButton = Button.new("open-github").h(26).px(8).gap(5).flex_none().flex().items_center().rounded(6)
-      .text_size(12).text_color(githubEnabled ? t.muted : t.dim).disabled(!githubEnabled)
+      .text_size(13).text_color(githubEnabled ? brighter(t) : t.dim).disabled(!githubEnabled)
       .accessibility_label("Open GitHub repository in a new Firefox tab")
       .tooltip(this.github.opening ? "Opening GitHub in Firefox…" : repository.cwd
         ? `Open this repository in a new Firefox tab\n${repository.cwd}` : "Select a project to open its GitHub repository")
