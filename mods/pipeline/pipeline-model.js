@@ -14,6 +14,18 @@ export const REPOS = ["api", "web", "contracts", "docs"];
 export const LABELS = { backlog: "Backlog", queued: "Queued", routing: "Entering pipeline", working: "Implementing", input: "Needs your input", testing: "Running checks", review: "Awaiting approval", merging: "Merging", done: "Done", failed: "Checks failed" };
 export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Working", input: "Needs you in its terminal", testing: "Running checks", review: "Ready for review", merging: "Merging", pr: "PR open", done: "Merged", failed: "Stopped" };
 export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[status];
+export const AGENT_OPTIONS = {
+  claude: { models: ["fable", "opus", "sonnet", "haiku"], efforts: ["low", "medium", "high", "xhigh", "max"],
+    flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])] },
+  codex: { models: [], efforts: ["minimal", "low", "medium", "high", "xhigh"],
+    flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])] },
+};
+export const tuningFor = (state, key) => {
+  const tune = state?.tuning?.[key] ?? {}, options = AGENT_OPTIONS[key];
+  return options ? { model: tune.model ?? null, effort: options.efforts.includes(tune.effort) ? tune.effort : null } : { model: null, effort: null };
+};
+export const agentRun = (state, agent) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(tuningFor(state, agent.key)) ?? [])];
+export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
   { id: "DEMO-102", title: "Build the checkout endpoint", repos: ["api"], priority: 3, depends: ["DEMO-101"], column: "Ready", description: "Implement the checkout endpoint against the shared contract. Cover validation and idempotency before creating the pull request." },
@@ -330,6 +342,17 @@ export function reduce(state, action, now = Date.now()) {
       next.agent = { key: action.value.key ?? null, name: action.value.name ?? "Agent", run: [...action.value.run] };
       break;
     }
+    case "tune": {
+      const options = AGENT_OPTIONS[action.key];
+      if (!next.live || !options) return state;
+      const now = tuningFor(next, action.key), tune = { ...now };
+      if ("model" in action) tune.model = String(action.model ?? "").trim().slice(0, 100) || null;
+      if ("effort" in action) tune.effort = options.efforts.includes(action.effort) ? action.effort : null;
+      if (tune.model === now.model && tune.effort === now.effort) return state;
+      next.tuning = { ...next.tuning, [action.key]: tune };
+      event(next, `New tasks start with ${tuningLabel(tune) || "the agent's default model and effort"}.`);
+      break;
+    }
     case "launch": {
       const task = row(action.id);
       if (!next.live || task?.status !== "routing") return state;
@@ -341,7 +364,7 @@ export function reduce(state, action, now = Date.now()) {
     case "launched": {
       const task = row(action.id);
       if (!next.live || task?.status !== "routing") return state;
-      Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, error: null });
+      Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, tuning: action.tuning || null, error: null });
       event(next, `${task.id} · ${action.agent ?? "agent"} started on ${task.workspace?.branch ?? "its branch"}.`, task.id);
       break;
     }

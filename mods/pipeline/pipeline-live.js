@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, CHECK_FIXES } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, CHECK_FIXES, agentRun, tuningFor, tuningLabel } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -194,10 +194,10 @@ export class LiveRunner {
       const agent = host.shared(STORE)[id].agent ?? (await host.knownAgents(context)).find(agent => agent.installed);
       if (!agent) throw new Error("No coding agent is installed on that machine. Install Claude Code or Codex, then retry.");
       this.apply(id, { type: "launch", id: task.id, phase: "starting" });
-      const space = host.shared(STORE)[id].space;
-      const own = host.start(context, current, workspace, agent, space);
+      const state = host.shared(STORE)[id], space = state.space;
+      const own = host.start(context, current, workspace, { ...agent, run: agentRun(state, agent) }, space);
       const opened = await host.locate(context, workspace, cx, current.terminal);
-      this.apply(id, opened ? { type: "launched", id: task.id, ...opened, own, agent: agent.name }
+      this.apply(id, opened ? { type: "launched", id: task.id, ...opened, own, agent: agent.name, tuning: tuningLabel(tuningFor(state, agent.key)) }
         : { type: "launchFailed", id: task.id, error: "Its agent was asked to start, but its terminal never appeared. Check the new space before retrying." });
     } catch (error) {
       this.apply(id, { type: "launchFailed", id: task.id, error: error?.message || String(error) });

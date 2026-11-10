@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -82,6 +82,10 @@ export default class Pipeline extends View {
       input.on("change", (_e, cx) => cx.notify());
     }
     this.timeError = null;
+    this.modelInput = InputState.new({ placeholder: "Or type a model name" });
+    this.modelInput.on("submit", (_e, cx) => this.saveModel(cx));
+    this.modelInput.on("blur", (_e, cx) => this.saveModel(cx));
+    this.modelInput.on("change", (_e, cx) => cx.notify());
     this.details = TextareaState.new({ placeholder: "Context, constraints, how to check it…", rows: 4 });
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
@@ -120,7 +124,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.checkInput.release(); this.times.start.release(); this.times.pause.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.checkInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -167,6 +171,11 @@ export default class Pipeline extends View {
     });
   }
   agentName(state) { return state.agent?.name ?? this.agentChoices[0]?.name ?? "Agent"; }
+  agentKey(state) { return state.agent ? state.agent.key : this.agentChoices[0]?.key ?? null; }
+  agentLabel(state) {
+    const tuning = tuningLabel(tuningFor(state, this.agentKey(state)));
+    return tuning ? `${this.agentName(state)} · ${tuning}` : this.agentName(state);
+  }
   focusAgent(task) {
     if (!task?.terminal) return;
     try {
@@ -229,6 +238,11 @@ export default class Pipeline extends View {
     this.times[kind].set_value(time ?? "");
     this.act({ type: "schedule", [kind]: time, space: focused()?.space ?? null }, cx);
   }
+  saveModel(cx) {
+    const state = this.state(), key = this.agentKey(state ?? {});
+    if (!state?.live || !AGENT_OPTIONS[key] || this.modelInput.value().trim() === (tuningFor(state, key).model ?? "")) return;
+    this.act({ type: "tune", key, model: this.modelInput.value() }, cx);
+  }
   fix(task, cx) {
     const state = this.state();
     if (!task?.terminal || !state?.check?.command) return;
@@ -238,7 +252,10 @@ export default class Pipeline extends View {
     });
   }
   open(drawer, cx) {
-    if (drawer === "settings" && this.state()?.live) this.checkInput.set_value(this.state().check?.command ?? "");
+    if (drawer === "settings" && this.state()?.live) {
+      this.checkInput.set_value(this.state().check?.command ?? "");
+      this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
+    }
     if (SOURCES[drawer] && !this.state()?.live) return;
     if (drawer === "schedule") { this.timeError = null; for (const kind of ["start", "pause"]) this.times[kind].set_value(this.state()?.schedule?.[kind] ?? ""); }
     if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
@@ -434,7 +451,7 @@ export default class Pipeline extends View {
         .child(this.button("mode-live", "Live", cx => this.setMode("live", cx), t, { small: true, selected: Boolean(state.live), disabled: !this.context.cwd,
           hint: this.context.cwd ? "Real agents, each in its own Git worktree" : "Open Pipeline from a project to run real agents" })))
       .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
-        ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""} · ${this.agentName(state)} in its own worktree per task`
+        ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""} · ${this.agentLabel(state)} in its own worktree per task`
         : `${state.context.name} · example repositories: ${REPOS.join(", ")}`))
       .when(!state.live, el => el.child(this.button("speed", `${state.speed}×`, cx => this.speed(cx), t, { icon: "bolt", selected: state.speed > 1, hint: `Simulation speed ${state.speed}× (S)` })))
       .when(!narrow, el => el.child(this.button("motion", "Motion", cx => this.toggleMotion(cx), t,
@@ -452,7 +469,7 @@ export default class Pipeline extends View {
         .child(icon("plus", 13).text_color(t.muted))
         .child(div().flex_1().min_w(0).child(Input.new(this.title).w_full().text_size(12).accessibility_label("New task title")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true, hint: "Add to the queue (Enter)" }))))
-      .when(state.live, el => el.child(this.button("agent", this.agentName(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent each task starts with" }))
+      .when(state.live, el => el.child(this.button("agent", this.agentLabel(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent, model and effort each task starts with" }))
         .child(this.sourceButton("plane", state, t, "Queue tickets from the Plane project linked to this repository (P)"))
         .child(this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")))
       .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
@@ -903,8 +920,11 @@ export default class Pipeline extends View {
     body.child(this.heading("Agent"));
     body.child(this.label("Each task starts this agent in its own worktree, with the task as its first message.", t));
     if (!this.agentChoices.length) body.child(this.label(this.repo ? "No installed coding agent was found on this machine." : "Looking for installed agents…", t));
-    for (const agent of this.agentChoices) body.child(this.button(`agent-${agent.key ?? agent.name}`, agent.name, cx => this.act({ type: "agent", value: { key: agent.key, name: agent.name, run: agent.run } }, cx), t,
-      { selected: chosen === agent.name, icon: chosen === agent.name ? "check" : null, hint: agent.run.join(" ") }).w_full().justify_start());
+    for (const agent of this.agentChoices) body.child(this.button(`agent-${agent.key ?? agent.name}`, agent.name, cx => {
+      this.act({ type: "agent", value: { key: agent.key, name: agent.name, run: agent.run } }, cx);
+      this.modelInput.set_value(tuningFor(this.state(), agent.key).model ?? "");
+    }, t, { selected: chosen === agent.name, icon: chosen === agent.name ? "check" : null, hint: agentRun(state, agent).join(" ") }).w_full().justify_start());
+    this.tuning(body, state, t);
     body.child(this.button("auto-trust", state.autoTrust ? "Trusting new worktrees automatically" : "Trust new worktrees automatically", cx => this.act({ type: "autoTrust" }, cx), t,
       { icon: state.autoTrust ? "check" : null, selected: Boolean(state.autoTrust), hint: "Answer the agent's “Do you trust this folder?” prompt for worktrees Pipeline made from your repository" }).w_full().justify_start());
     body.child(this.label("Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.", t));
@@ -936,6 +956,25 @@ export default class Pipeline extends View {
     body.child(this.button("motion-setting", this.motion ? "Turn animation off" : "Turn animation on", cx => this.toggleMotion(cx), t));
     body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
   }
+  tuning(body, state, t) {
+    const key = this.agentKey(state), options = AGENT_OPTIONS[key];
+    if (!this.agentChoices.length) return;
+    if (!options) { body.child(this.label(`Pipeline starts ${this.agentName(state)} with its own default model and effort.`, t)); return; }
+    const tune = tuningFor(state, key), chip = (id, text, selected, action, hint) => this.button(id, text, cx => this.act({ type: "tune", key, ...action }, cx), t, { small: true, selected, hint });
+    body.child(this.heading("Model"));
+    body.child(h_flex().gap(6).flex_wrap()
+      .child(chip("model-default", "Default", !tune.model, { model: null }, `Whatever ${this.agentName(state)} uses when started on its own`))
+      .children(options.models.map(model => chip(`model-${model}`, model, tune.model === model, { model }, `The latest ${model} model`))));
+    body.child(h_flex().gap(6).items_center()
+      .child(Input.new(this.modelInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Model name"))
+      .child(this.button("model-save", "Save", cx => this.saveModel(cx), t, { small: true, disabled: this.modelInput.value().trim() === (tune.model ?? "") })));
+    body.child(this.heading("Effort"));
+    body.child(h_flex().gap(6).flex_wrap()
+      .child(chip("effort-default", "Default", !tune.effort, { effort: null }, `Whatever ${this.agentName(state)} uses when started on its own`))
+      .children(options.efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
+    body.child(this.label(`New tasks start with ${tuningLabel(tune) || "the agent's own default model and effort"}. Running agents keep theirs.`, t));
+  }
   screen(lines, t, caption) {
     return v_flex().w_full().gap(4)
       .when(Boolean(caption), el => el.child(this.label(caption, t)))
@@ -947,7 +986,7 @@ export default class Pipeline extends View {
     const ws = task.workspace ?? task.planned, target = ws?.target ?? this.repo?.branch ?? "your branch";
     body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
     body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : labelFor(state, task.status)))
-      .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}`))));
+      .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
     const ticket = task.ticket, service = SOURCES[ticket?.provider];
     if (service) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${service} ${ticket.key} · ${ticket.status} · ${task.source}`))

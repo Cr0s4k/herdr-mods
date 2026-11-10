@@ -454,6 +454,23 @@ test("the check command is set in Live settings, from a suggestion or typed", ()
   assert.equal(view.state().check, null);
 });
 
+test("Live settings choose a model and effort per agent, and the agent button shows them", () => {
+  const view = setupLive();
+  view.agentChoices = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: true }];
+  click(view, "agent");
+  click(view, "model-opus"); click(view, "effort-high");
+  assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · opus · high effort");
+  click(view, "agent-codex");
+  assert.ok(find(view.render(cx), "effort-minimal") && !find(view.render(cx), "model-opus"));
+  view.modelInput.set_value("gpt-5");
+  view.modelInput.emit("submit", cx);
+  assert.deepEqual(view.state().tuning, { claude: { model: "opus", effort: "high" }, codex: { model: "gpt-5", effort: null } });
+  click(view, "agent-claude");
+  assert.equal(view.modelInput.value(), "opus");
+  click(view, "model-default");
+  assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · high effort");
+});
+
 test("failed checks offer Fix on the card and the full choice in the inspector", async () => {
   const view = setupLive();
   view.act({ type: "check", command: "npm test" }, cx);

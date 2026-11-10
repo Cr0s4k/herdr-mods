@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
 const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, CHECK_FIXES } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
+const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, CHECK_FIXES, agentRun, tuningFor, tuningLabel } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { STORE, LIVE, createLive, createPipeline, reduce, activeTasks } = model;
 const context = { id: "project", name: "shop", cwd: "/work/shop", on: null };
 const id = `${LIVE}project`;
@@ -82,6 +82,19 @@ test("a chosen agent wins over the first installed one, and a missing agent fail
   await step(new live.LiveRunner(world.host));
   assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").slot], ["failed", null]);
   assert.match(row(world.state(), "T-1").error, /No coding agent is installed/);
+});
+
+test("a model and effort chosen for an agent are passed as its flags and noted on the task", async () => {
+  let state = reduce(typed("A"), { type: "tune", key: "claude", model: " opus ", effort: "high" }, 0);
+  state = reduce(state, { type: "tune", key: "codex", effort: "max" }, 0);
+  assert.equal(model.tuningFor(state, "codex").effort, null, "an effort the agent lacks is dropped");
+  const world = host(reduce(state, { type: "run" }, 0), { start: (_c, _t, _w, agent) => { world.run = agent.run; return "space"; } });
+  await step(new live.LiveRunner(world.host));
+  assert.deepEqual(world.run, ["claude", "--model", "opus", "--effort", "high"]);
+  assert.equal(row(world.state(), "T-1").tuning, "opus · high effort");
+  assert.deepEqual(model.agentRun(reduce(state, { type: "tune", key: "codex", model: "gpt-5", effort: "xhigh" }, 0), { key: "codex", run: ["codex"] }),
+    ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="xhigh"']);
+  assert.deepEqual(model.agentRun(state, { key: "aider", run: ["aider"] }), ["aider"], "unknown agents start as they are");
 });
 
 test("an unconfirmed start is never replayed after a restart", async () => {
