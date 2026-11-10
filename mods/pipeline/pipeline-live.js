@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -74,7 +74,7 @@ export const fixRequest = (command, output) => ["The check command failed after 
 
 // Starts, merges and discards real agents' work, one job at a time, and maps agent status onto tasks.
 export class LiveRunner {
-  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); }
+  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.screens = new Map(); this.counted = new Map(); }
 
   // Open pull requests are asked about once a minute: what they wait for, and whether GitHub merged or closed them.
   watchPullRequest(id, state, task, repo, cx) {
@@ -188,6 +188,7 @@ export class LiveRunner {
       if (change) this.apply(id, { type: "observe", id: task.id, ...change });
       else this.watchStartup(id, task, cx);
     }
+    for (const [id, state] of this.pipelines()) for (const task of state.tasks) { this.watchStall(id, task, cx); this.countUsage(id, state, task, cx); }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
       if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) this.watchPullRequest(id, state, task, repo, cx);
@@ -225,6 +226,34 @@ export class LiveRunner {
       const keys = this.host.shared(STORE)?.[id]?.autoTrust && trustKeys(screen);
       if (keys && await this.host.keys(task.terminal, keys).then(() => true, () => false)) this.apply(id, { type: "trusted", id: task.id });
       else this.apply(id, { type: "observe", id: task.id, status: "input", reason: "trust" });
+    });
+  }
+
+  // A working agent redraws its screen all the time (a timer, a spinner); one that shows nothing new for ten minutes may be stuck.
+  watchStall(id, task, cx) {
+    const key = `${id}/${task.id}`;
+    if (task.status !== "working" || !task.worked || !task.terminal || task.discard) { this.screens.delete(key); return; }
+    const now = this.host.now(), seen = this.screens.get(key);
+    if (!seen) { this.screens.set(key, { text: null, since: now, read: now }); return; }
+    if (now - seen.read < 60000) return;
+    this.screens.set(key, { ...seen, read: now });
+    cx.spawn(async () => {
+      const text = await this.host.read(task.terminal).catch(() => null), last = this.screens.get(key);
+      if (text === null || !last) return;
+      if (text !== last.text) { this.screens.set(key, { text, since: this.host.now(), read: last.read }); if (this.task(id, task.id)?.stalled) this.apply(id, { type: "stalled", id: task.id, since: null }); }
+      else if (this.host.now() - last.since >= STALL && !this.task(id, task.id)?.stalled) this.apply(id, { type: "stalled", id: task.id, since: last.since });
+    });
+  }
+
+  // Tokens are read when an agent's turn ends, so a finished task keeps them after its worktree is gone.
+  countUsage(id, state, task, cx) {
+    const cwd = workspacesOf(task)[0]?.cwd, key = `${id}/${task.id}`, turn = `${task.status}/${task.checkRun ?? 0}`;
+    if (task.status === "working") this.counted.delete(key);
+    if (!this.host.usage || !cwd || !["input", "testing", "review", "failed", "pr"].includes(task.status) || this.counted.get(key) === turn) return;
+    this.counted.set(key, turn);
+    cx.spawn(async () => {
+      const usage = (await this.host.usage(state.context, [cwd]).catch(() => null))?.[cwd];
+      if (usage) this.apply(id, { type: "usage", id: task.id, usage });
     });
   }
 

@@ -288,6 +288,17 @@ stopped or asks to trust its worktree, and a pull request that turns ready to me
 blocked, is closed or is merged. Clicking one opens Pipeline. **Notify me** in Settings
 turns them off. Completed tasks say how long they took.
 
+A working agent redraws its terminal all the time. When one shows nothing new for ten
+minutes, its card turns to **No output for 12 min** and Pipeline notifies you that it may be
+stuck; the flag clears by itself when the screen moves again. For Claude Code, a task's
+inspector also says how many tokens its agent used (written, read and read from cache),
+counted from Claude Code's own transcripts for the worktree each time a turn ends, and
+**Completed** adds up agent time and tokens written. Each task keeps its own history, so it
+is still there after the activity log has moved on.
+
+In Live the circle at the centre says what waits for you (**1 needs you**, **2 stopped**,
+**3 to review**) and clicking it takes you there.
+
 Agents run in herdr-core, so they keep going when the Pipeline tab or Herdr is closed; the
 tab-bar tracker catches up when Herdr opens. A start that Herdr can't confirm after a
 restart is never repeated: the task stops with a note to check before retrying. Live needs

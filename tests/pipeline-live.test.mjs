@@ -1269,3 +1269,54 @@ test("a task remembers when its agent got it and how long the work took", () => 
   assert.equal(model.timing(row(state, "T-1")), "took 1 h 15 min");
   assert.deepEqual([model.elapsed(20000), model.elapsed(3600000)], ["under a minute", "1 h"]);
 });
+
+test("a working agent whose screen stops changing for ten minutes is flagged, and cleared when it moves again", async () => {
+  let state = reduce(typed("One"), { type: "run" }, 0), clock = 0, screen = "spinner 1";
+  const said = [], world = host(state, { now: () => clock, read: async () => screen, announce: (_id, notice) => said.push(notice.title) });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async ms => { clock += ms; const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
+  await tick(0);
+  world.agents = [{ address: "t9", status: "working" }];
+  await tick(1000); await tick(1000);
+  for (let minute = 0; minute < 5; minute++) { screen = `spinner ${minute}`; await tick(60000); }
+  assert.equal(row(world.state(), "T-1").stalled ?? null, null, "a screen that keeps changing is fine");
+  for (let minute = 0; minute < 11; minute++) await tick(60000);
+  assert.ok(row(world.state(), "T-1").stalled, "ten minutes of the same screen");
+  assert.deepEqual(said, ["T-1 may be stuck"]);
+  assert.match(world.state().events[0].message, /shown nothing new for 10 min/);
+  screen = "moving again"; await tick(60000);
+  assert.equal(row(world.state(), "T-1").stalled, null);
+  for (let minute = 0; minute < 11; minute++) await tick(60000);
+  world.agents = [{ address: "t9", status: "done" }]; await tick(1000);
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").stalled], ["review", null], "a finished task is no longer stalled");
+});
+
+test("tokens are read when an agent's turn ends and stay on the task", async () => {
+  let state = reduce(typed("One"), { type: "run" }, 0), reads = 0;
+  const world = host(state, { usage: async (_context, cwds) => { reads++; return { [cwds[0]]: { written: 1200 * reads, read: 50000, cached: 900000, turns: 7 } }; } });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async () => { const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
+  await tick();
+  world.agents = [{ address: "t9", status: "working" }]; await tick();
+  assert.equal(reads, 0, "nothing is read while it works");
+  world.agents = [{ address: "t9", status: "done" }]; await tick(); await tick(); await tick();
+  assert.equal(reads, 1, "once per finished turn");
+  assert.deepEqual(row(world.state(), "T-1").usage, { written: 1200, read: 50000, cached: 900000, turns: 7 });
+  world.agents = [{ address: "t9", status: "working" }]; await tick();
+  world.agents = [{ address: "t9", status: "done" }]; await tick(); await tick();
+  assert.equal(row(world.state(), "T-1").usage.written, 2400, "and again after another pass");
+  assert.equal(model.usageText(row(world.state(), "T-1").usage), "2.4k tokens written · 50k read · 900k from cache");
+  assert.deepEqual([model.compact(999), model.compact(1250000), model.compact(24000000)], ["999", "1.3M", "24M"]);
+});
+
+test("a live task keeps its own history when the shared log moves on", () => {
+  let state = typed("One", "Two");
+  state = reduce(state, { type: "first", id: "T-1" }, 0);
+  for (let i = 0; i < 45; i++) state = reduce(state, { type: "first", id: "T-2" }, 0);
+  assert.equal(state.events.length, 40);
+  assert.equal(state.events.some(item => item.task === "T-1"), false, "the shared log dropped it");
+  assert.deepEqual(model.taskLog(state, row(state, "T-1")), ["T-1 starts before the rest of the queue.", "T-1 joined the queue."]);
+  assert.equal(row(state, "T-2").log.length, 30);
+  const old = { ...row(state, "T-1"), log: undefined };
+  assert.deepEqual(model.taskLog(state, old), [], "a task saved before this falls back to the shared log");
+});

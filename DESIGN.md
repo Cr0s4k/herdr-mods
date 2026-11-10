@@ -194,11 +194,12 @@ A task waiting for input keeps its slot as a taller card (78) with the Needs you
 
 ### Pipeline planner and motion
 
-The central planner combines an accent outline and icon with a title, brief state text and a separate plan explanation below. Slot placeholders stay in fixed positions; occupied slots continue to exist when the concurrency limit is reduced.
+The central planner combines an accent outline and icon with a title, brief state text and a separate plan explanation below. In Live it is a button whose title and outline name what waits for the person (`t.blocked` for questions and stopped tasks, ansi5 for reviews, accent otherwise). Slot placeholders stay in fixed positions; occupied slots continue to exist when the concurrency limit is reduced.
 
 All motion is native; the script never renders frames.
 
 - Node transitions move `left` and `top` over 620 ms `ease-in-out` and resize over 320 ms `ease-out`: a task appears as a comet on the planner orbit, launches into its slot as a card, docks in review and shrinks into a star.
+- The inspector fades in over 160 ms `ease-out`: it renders once transparent, then a follow-up render targets full opacity.
 - Stage progress bars render the current progress, then a single follow-up render targets full width with a linear transition for the remaining stage time. A bar's identity includes its stage start, so speed changes and resumed pauses relaunch it.
 - Busy paths carry comet particles: glyph samples along the curve run `frames()` with phase-shifted lists on Herdr's shared clock, so the head travels one way with a two-step tail. Dispatch is accent, checks ansi5 and merges ansi2.
 - While intake runs, a moon orbits the planner ring (spin 7000 ms), an electron circles closer (3200 ms) and a corona pulses outwards (3200 ms). Paused, they rest.

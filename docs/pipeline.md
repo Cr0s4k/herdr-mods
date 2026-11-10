@@ -52,6 +52,10 @@ The queue starts, and is drawn, in `queueOrder`: `task.rank` (set by `first`, th
 
 `liveNotices(before, after)` lists what a change should announce: checks failed, stopped, a trust prompt, a refused merge or pull request, a closed or merged pull request, a pull request whose need turns ready or blocked, checked work ready for review, and an automatic merge. An agent that asks or finishes is left to Herdr's own notification. `LiveRunner.apply` hands each to `host.announce`, which posts it unless a Pipeline pane has focus; `state.quiet` (`quiet` action, Notify me) silences them. A merge refused for a conflict offers `rebaseRequest` to the agent (`resolve` in the view, then `resolving`, which clears the refusal); the agent working again moves the card as any feedback does.
 
+The runner reads a working task's screen once a minute (`watchStall`, after the agent was seen working); ten minutes (`STALL`) without a change sets `task.stalled` to when the screen last changed (`stalled` action), which the card, the inspector and a notice show, and a changed screen or any other status clears it. `countUsage` asks `usage.py` for the first worktree's tokens once per finished turn (status `input`, `testing`, `review`, `failed` or `pr`, again after the agent worked): it sums each reply's `usage` once across Claude Code's transcripts in `~/.claude/projects/<folder>` (`CLAUDE_CONFIG_DIR` respected) into `task.usage` (`{written, read, cached, turns}`). Other agents have no usage. `event` also appends a live task's lines to `task.log` (30 kept), which `taskLog` prefers over the shared 40-line log.
+
+In Live the scene's centre is a button (`pipeline-sun`) naming the most pressing need (questions, stopped tasks, reviews) and opening it; the simulation keeps the Planner label. The inspector fades in over 160 ms.
+
 Task cards are 164 wide below 1320 px of window width, 188 up to 1500 and 212 beyond (`cardWidth`, from the window rather than the scene, so opening the inspector never resizes them).
 
 ## Next milestone

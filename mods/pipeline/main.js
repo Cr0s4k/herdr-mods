@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, fixRequest, rebaseRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -43,6 +43,7 @@ function cardStatus(state, task) {
     return { "Ready for the planner": "Next up", "Waiting for a work slot": "Waiting for a slot", "Waiting for quota above the reserve": "Held by quota reserve", "Outstanding PR limit reached": "Held by PR limit" }[waitingReason(state, task)] ?? (task.rank ? "Queued · starts first" : "Queued");
   }
   if (task.status === "input") return "Needs you";
+  if (state.live && task.stalled) return `No output for ${elapsed(Date.now() - task.stalled)}`;
   if (ACTIVE.includes(task.status)) return `${labelFor(state, task.status)} · ${state.live && timing(task) ? timing(task) : `slot ${task.slot + 1}`}`;
   if (needsApproval(task)) {
     const left = task.repos.filter(repo => !task.approvals.includes(repo)).length;
@@ -476,6 +477,8 @@ export default class Pipeline extends View {
       .child(div().text_size(12).line_height(1.5).text_color(t.muted).child("It stays untouched until the newer version is installed again. Run ./install.sh from the herdr-mods checkout that has it."));
     this.seen = new Set();
     const now = Date.now(), motion = this.animated();
+    if (this.drawer && !this.drawerShown && motion) { this.entering = true; cx.timer.after(34, cx => { this.entering = false; cx.notify(); }); }
+    this.drawerShown = Boolean(this.drawer);
     const info = {
       active: activeTasks(state).length,
       queued: state.tasks.filter(task => task.status === "queued").length,
@@ -508,6 +511,7 @@ export default class Pipeline extends View {
         .child(div().id("pipeline-viewport").flex_1().min_w(0).h_full().overflow_scrollbar()
           .child(this.scene(state, t, info, motion, now, cx)))
         .when(Boolean(this.drawer), el => el.child(this.inspector(state, t, cx)
+          .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))
           .when(this.size.width > 1180, node => node.relative())
           .when(this.size.width <= 1180, node => node.absolute().right(0).top(0).bottom(0)))))
       .child(this.footer(state, t));
@@ -720,10 +724,24 @@ export default class Pipeline extends View {
       .when(motion && state.running, el => el.spin(7000)));
     canvas.child(svg("mods/pipeline/moon-small.svg").id("pipeline-electron").absolute().left(c.x - SUN - 12).top(c.y - SUN - 12).size(SUN * 2 + 24).text_color(t.muted)
       .when(motion && state.running, el => el.spin(3200)));
-    canvas.child(v_flex().absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().border_color(t.accent).bg(t.surface)
+    const resting = !state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle";
+    const sun = el => el.absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().bg(t.surface);
+    if (!state.live) canvas.child(sun(v_flex()).border_color(t.accent)
       .items_center().justify_center().gap(5).child(icon("pipeline", 24).text_color(t.accent))
       .child(div().font_medium().text_size(13).child("Planner"))
-      .child(div().text_color(t.muted).text_size(11).child(!state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle")));
+      .child(div().text_color(t.muted).text_size(11).child(resting)));
+    else {
+      // With real agents the centre says what waits for the person, and takes them there.
+      const need = info.questions ? { text: `${info.questions} need${info.questions === 1 ? "s" : ""} you`, color: t.blocked, go: cx => this.nextQuestion(cx), hint: "Show the next agent waiting for you (Q)" }
+        : info.failed ? { text: `${info.failed} stopped`, color: t.blocked, go: cx => this.open("review", cx), hint: "Show the tasks that stopped" }
+        : info.approvals ? { text: `${info.approvals} to review`, color: t.ansi5, go: cx => this.open("review", cx), hint: "Show the work waiting for your review" }
+        : { text: "Agents", color: t.accent, go: cx => this.open("queue", cx), hint: "Show the queue" };
+      canvas.child(sun(Button.new("pipeline-sun")).border_color(need.color).text_color(t.foreground).tab_index(0).accessibility_label(`${need.text}. ${need.hint}`).tooltip(need.hint)
+        .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.foreground)).on_click((_e, cx) => need.go(cx))
+        .child(v_flex().size_full().items_center().justify_center().gap(5).child(icon("pipeline", 24).text_color(need.color))
+          .child(div().font_medium().text_size(13).child(need.text))
+          .child(div().text_color(t.muted).text_size(11).child(resting))));
+    }
     const planLeft = Math.max(30 + cw + 20, c.x - 120);
     const planRight = Math.min(c.x + 90, g.slots[1] ? g.slots[1].x - cw / 2 - 14 : c.x + 90);
     canvas.child(v_flex().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft)).max_h(Math.max(40, c.y - RING - 22)).overflow_hidden().gap(4)
@@ -799,7 +817,7 @@ export default class Pipeline extends View {
         .child(div().text_size(12).font_medium().truncate().child(task.title))
         .child(asking
           ? h_flex().child(div().px(6).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold().flex().items_center().child(cardStatus(state, task)))
-          : div().text_size(11).text_color(task.status === "failed" ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task).tone, t) : t.muted).truncate()
+          : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task).tone, t) : t.muted).truncate()
             .when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
@@ -851,7 +869,13 @@ export default class Pipeline extends View {
       rows(state.tasks.filter(task => ["review", "merging", "failed"].includes(task.status)), "Nothing to review. Checked changes arrive here.");
     }
     else if (this.drawer === "prs") rows(state.tasks.filter(task => task.status === "pr"), "No pull requests open. Opened ones wait here until they're merged on GitHub.");
-    else if (this.drawer === "done") rows(state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0)), "No completed tasks yet.");
+    else if (this.drawer === "done") {
+      const done = state.tasks.filter(task => task.status === "done"), timed = done.filter(task => task.began && task.ended), used = done.filter(task => task.usage);
+      const parts = [timed.length && `${elapsed(timed.reduce((sum, task) => sum + task.ended - task.began, 0))} of agent time`,
+        used.length && `${compact(used.reduce((sum, task) => sum + task.usage.written, 0))} tokens written`].filter(Boolean);
+      if (state.live && parts.length) body.child(this.label(`${count(done.length, "task")} · ${parts.join(" · ")}`, t));
+      rows(state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0)), "No completed tasks yet.");
+    }
     else if (this.drawer === "activity") {
       if (!state.events.length) body.child(this.label("Start the pipeline to see activity.", t));
       for (const item of state.events) body.child(item.task
@@ -1204,6 +1228,7 @@ export default class Pipeline extends View {
       .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}`)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
+    if (task.stalled) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Its terminal has shown nothing new for ${elapsed(Date.now() - task.stalled)}. Open its agent to see whether it is stuck.`));
     if (task.status === "review" && task.error && task.terminal && !task.discard && /rebase|conflict/i.test(task.error)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${target}`, cx => this.resolve(task, cx), t,
       { icon: "reset", primary: true, hint: "Sends the refusal to its agent, which rebases, resolves the conflicts and stops for review again" }));
     const ticket = task.ticket, service = SOURCES[ticket?.provider];
@@ -1290,9 +1315,10 @@ export default class Pipeline extends View {
     }
     if (branch && trees.length > 1) body.child(this.label(`Branch ${branch} in each repository`, t)).children(trees.map(ws => this.label(`${ws.name} · ${ws.cwd}`, t)));
     else if (branch) body.child(this.label(`Branch ${branch}${trees[0]?.cwd ? ` · ${trees[0].cwd}` : ""}`, t));
-    const events = state.events.filter(item => item.task === task.id).slice(0, 6);
-    if (events.length) body.child(this.heading("Task history"));
-    for (const item of events) body.child(this.label(item.message, t));
+    if (task.usage) body.child(this.label(`${task.agent ?? "Its agent"} used ${usageText(task.usage)}, over ${task.usage.turns} ${task.usage.turns === 1 ? "reply" : "replies"}.`, t));
+    const log = taskLog(state, task).slice(0, 12);
+    if (log.length) body.child(this.heading("Task history"));
+    for (const message of log) body.child(this.label(message, t));
   }
   firstButton(task, t) {
     return this.button(`first-${task.id}`, task.rank ? "Starts first" : "Start first", cx => this.act({ type: "first", id: task.id }, cx), t,

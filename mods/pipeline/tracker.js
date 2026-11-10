@@ -24,6 +24,7 @@ export const liveHost = {
   read: async terminal => { const result = await hc(["read", terminal, "--lines", "40"]); return result.code === 0 ? result.stdout : ""; },
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
+  usage: (context, cwds) => python("pipeline/usage.py", context, { cwds }),
   send: async (terminal, text) => { const result = await hc(["send", terminal, text]); if (result.code !== 0) throw new Error(result.stderr); },
   async check(context, cwd, command) {
     try {

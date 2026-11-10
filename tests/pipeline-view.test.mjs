@@ -904,3 +904,34 @@ test("a narrow Pipeline keeps Start in reach, and wide windows give cards room f
   view.size = { width: 1200, height: 800 };
   assert.equal(find(view.render(cx), "node-DEMO-101").styles.w[0], 164);
 });
+
+test("in Live the centre says what waits for you and takes you there", () => {
+  const view = setupLive();
+  for (const title of ["A", "B"]) view.act({ type: "create", title }, cx);
+  assert.match(text(find(view.render(cx), "sun")), /Agents/);
+  agentTask(view, "T-1", { status: "review", slot: null });
+  assert.match(text(find(view.render(cx), "sun")), /1 to review/);
+  click(view, "sun");
+  assert.equal(view.drawer, "review");
+  agentTask(view, "T-2", { status: "input" });
+  const sun = find(view.render(cx), "sun");
+  assert.match(text(sun), /1 needs you/);
+  assert.equal(sun.styles.border_color[0], "blocked");
+  click(view, "sun");
+  assert.deepEqual([view.drawer, view.selected], ["task", "T-2"]);
+  assert.equal(find(setup().render(cx), "sun"), undefined, "the simulation keeps its planner");
+});
+
+test("a stalled agent, its tokens and its own history show on the card and in the inspector", () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "working", worked: true, began: Date.now() - 20 * 60000, stalled: Date.now() - 12 * 60000,
+    usage: { written: 3400, read: 120000, cached: 2000000, turns: 1 }, log: ["T-1 is working.", "T-1 joined the queue."] });
+  view.inspect("T-1", cx);
+  const scene = view.render(cx);
+  assert.match(text(find(scene, "card-T-1")), /No output for 12 min/);
+  const inspector = text(find(scene, "inspector"));
+  assert.match(inspector, /shown nothing new for 12 min/);
+  assert.match(inspector, /Claude Code used 3\.4k tokens written · 120k read · 2\.0M from cache, over 1 reply\./);
+  assert.match(inspector, /Task history T-1 is working\. T-1 joined the queue\./);
+});

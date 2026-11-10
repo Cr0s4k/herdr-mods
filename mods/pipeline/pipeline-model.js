@@ -127,9 +127,19 @@ export const duration = (state, status) => (DURATION[status] ?? 0) / (state.spee
 export const progress = (state, task, now = Date.now()) => task.status === "input" ? task.held ?? 0 : MOVING.includes(task.status)
   ? Math.max(0, Math.min(1, (now - task.since) / duration(state, task.status))) : 0;
 
+// The shared log keeps the last 40 lines; a live task keeps its own, so its story outlasts a busy pipeline.
 function event(state, message, task = null) {
   state.events = [{ id: ++state.sequence, message, task }, ...state.events].slice(0, 40);
+  const row = state.live && task ? state.tasks.find(other => other.id === task) : null;
+  if (row) row.log = [message, ...(row.log ?? [])].slice(0, 30);
 }
+export const taskLog = (state, task) => task.log ?? state.events.filter(item => item.task === task.id).map(item => item.message);
+export const STALL = 10 * 60000;
+export function compact(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`;
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n);
+}
+export const usageText = usage => usage ? `${compact(usage.written)} tokens written · ${compact(usage.read)} read · ${compact(usage.cached)} from cache` : null;
 // The order the planner starts work in: tasks marked to start first, then priority, then arrival.
 const startOrder = (a, b) => (b.rank ?? 0) - (a.rank ?? 0) || b.priority - a.priority || a.id.localeCompare(b.id, undefined, { numeric: true });
 export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder);
@@ -223,7 +233,8 @@ export function liveNotices(before, after) {
     const old = was.get(task.id);
     if (!old || task.discard) continue;
     const say = (title, body, level) => notices.push({ title: `${task.id} ${title}`, body: body || task.title, level, task: task.id });
-    if (task.status === "failed" && old.status !== "failed") say(task.reason === "checks" ? "checks failed" : "stopped", task.reason === "checks" ? task.title : task.error, "error");
+    if (task.stalled && !old.stalled) say("may be stuck", `Its terminal has shown nothing new for ${elapsed(STALL)} · ${task.title}`, "warning");
+    else if (task.status === "failed" && old.status !== "failed") say(task.reason === "checks" ? "checks failed" : "stopped", task.reason === "checks" ? task.title : task.error, "error");
     else if (task.status === "input" && task.reason === "trust" && old.reason !== "trust") say("asks to trust its worktree", task.title, "warning");
     else if (task.status === "review" && old.status === "merging") say(after.delivery === "pr" ? "pull request not opened" : "not merged", task.error, "error");
     else if (task.status === "review" && old.status === "pr") say("pull request closed", task.error, "warning");
@@ -623,6 +634,19 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "review" || !task.error) return state;
       task.error = null; task.approvals = [];
       event(next, `${task.id} · asked its agent to rebase onto ${targetOf(task) ?? "your branch"} and resolve the conflicts.`, task.id);
+      break;
+    }
+    case "usage": {
+      const task = row(action.id), usage = action.usage;
+      if (!next.live || !task || !usage || JSON.stringify(task.usage ?? null) === JSON.stringify(usage)) return state;
+      task.usage = { written: Number(usage.written) || 0, read: Number(usage.read) || 0, cached: Number(usage.cached) || 0, turns: Number(usage.turns) || 0 };
+      break;
+    }
+    case "stalled": {
+      const task = row(action.id), since = action.since ?? null;
+      if (!next.live || task?.status !== "working" || (task.stalled ?? null) === since) return state;
+      task.stalled = since;
+      if (since) event(next, `${task.id} · its terminal has shown nothing new for ${elapsed(STALL)}. Its agent may be stuck.`, task.id);
       break;
     }
     case "quiet": {
@@ -1029,7 +1053,10 @@ export function reduce(state, action, now = Date.now()) {
       event(next, `${task.id} entering slot ${slot + 1} · ${task.repos.join(" + ")}`, task.id);
     }
   }
-  for (const task of next.tasks) if (task.status === "done" && task.began && !task.ended) task.ended = now;
+  for (const task of next.tasks) {
+    if (task.status === "done" && task.began && !task.ended) task.ended = now;
+    if (task.stalled && task.status !== "working") task.stalled = null;
+  }
   next.plan = explain(next, picked);
   return next;
 }
