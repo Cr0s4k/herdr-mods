@@ -11,14 +11,18 @@
     },
     "shadows": [],
     "motion": [
-      { "name": "pipeline-position", "value": "750ms ease-out", "purpose": "Native left/top transitions between task positions." },
-      { "name": "pipeline-size", "value": "400ms ease-out", "purpose": "Native width/height transitions between task cards and compact nodes." },
-      { "name": "pipeline-active-pulse", "value": "opacity 0.35 to 1; period 1400ms", "purpose": "Small active-task mark; disabled together with task motion." },
+      { "name": "pipeline-position", "value": "850ms ease-in-out", "purpose": "Native left/top transitions as tasks launch from the planner ring, dock in review and become completed stars." },
+      { "name": "pipeline-size", "value": "450ms ease-out", "purpose": "Native width/height transitions between task cards, comets and stars." },
+      { "name": "pipeline-progress", "value": "width transition, linear, remaining stage time", "purpose": "Stage bars render current progress, then one follow-up render targets full width so the stage runs out natively." },
+      { "name": "pipeline-comets", "value": "frames(['●','•','·','','',''], 85ms), phase shifted per sample", "purpose": "Particles travel along busy dispatch, check and merge paths on the shared frames clock." },
+      { "name": "pipeline-orbits", "value": "moon spin 7000ms on the 86 ring; electron spin 3200ms", "purpose": "Planner moons orbit only while intake runs." },
+      { "name": "pipeline-corona", "value": "width/height 110 to 186, opacity 0.75 to 0; period 3200ms", "purpose": "Pulse around the running planner; loop lengths are multiplied by app zoom because native loops skip it." },
+      { "name": "pipeline-twinkle", "value": "opacity loops 2200-6400ms", "purpose": "Starfield, completed stars and review halos." },
       { "name": "pipeline-motion-gate", "value": "local motion preference && !reducedMotion && appWindow()?.active !== false", "purpose": "Honor the local preference, macOS Reduce Motion check and inactive window state." }
     ],
     "breakpoints": [
-      { "name": "pipeline-header-motion", "value": "790px", "purpose": "Standalone Motion action is hidden below this logical width." },
-      { "name": "pipeline-footer-note", "value": "800px", "purpose": "Secondary simulation note appears only above this logical width." },
+      { "name": "pipeline-header-motion", "value": "820px", "purpose": "Standalone Motion action is hidden below this logical width." },
+      { "name": "pipeline-footer-note", "value": "900px", "purpose": "Keyboard shortcut hint appears only above this logical width." },
       { "name": "pipeline-docked-inspector", "value": "1180px", "purpose": "Inspector is docked above this logical width and overlays at or below it." }
     ],
     "native": {
@@ -52,23 +56,23 @@
       "pipelineGeometry": {
         "source": "mods/pipeline/geometry.js:layoutScene",
         "visibleSlotCount": "max(state.parallel, highest active task.slot + 1)",
-        "canvasWidth": "max(visibleSlotCount > 3 ? 1200 : 900, available logical width)",
-        "canvasHeight": "max(540, available logical height)",
-        "plannerCenter": "[0.37w, 0.49h]",
-        "slotColumns": "0.61w for indices 0-2; 0.76w for indices 3-5",
-        "slotRows": "[0.26h, 0.50h, 0.74h][index % 3]",
-        "queuePreview": "First five queued tasks: [112, 100 + 80i]",
-        "routing": "[planner.x + (slot % 2 ? 30 : -30), planner.y - 105 + 32slot]",
-        "reviewPreview": "First four review/merging/failed tasks: [w - 112, 110 + 91i]",
-        "completedPreview": "Latest three completed tasks: [w - 112 - 32i, h - 54]",
+        "canvasWidth": "max(visibleSlotCount > 3 ? 1180 : 940, available logical width)",
+        "canvasHeight": "max(420, available logical height)",
+        "plannerCenter": "[0.35w, 0.5h]",
+        "orbits": "inner radius clamp(0.25w, 210, 300) for slots 0-2; outer radius min(inner + 200, room before review) for slots 3-5",
+        "slotAngles": "[0, -spread, +spread][index % 3], spread = asin(min(0.78, (h/2 - 54) / radius))",
+        "queuePreview": "Queued tasks that fit: [112, 92 + 76i]; overflow shows a +N more action in the last place",
+        "routing": "Comet on the planner ring at angle -0.9 + 0.36slot",
+        "reviewPreview": "Review, merging and failed tasks that fit: [w - 112, 92 + 88i]; overflow shows +N more",
+        "completedPreview": "Latest completed tasks as linked stars from [w - 44, h - 66] leftwards in 30 steps, clear of the lowest slot",
         "viewport": "Native scrollbar on both axes; control and status strips scroll horizontally.",
-        "fixedVerticalRegions": "86 title + 52 controls + 37 status + 44 activity = 219",
+        "fixedVerticalRegions": "50 header + 46 commands + 36 status + 32 activity = 164",
         "inspectorWidth": "min(330, logical pane width - 16); subtract 330 from available scene width only when docked",
         "inspectorScroll": "Shrinkable vertical body owns scrolling; rows retain content height and full queue access.",
         "zoomNormalization": "bounds.width and bounds.height divided by Number(settings().zoom) || 1",
         "paths": "PathBuilder.stroke(1), cubic connections derived from the same node/slot coordinates as hit targets.",
         "planner": "110 diameter; orbit radius 86 with dash array [3, 7]",
-        "compactNode": "20 diameter for routing and completed tasks"
+        "compactNode": "18 diameter comet while routing; 16 diameter star when completed"
       },
       "preview": {
         "supported": false,

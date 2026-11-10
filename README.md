@@ -157,23 +157,34 @@ does not itself install those skills for either agent.
 interactive **simulation** with example tasks and repositories: it does not start real
 agents, update Plane or Linear, create PRs, or change Git repositories.
 
-Choose **Start pipeline** to watch tasks travel from the queue through the planner into
-parallel work slots. Dependencies wait for their prerequisite changes to merge. Select a
-task to inspect its repositories, status and history; when checks pass, approve each
-repository's example PR to release the coordinated merge. **Add tasks** picks from the
-example backlog. **Watch column** continuously feeds the same queue; its **Move example
-task** button simulates a new board arrival.
-The **Queue** heading opens every queued task, including those beyond the scene's first
-five, so they can be inspected or removed while intake is paused.
+Type a task into **New task** and press Enter; it joins the queue at once, with its
+repositories guessed from the title (change them in the task's inspector while it waits).
+The field keeps focus, so you can type several in a row. **Examples** adds tasks from the
+example backlog: pick some, **Add all**, or **Generate 6 more examples**. **Watch column**
+continuously feeds the same queue; its **Move example task** button simulates a new board
+arrival.
 
-Configure 1–6 parallel tasks, the outstanding PR limit, and PR approval or direct merge
-under Settings. **Quota** can simulate exhaustion and replenishment, with a configurable
-reserve. Settings also offers a failed-check scenario, retry through the affected task,
-motion controls, and **Reset example pipeline**. System Reduce Motion is respected.
+**Start pipeline** (Space) sends work to the planner at the centre. Tasks appear as comets
+on its orbit, launch into the work slots around it, and particles stream along the busy
+paths while a stage bar fills. Checked work docks in **Review**: approve a task with the
+**Approve** button on its card, or everything at once with **Approve N tasks** in the status
+strip (Y). Merged tasks become stars in the completed constellation. Dependencies wait
+for their prerequisite changes to merge, and the plan above the planner says why anything
+waits. Failed checks get **Retry** on the card or **Retry N failed** (R).
 
-The tab-bar tracker keeps simulations progressing while their view is closed. State is
-saved per project folder and machine, and resumes without fast-forwarding while Herdr was
-closed. The agreed design and future live-execution scope are in [docs/pipeline.md](docs/pipeline.md).
+Keys, with the scene focused: Space start/pause, N new task, A examples, Y approve all,
+R retry failed, S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
+**PR approval** in the status strip switches to **Auto-merge** (merge after checks).
+Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,
+the animation toggle and **Reset example pipeline**. **Quota** simulates exhaustion and
+replenishment with a configurable reserve. System Reduce Motion is respected, and motion
+stops while Herdr isn't the active window.
+
+The tab-bar tracker keeps simulations progressing while their view is closed. It writes
+the shared state only when a stage changes, so an idle or waiting pipeline costs nothing.
+State is saved per project folder and machine, and resumes without fast-forwarding while
+Herdr was closed. The agreed design and future live-execution scope are in
+[docs/pipeline.md](docs/pipeline.md).
 
 ## Tasks and Plane
 

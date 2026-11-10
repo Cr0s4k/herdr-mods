@@ -125,25 +125,26 @@ The named spacing primitives describe observed gaps and gutters, not a requireme
 
 ### Pipeline geometry
 
-Pipeline has a title region (86 high), horizontally scrollable controls (52), a horizontally scrollable status strip (37), a flexible scene viewport and an activity footer (44). The scene receives the remaining height after these fixed regions (219 total). All dimensions here are logical units.
+Pipeline has a header (50 high: title, speed, motion, settings and the run action), a horizontally scrollable command row (46: the New task field and intake controls), a horizontally scrollable status strip (36: state, counts and the actions that need you), a flexible scene viewport and an activity footer (32). The scene receives the remaining height after these fixed regions (164 total). All dimensions here are logical units.
 
-The canvas is a stable coordinate field with both-axis scrolling. Its minimum height is 540. Its minimum width is 900 for up to three visible slots and 1200 for more than three. Larger available dimensions expand the field. Lowering the parallel limit preserves occupied higher-numbered slots: the visible slot count is the greater of the current limit and the highest active slot plus one. That count also determines the canvas minimum width.
+The canvas is a stable coordinate field with both-axis scrolling. Its minimum height is 420. Its minimum width is 940 for up to three visible slots and 1180 for more than three. Larger available dimensions expand the field. Lowering the parallel limit preserves occupied higher-numbered slots: the visible slot count is the greater of the current limit and the highest active slot plus one. That count also determines the canvas minimum width.
 
-- Planner center: `x = 0.37w`, `y = 0.49h`.
-- Work slots: first three at `x = 0.61w`, further slots at `x = 0.76w`; rows repeat at `y = 0.26h`, `0.50h`, `0.74h`.
-- Queue preview: first five tasks centered at `x = 112`, `y = 100 + 80i`. The Queue action always opens the full scrollable list; more than five entries also exposes a View all action.
-- Review preview: first four review, merging or failed tasks at `x = w − 112`, `y = 110 + 91i`. The Review action opens task activity.
-- Completed trail: latest three completed nodes at `x = w − 112 − 32i`, `y = h − 54`, with full history accessible from the completed action.
+- Planner center: `x = 0.35w`, `y = 0.5h`.
+- Work slots sit on orbits around the planner: the first three on an inner orbit (radius `0.25w`, clamped to 210–300), further slots on an outer orbit (inner + 200, reduced to keep clear of review). Slot `i` sits at angle `[0, −spread, +spread][i % 3]`, where `spread = asin(min(0.78, (h/2 − 54) / radius))`. The orbits are drawn as dashed arcs on the planner's right.
+- Queue preview: as many tasks as fit, centered at `x = 112`, `y = 92 + 76i`. When more are queued, the last place becomes a +N more action. The Queue action always opens the full scrollable list.
+- Review preview: as many review, merging or failed tasks as fit at `x = w − 112`, `y = 92 + 88i`, with the same +N more overflow. The Review action opens the review list.
+- Completed constellation: the latest completed tasks as stars linked by a thin line, from `x = w − 44`, `y = h − 66` leftwards in steps of 30 with a fixed vertical wave, stopping clear of the lowest slot. The completed action opens the full list.
+- The plan explanation sits above the planner, between the queue and the top slot.
 
 Connection paths and clickable task nodes share these coordinates. Preserve that shared geometry so visual paths agree with their targets.
 
 ### Narrow panes and zoom
 
-Below width 790, the header hides its standalone Motion action; motion remains available in Settings. Controls and the status strip scroll horizontally. The footer's secondary simulation note appears only above width 800.
+Below width 820, the header hides its standalone Motion action; motion remains available in Settings. Controls and the status strip scroll horizontally. The footer's keyboard hint appears only above width 900.
 
 The inspector is 330 wide, capped at the pane width minus 16. Above width 1180 it sits beside the scene and its width is subtracted from the available canvas width. At or below that threshold it overlays the scene's right edge. Its body owns vertical scrolling; task rows must retain their content height so every queue entry stays reachable.
 
-Herdr reports painted bounds while builder lengths are zoomed by the host. Pipeline divides measured width and height by `Number(settings().zoom) || 1` before computing geometry and breakpoints. Keep all scene, drawer and breakpoint calculations in this same logical coordinate space.
+Herdr reports painted bounds while builder lengths are zoomed by the host. Pipeline divides measured width and height by `Number(settings().zoom) || 1` before computing geometry and breakpoints. Keep all scene, drawer and breakpoint calculations in this same logical coordinate space. Native `loop()` lengths are the exception: they are not zoomed, so multiply any looped `left`, `top`, `width` or `height` by the zoom.
 
 ## Elevation & Depth
 
@@ -153,7 +154,7 @@ The inspected native components use flat surfaces, tonal layering and thin borde
 
 Use the frontmatter's control rounding for buttons, fields and inspector rows; tabs, task nodes and outer standalone panels have their own observed radius roles. Embedded Tasks and Loops panels omit the standalone outer rounded border.
 
-Pipeline's round planner is a circle (110 diameter), surrounded by a dashed orbit (86 radius, dash pattern 3/7). Standard task nodes and empty slot outlines share the frontmatter's task silhouette. Routing and completed nodes become small circles (20 diameter). Status dots are small circles (normally 6 diameter); active pulse marks are smaller (3). Most boundaries and paths use a single logical-unit stroke.
+Pipeline's round planner is a circle (110 diameter), surrounded by a dashed orbit (86 radius, dash pattern 3/7) and three faint accent glows (radii 112, 180, 260). Standard task nodes share the frontmatter's task silhouette; review cards are taller (78) to hold their action, and empty slots use a dashed outline. A routing task is a small comet (18 diameter) on the planner orbit; a completed task is a star (16). Status dots are small circles (normally 6 diameter). Most boundaries and paths use a single logical-unit stroke; busy paths are accent at 1.5.
 
 Icons are native SVG assets tinted with host semantic colors. Pipeline's ordinary action icons are 15; header and planner icons are larger (24 and 27). Preserve the existing vector vocabulary. No shipping raster assets were introduced for Pipeline.
 
@@ -175,17 +176,27 @@ Tabs use the workspace-tab silhouette with compact type (12.8), a small icon (14
 
 ### Pipeline task nodes and inspector rows
 
-Task nodes combine an identifier and repository line, medium task title and explicit status. Selected nodes use selected fill with an accent border; hover uses hover fill and an accent border; keyboard focus also accents the border. Tooltips expand the title and status or queue wait reason. Accessible labels include task identity and state.
+Task nodes combine an identifier and repository line, medium task title and explicit status: a short wait reason in the queue, the stage and slot while active, and how many PRs remain in review. Active cards carry a stage progress bar. Review cards carry one-click Approve (all of the task's PRs) and failed cards Retry, as small primary or default actions in the bottom-right corner; these stop the press so the card underneath is not inspected. Selected nodes use selected fill with an accent border; hover uses hover fill and an accent border; keyboard focus also accents the border. Tooltips expand the title and status or queue wait reason. Accessible labels include task identity and state.
 
 Inspector task rows use the pipeline-task-row measurements, grow to fit their contents and live in a vertically scrolling body. Their selected state uses selected fill and an accent border, with a check in the picker. Queue preview limits never limit access to the full queue.
 
-The inspector uses a bordered surface, a fixed header with a close action, and a shrinkable scrolling body. Closing it returns focus to the scene handle. Escape closes the inspector; Space toggles intake when the scene handle has focus; A opens task intake. Do not let scene shortcuts interfere with native text editing.
+The inspector uses a bordered surface, a fixed header with a close action, and a shrinkable scrolling body. Closing it returns focus to the scene handle. Escape closes the inspector or leaves the New task field. With the scene handle focused, Space toggles intake, N focuses New task, A opens example tasks, Y approves everything waiting, R retries failed tasks and S cycles speed (1×, 2×, 4×). Shortcuts only fire from the scene handle, so they never interfere with native text editing. The New task field keeps focus after Enter, so several tasks can be typed in a row.
+
+The status strip shows Approve N tasks and Retry N failed only while there is something to act on, beside a PR approval / Auto-merge toggle.
 
 ### Pipeline planner and motion
 
 The central planner combines an accent outline and icon with a title, brief state text and a separate plan explanation below. Slot placeholders stay in fixed positions; occupied slots continue to exist when the concurrency limit is reduced.
 
-Native node transitions move `left` and `top` over 750 ms with `ease-out`, and resize `width` and `height` over 400 ms with `ease-out`. Active task marks loop opacity from 0.35 to 1 over 1400 ms. Motion runs only when the local motion preference is on, system Reduce Motion is off and the app window is active. The current system preference check is macOS-specific. Turning motion off preserves immediate state changes and all labels.
+All motion is native; the script never renders frames.
+
+- Node transitions move `left` and `top` over 850 ms `ease-in-out` and resize over 450 ms `ease-out`: a task appears as a comet on the planner orbit, launches into its slot as a card, docks in review and shrinks into a star.
+- Stage progress bars render the current progress, then a single follow-up render targets full width with a linear transition for the remaining stage time. A bar's identity includes its stage start, so speed changes and resumed pauses relaunch it.
+- Busy paths carry comet particles: glyph samples along the curve run `frames()` with phase-shifted lists on Herdr's shared clock, so the head travels one way with a two-step tail. Dispatch is accent, checks ansi5 and merges ansi2.
+- While intake runs, a moon orbits the planner ring (spin 7000 ms), an electron circles closer (3200 ms) and a corona pulses outwards (3200 ms). Paused, they rest.
+- A starfield (about one star per 11000 square units) and completed stars twinkle with opacity loops; review cards waiting for you pulse an ansi5 halo; active cards spin a small satellite.
+
+Motion runs only when the local motion preference is on, system Reduce Motion is off and the app window is active. The current system preference check is macOS-specific. Turning motion off removes particles and loops, keeps every label and state, and shows progress at the last render.
 
 ## Do's and Don'ts
 
