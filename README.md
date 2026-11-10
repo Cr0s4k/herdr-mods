@@ -212,6 +212,17 @@ restart is never repeated: the task stops with a note to check before retrying. 
 Python 3 and Git where the project lives, and a project folder (open Pipeline from a
 space).
 
+### Schedule
+
+**Schedule** in the toolbar sets a daily **Start at** and **Pause intake at** time (22:00, 7:30
+or 9pm), in Live and Simulation. When a time comes round, Pipeline does what the Start or
+Pause button does: a pause stops new work entering, and agents already working keep going.
+Either time can be left empty. Starting or pausing by hand still works; the schedule acts
+again at its next time. A time that already passed when you save it waits until tomorrow.
+The toolbar button shows the next time that changes anything (Starts 22:00, Pauses 07:00).
+Times are the computer's local time and need Herdr open; if Herdr was closed, the latest
+missed time applies when it opens.
+
 ### Simulation
 
 The simulation uses example tasks and repositories: it does not start agents, update Plane
@@ -240,17 +251,6 @@ status strip, or Q opens the question; pick an option (or press its number) or t
 own answer, and the task resumes where it stopped and the next question opens. Settings
 has **Simulate a question** to make the next working task ask. Real agents will appear in
 the sidebar on their own; this only simulates that moment.
-
-### Schedule
-
-**Schedule** in the toolbar sets a daily **Start at** and **Pause intake at** time (22:00, 7:30
-or 9pm), in Live and Simulation. When a time comes round, Pipeline does what the Start or
-Pause button does: a pause stops new work entering, and agents already working keep going.
-Either time can be left empty. Starting or pausing by hand still works; the schedule acts
-again at its next time. A time that already passed when you save it waits until tomorrow.
-The toolbar button shows the next time that changes anything (Starts 22:00, Pauses 07:00).
-Times are the computer's local time and need Herdr open; if Herdr was closed, the latest
-missed time applies when it opens.
 
 Keys, with the scene focused: Space start/pause, N new task, A examples (in Live: P for
 Plane), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
