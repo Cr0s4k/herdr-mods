@@ -88,6 +88,22 @@ class PlaneTest(unittest.TestCase):
                 response = plane.request(self.home, {"op": "issues", "project": PROJECT["id"], "scope": scope, "query": query})
                 self.assertEqual([i["title"] for i in response["issues"]], titles)
 
+    def test_states_list_the_project_workflow_and_issues_filter_by_state(self):
+        ready = "33333333-3333-4333-8333-333333333333"
+        records = [item(), item(id="other", name="Ready one", state={"id": ready, "name": "Ready", "group": "unstarted"}), item(id="third", name="Plain id", state=ready)]
+        def call(_config, path, params=None, **_kwargs):
+            if path.endswith("states/"):
+                return {"results": [{"id": ready, "name": "Ready", "group": "unstarted"}, {"id": "x", "name": "Gone", "group": "cancelled"}, "junk"]}
+            if path.endswith("work-items/"):
+                return {"results": records, "next_page_results": False}
+            return PROJECT
+        with patch.object(plane, "call", side_effect=call):
+            states = plane.request(self.home, {"op": "states", "project": PROJECT["id"]})["states"]
+            self.assertEqual(states, [{"id": ready, "name": "Ready", "group": "unstarted"}, {"id": "x", "name": "Gone", "group": "canceled"}])
+            response = plane.request(self.home, {"op": "issues", "project": PROJECT["id"], "state": ready})
+            self.assertEqual([i["title"] for i in response["issues"]], ["Ready one", "Plain id"])
+            self.assertEqual({i["stateId"] for i in response["issues"]}, {ready})
+
     def test_sparse_search_follows_pages_then_returns_a_bounded_continuation_without_skipping_rows(self):
         def call(_config, _path, params):
             page = int(params.get("cursor") or "0")

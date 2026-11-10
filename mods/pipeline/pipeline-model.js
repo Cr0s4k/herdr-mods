@@ -161,6 +161,10 @@ function explain(state, picked) {
 }
 
 // All mutations go through one reducer; multiple views share one pipeline.
+const liveTask = (state, fields, source) => ({ ...fresh({ repos: [state.repo], priority: 2, depends: [], column: "Ready", description: "", ...fields }, "queued", source),
+  workspace: null, planned: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
+const PRIORITIES = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
+
 const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
 
 export function reduce(state, action, now = Date.now()) {
@@ -181,8 +185,7 @@ export function reduce(state, action, now = Date.now()) {
       next.created = (next.created ?? 0) + 1;
       if (next.live) {
         const id = `T-${next.created}`;
-        next.tasks.push({ ...fresh({ id, title, repos: [next.repo], priority: 2, depends: [], column: "Ready", description: "" }, "queued", "Typed"),
-          workspace: null, planned: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
+        next.tasks.push(liveTask(next, { id, title }, "Typed"));
         event(next, `${id} joined the queue.`, id);
         break;
       }
@@ -203,6 +206,38 @@ export function reduce(state, action, now = Date.now()) {
         ids.push(id);
       }
       enqueue(next, ids, "Picked");
+      break;
+    }
+    case "addPlane": {
+      if (!next.live) return state;
+      next.claimed ??= [];
+      let added = 0;
+      for (const issue of action.issues ?? []) {
+        if (!issue?.uuid || !issue.title) continue;
+        if (next.tasks.some(task => task.plane?.uuid === issue.uuid && task.status !== "done")) continue;
+        if (action.watched && next.claimed.includes(issue.uuid)) continue;
+        let id = String(issue.identifier || `T-${++next.created}`);
+        if (next.tasks.some(task => task.id === id)) { let n = 2; while (next.tasks.some(task => task.id === `${id}-${n}`)) n++; id = `${id}-${n}`; }
+        next.tasks.push(liveTask(next, { id, title: String(issue.title).slice(0, 200), description: String(issue.description ?? "").slice(0, 8000),
+          priority: PRIORITIES[issue.priority?.name] ?? 1, plane: { uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status } }, action.source ?? "Plane"));
+        next.claimed = [...next.claimed.filter(uuid => uuid !== issue.uuid), issue.uuid].slice(-500);
+        event(next, `${id} joined the queue · ${action.source ?? "Plane"}`, id);
+        added++;
+      }
+      if (!added) return state;
+      break;
+    }
+    case "watchPlane": {
+      if (!next.live) return state;
+      const watch = action.state?.id ? { id: action.state.id, name: String(action.state.name ?? "a state") } : null;
+      if (watch?.id === next.watchPlane?.id) return state;
+      next.watchPlane = watch; next.planeError = null;
+      event(next, watch ? `Watching Plane for tickets in ${watch.name}.` : "Stopped watching Plane.");
+      break;
+    }
+    case "planeError": {
+      if (!next.live || (next.planeError ?? null) === (action.error ?? null)) return state;
+      next.planeError = action.error ?? null;
       break;
     }
     case "describe": {

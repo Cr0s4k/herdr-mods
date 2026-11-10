@@ -163,7 +163,12 @@ Live runs real agents on the project's Git repository, one isolated worktree and
 task, so parallel agents never touch each other or your checkout.
 
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
-   the title and details are its first message.
+   the title and details are its first message. Or bring tickets from **Plane** (P), the
+   project linked to this repository in the Tasks panel: pick open tickets and **Queue**
+   them, or **Watch a state** (say Ready) so tickets in it join the queue by themselves within
+   a minute, each one once. A Plane task keeps the ticket's key (HMOD-12), priority and
+   description, and the inspector links back to it. Pipeline only reads Plane; ticket status
+   and assignee stay in your Plane workflow, and agents are told not to change them.
 2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it
@@ -217,8 +222,8 @@ own answer, and the task resumes where it stopped and the next question opens. S
 has **Simulate a question** to make the next working task ask. Real agents will appear in
 the sidebar on their own; this only simulates that moment.
 
-Keys, with the scene focused: Space start/pause, N new task, A examples, Q answer (in
-Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
+Keys, with the scene focused: Space start/pause, N new task, A examples (in Live: P for
+Plane), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
 S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
 **PR approval** in the status strip switches to **Auto-merge** (merge after checks).
 Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,

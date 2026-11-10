@@ -6,7 +6,7 @@ const modelSource = await readFile(new URL("../mods/pipeline/pipeline-model.js",
 const model = await import(`data:text/javascript,${encodeURIComponent(modelSource)}`);
 const geometrySource = (await readFile(new URL("../mods/pipeline/geometry.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const geometry = await import(`data:text/javascript,${encodeURIComponent(`const ACTIVE = ${JSON.stringify(model.ACTIVE)};\n${geometrySource}`)}`);
-const world = { data: {}, storage: new Map(), hc: [], runs: [] };
+const world = { data: {}, storage: new Map(), hc: [], runs: [], planeCalls: [] };
 function native() {
   const data = { nodes: [], styles: {}, handlers: {} };
   let element;
@@ -29,6 +29,8 @@ globalThis.__pipelineView = {
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
   knownAgents: async () => [], exec: async () => ({ code: 0, stdout: "" }), focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
+  openIssue: issue => !["completed", "canceled"].includes(issue.statusType),
+  readPlane: async payload => { world.planeCalls.push(payload); return world.planeReply?.(payload) ?? { issues: [] }; },
   PathBuilder: { stroke: path }, window: { paint_path: native },
   shared: key => world.data[key], setShared: (key, value) => { world.data[key] = value; },
   props: () => ({ context: world.context ?? { id: "project", name: "Project" } }), appWindow: () => ({ platform: "linux", active: true }),
@@ -385,4 +387,42 @@ test("Start records the space it was pressed in, and Trust answers the prompt fr
   assert.deepEqual([row(view, "T-1").status, row(view, "T-1").reason], ["working", null]);
   click(view, "settings"); click(view, "auto-trust");
   assert.equal(view.state().autoTrust, true);
+});
+
+test("the Plane drawer watches a state and queues picked tickets, skipping ones already in Pipeline", async () => {
+  const view = setupLive();
+  const ticket = (n, extra = {}) => ({ uuid: `plane:p:${n}`, identifier: `HMOD-${n}`, title: `Ticket ${n}`, description: "", status: "Todo", statusType: "unstarted", priority: { name: "High" }, url: "https://plane.test/", ...extra });
+  world.planeCalls = [];
+  world.planeReply = payload => payload.op === "states" ? { states: [{ id: "todo", name: "Todo", group: "unstarted" }, { id: "done", name: "Done", group: "completed" }] }
+    : { issues: [ticket(1), ticket(2), ticket(3, { statusType: "completed" })], project: { name: "Herdr Mods" } };
+  const spawned = [];
+  view.open("plane", { ...cx, spawn: fn => spawned.push(fn) });
+  await spawned[0](cx);
+  assert.deepEqual(world.planeCalls.map(call => [call.op, call.context.cwd]), [["issues", "/work/shop"], ["states", "/work/shop"]]);
+  let scene = view.render(cx);
+  assert.ok(find(scene, "plane-HMOD-1") && find(scene, "plane-HMOD-2"));
+  assert.equal(find(scene, "plane-HMOD-3"), undefined, "finished tickets are left out");
+  assert.equal(find(scene, "watch-done"), undefined);
+  click(view, "watch-todo");
+  assert.deepEqual(view.state().watchPlane, { id: "todo", name: "Todo" });
+  click(view, "plane-HMOD-1"); click(view, "plane-HMOD-2");
+  click(view, "plane-queue");
+  assert.deepEqual(view.state().tasks.map(task => task.id), ["HMOD-1", "HMOD-2"]);
+  assert.equal(view.drawer, null);
+  view.drawer = "plane";
+  assert.equal(find(view.render(cx), "plane-HMOD-1").styles.disabled[0], true);
+  view.inspect("HMOD-1", cx);
+  assert.ok(find(view.render(cx), "plane-link-HMOD-1"));
+  world.planeReply = null;
+});
+
+test("an unlinked repository points to the Tasks panel", async () => {
+  const view = setupLive();
+  world.planeReply = () => ({ issues: [], needsProject: true });
+  const spawned = [];
+  view.open("plane", { ...cx, spawn: fn => spawned.push(fn) });
+  await spawned[0](cx);
+  click(view, "open-tasks");
+  assert.deepEqual(world.runs.at(-1), ["tabs-show.plane", undefined]);
+  world.planeReply = null;
 });

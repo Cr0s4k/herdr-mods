@@ -4,10 +4,11 @@ import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, n
 import { STORE, LIVE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys } from "./pipeline-live.js";
+import { readPlane, openIssue } from "./plane-source.js";
 
 const CHROME = 50 + 46 + 36 + 32;
 const COMET = ["●", "•", "·", "", "", ""];
-const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota"];
+const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota", "plane"];
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -42,6 +43,8 @@ export default class Pipeline extends View {
     this.handle = cx.focus_handle(); this.handle.focus();
     this.search = InputState.new({ placeholder: "Search example tasks or repositories…" });
     this.search.on("change", (_e, cx) => cx.notify());
+    this.planeSearch = InputState.new({ placeholder: "Search Plane tickets…" });
+    this.planeSearch.on("change", (_e, cx) => cx.notify());
     this.title = InputState.new({ placeholder: "New task: type a title and press Enter" });
     this.title.on("change", (_e, cx) => cx.notify());
     this.title.on("submit", (_e, cx) => this.create(cx));
@@ -56,6 +59,7 @@ export default class Pipeline extends View {
     this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
     this.repo = null; this.agentChoices = [];
+    this.plane = { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }; this.planePicked = new Set();
     this.motion = localStorage.getItem("motion") !== "false";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
@@ -84,7 +88,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.planeSearch.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -175,9 +179,37 @@ export default class Pipeline extends View {
     });
   }
   open(drawer, cx) {
+    if (drawer === "plane" && !this.state()?.live) return;
+    if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
+    if (drawer !== this.drawer && drawer === "plane") this.planeSearch.set_value("");
     this.drawer = drawer;
-    if (drawer === "picker") this.search.focus(); else if (!drawer) this.handle.focus();
+    if (drawer === "plane") { this.loadPlane(cx); this.planeSearch.focus(); }
+    else if (drawer === "picker") this.search.focus(); else if (!drawer) this.handle.focus();
     cx.notify();
+  }
+  loadPlane(cx) {
+    if (this.plane.loading) return;
+    this.plane = { ...this.plane, loading: true, error: null, kind: null };
+    const context = { cwd: this.context.cwd, on: this.context.on };
+    cx.spawn(async cx => {
+      try {
+        const listed = await readPlane({ op: "issues", context, scope: "all" });
+        const states = listed.needsProject ? { states: [] } : await readPlane({ op: "states", context });
+        this.plane = { loading: false, issues: (listed.issues ?? []).filter(openIssue), states: states.states ?? [], needsProject: Boolean(listed.needsProject),
+          project: listed.project?.name ?? null, error: null, kind: null };
+      } catch (error) { this.plane = { ...this.plane, loading: false, error: error?.message || String(error), kind: error?.kind ?? null }; }
+      cx.notify();
+    });
+  }
+  queuePlane(issues, cx) {
+    this.act({ type: "addPlane", issues, source: "Plane" }, cx);
+    this.planePicked.clear();
+    this.open(null, cx);
+  }
+  openLink(url) {
+    if (!/^https?:\/\//.test(url ?? "")) return;
+    const opener = appWindow()?.platform === "macos" ? "open" : appWindow()?.platform === "windows" ? "explorer" : "xdg-open";
+    exec(opener, [url]).catch(() => {});
   }
   inspect(id, cx) {
     if (this.drawer === "task" && this.detailsFor) this.saveDetails(cx);
@@ -279,6 +311,7 @@ export default class Pipeline extends View {
       cx.stop_propagation(); return;
     }
     if (!this.handle.is_focused() || (this.state()?.live && ["a", "s"].includes(e.keystroke))) return;
+    if (e.keystroke === "p" && this.state()?.live) { this.open("plane", cx); cx.stop_propagation(); return; }
     const actions = {
       space: () => this.toggleRun(cx),
       n: () => { this.title.focus(); cx.notify(); },
@@ -321,7 +354,9 @@ export default class Pipeline extends View {
         .child(icon("plus", 13).text_color(t.muted))
         .child(div().flex_1().min_w(0).child(Input.new(this.title).w_full().text_size(12).accessibility_label("New task title")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true, hint: "Add to the queue (Enter)" }))))
-      .when(state.live, el => el.child(this.button("agent", this.agentName(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent each task starts with" })))
+      .when(state.live, el => el.child(this.button("agent", this.agentName(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent each task starts with" }))
+        .child(this.button("plane", state.watchPlane ? `Plane · ${state.watchPlane.name}` : "Plane", cx => this.open(this.drawer === "plane" ? null : "plane", cx), t,
+          { icon: "plane", selected: this.drawer === "plane" || Boolean(state.watchPlane), hint: state.planeError ?? "Queue tickets from the Plane project linked to this repository (P)" })))
       .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
         .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch })))
       .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }))
@@ -356,7 +391,7 @@ export default class Pipeline extends View {
         .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
         .on_click((_e, cx) => this.open(this.drawer === "activity" ? null : "activity", cx))
         .child(div().min_w(0).truncate().child(latest?.message ?? "Start the pipeline to watch your first tasks enter.")))
-      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child(state.live ? "Space start · N new · Q needs you · Y merge · R retry"
+      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child(state.live ? "Space start · N new · P Plane · Q needs you · Y merge · R retry"
         : "Space start · N new · A examples · Q answer · Y approve · R retry · S speed")));
   }
 
@@ -540,7 +575,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", task: this.selected ?? "Task" };
+    const titles = { plane: this.plane.project ? `Plane · ${this.plane.project}` : "Plane", picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -551,6 +586,7 @@ export default class Pipeline extends View {
       for (const task of tasks) body.child(this.taskRow(task, state, t, cx => this.inspect(task.id, cx)));
     };
     if (this.drawer === "picker") this.picker(body, state, t);
+    else if (this.drawer === "plane") this.planeDrawer(body, state, t);
     else if (this.drawer === "queue") rows(state.tasks.filter(task => task.status === "queued"), "Queue is clear. Type a task above or add examples.");
     else if (this.drawer === "review") {
       const approvals = state.tasks.filter(needsApproval).length;
@@ -637,6 +673,53 @@ export default class Pipeline extends View {
     body.child(this.button("arrival", `Move example task to ${state.column}`, cx => this.act({ type: "arrival" }, cx), t, { icon: "plus", disabled: !state.tasks.some(task => task.status === "backlog") }));
     body.child(this.label("This button simulates someone moving a task on the board. No external task service is changed.", t));
   }
+  planeDrawer(body, state, t) {
+    const plane = this.plane, unavailable = plane.needsProject || plane.kind === "auth";
+    const warn = text => div().text_size(12).line_height(1.45).text_color(t.blocked).child(text);
+    if (unavailable) {
+      body.child(this.label(plane.needsProject ? "This repository isn't linked to a Plane project yet. Link it in the Tasks panel, then come back." : "Plane isn't connected on this computer. Connect it in the Tasks panel, then come back.", t));
+      body.child(this.button("open-tasks", "Open the Tasks panel", () => run("tabs-show.plane"), t, { icon: "plane" }));
+      body.child(this.button("plane-refresh", "Refresh", cx => this.loadPlane(cx), t, { icon: "reset", disabled: plane.loading }));
+      return;
+    }
+    if (plane.error) body.child(warn(plane.error));
+    body.child(this.heading("Watch a state"));
+    body.child(this.label(state.watchPlane ? `Tickets in ${state.watchPlane.name} join the queue within a minute, each one once.`
+      : "Choose a state and its tickets join the queue by themselves, each one once. Pipeline never changes Plane.", t));
+    if (state.planeError) body.child(warn(state.planeError));
+    body.child(h_flex().gap(6).flex_wrap().children(plane.states.filter(row => !["completed", "canceled"].includes(row.group)).map(row =>
+      this.button(`watch-${row.id}`, row.name, cx => this.act({ type: "watchPlane", state: row }, cx), t, { small: true, selected: state.watchPlane?.id === row.id, hint: `Queue tickets that are in ${row.name}` })))
+      .when(Boolean(state.watchPlane), el => el.child(this.button("watch-stop", "Stop watching", cx => this.act({ type: "watchPlane", state: null }, cx), t, { small: true, icon: "x" }))));
+    if (!plane.states.length && !plane.loading) body.child(this.label("No states were found for this project.", t));
+    body.child(div().h(1).bg(t.border));
+    body.child(this.heading("Pick tickets"));
+    body.child(Input.new(this.planeSearch).w_full().h(34).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Search Plane tickets"));
+    const query = this.planeSearch.value().trim().toLowerCase();
+    const shown = plane.issues.filter(issue => `${issue.identifier} ${issue.title} ${issue.status}`.toLowerCase().includes(query));
+    const active = new Set(state.tasks.filter(task => task.plane && task.status !== "done").map(task => task.plane.uuid));
+    const chosen = plane.issues.filter(issue => this.planePicked.has(issue.uuid) && !active.has(issue.uuid));
+    body.child(h_flex().gap(8).flex_wrap()
+      .child(this.button("plane-queue", `Queue ${count(chosen.length, "ticket")}`, cx => this.queuePlane(chosen, cx), t, { primary: true, icon: "plus", disabled: !chosen.length }))
+      .child(this.button("plane-refresh", plane.loading ? "Loading…" : "Refresh", cx => this.loadPlane(cx), t, { icon: "reset", disabled: plane.loading })));
+    if (plane.loading && !plane.issues.length) body.child(this.label("Loading open tickets…", t));
+    for (const issue of shown.slice(0, 80)) body.child(this.issueRow(issue, active.has(issue.uuid), t));
+    if (!plane.loading && !shown.length) body.child(this.label(query ? "No open tickets match." : "No open tickets in this project.", t));
+    if (shown.length > 80) body.child(this.label(`Showing 80 of ${shown.length}. Search to narrow the list.`, t));
+  }
+  issueRow(issue, inPipeline, t) {
+    const picked = this.planePicked.has(issue.uuid) && !inPipeline;
+    return Button.new(`pipeline-plane-${issue.identifier}`).w_full().p(10).rounded(6).bg(picked ? t.selected : t.surface)
+      .border_1().border_color(picked ? t.accent : t.border).text_color(t.foreground).tab_index(0).disabled(inPipeline).opacity(inPipeline ? 0.55 : 1)
+      .accessibility_label(`${issue.identifier}: ${issue.title}. ${issue.status}.${inPipeline ? " Already in Pipeline." : picked ? " Selected." : ""}`)
+      .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
+      .on_click((_e, cx) => { if (inPipeline) return; this.planePicked.has(issue.uuid) ? this.planePicked.delete(issue.uuid) : this.planePicked.add(issue.uuid); cx.notify(); })
+      .child(v_flex().w_full().gap(5)
+        .child(h_flex().items_center().gap(6).child(div().text_size(10).font_medium().text_color(t.muted).child(issue.identifier))
+          .child(div().flex_1().min_w(0).text_size(10).text_color(t.muted).truncate().child(`${issue.status} · ${issue.priority?.name ?? "No priority"}`))
+          .when(inPipeline, el => el.child(div().text_size(10).text_color(t.muted).child("In Pipeline")))
+          .when(picked, el => el.child(icon("check", 13))))
+        .child(div().text_size(12).font_medium().child(issue.title)));
+  }
   liveSettings(body, state, t) {
     const chosen = state.agent?.name ?? this.agentChoices[0]?.name;
     body.child(this.heading("Agent"));
@@ -668,6 +751,8 @@ export default class Pipeline extends View {
     body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : labelFor(state, task.status)))
       .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
+    if (task.plane) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`Plane ${task.plane.key} · ${task.plane.status} · ${task.source}`))
+      .when(Boolean(task.plane.url), el => el.child(this.button(`plane-link-${task.id}`, "Open in Plane", () => this.openLink(task.plane.url), t, { small: true, icon: "plane", hint: task.plane.url }))));
     if (task.status === "queued") {
       body.child(this.heading("Details for the agent"));
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));

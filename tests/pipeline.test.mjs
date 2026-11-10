@@ -235,8 +235,8 @@ async function tracker(values) {
   values.toasts = [];
   globalThis.__pipelineTracker = { ...model, ...live, shared: key => values.get(key), setShared: (key, value) => { values.set(key, value); values.writes = (values.writes ?? 0) + 1; },
     notify: toast => values.toasts.push(toast), panes: () => values.panes ?? [], focused: () => values.focused ?? null,
-    agents: () => [], terminals: () => [], spaces: () => [], run() {}, exec() {}, readTextFile() {}, appHome: () => "", knownAgents: async () => [] };
-  const names = ["shared", "setShared", "notify", "panes", "focused", "agents", "terminals", "spaces", "run", "exec", "readTextFile", "appHome", "knownAgents"];
+    agents: () => [], terminals: () => [], spaces: () => [], run() {}, exec() {}, readTextFile() {}, appHome: () => "", knownAgents: async () => [], readPlane: async () => ({ issues: [] }) };
+  const names = ["shared", "setShared", "notify", "panes", "focused", "agents", "terminals", "spaces", "run", "exec", "readTextFile", "appHome", "knownAgents", "readPlane"];
   const trackerSource = (await readFile(new URL("../mods/pipeline/tracker.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
   const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, MOVING, reduce, migrate, LiveRunner, prompt } = globalThis.__pipelineTracker;\nconst { ${names.join(", ")} } = Object.fromEntries(${JSON.stringify(names)}.map(name => [name, (...args) => globalThis.__pipelineTracker[name](...args)]));\n${trackerSource}`)}`);
   const callbacks = [];

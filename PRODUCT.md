@@ -34,11 +34,12 @@ when a refresh fails. No new visual identity is part of this extension.
 
 Pipeline is native visual agent orchestration. Its simulation uses labeled example tasks to
 show planning, parallel work, quota reserves, dependency scheduling, cross-repository PR
-approval and merge. Live mode runs real agents on one repository: typed tasks, an isolated
+approval and merge. Live mode runs real agents on one repository: typed tasks or tickets
+from the repository's Plane project (picked, or queued from a watched state), an isolated
 worktree and branch per task, agent tabs in the project's space, Herdr's agent status as
 the task state, and an approved branch rebased and fast-forwarded into the project's
-current branch. Plane as a live task source, multi-repository tasks, checks, pull requests
-and agent planning are follow-up work. Agents keep running in herdr-core while Herdr is
+current branch. Pipeline only reads Plane. Linear as a live source, multi-repository
+tasks, checks, pull requests and agent planning are follow-up work. Agents keep running in herdr-core while Herdr is
 closed; the tab-bar tracker catches up when it opens.
 
 The user wants to capture and plan work while away from the development machine. Plane's

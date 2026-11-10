@@ -279,6 +279,11 @@ def scan(config, path, cursor, matches, expand=None):
     return found, cursor, more
 
 
+def state_id(item):
+    state = item.get("state")
+    return state.get("id") if isinstance(state, dict) else state
+
+
 def normalized(item, project, config):
     state = item.get("state_detail") or item.get("state") or {}
     if not isinstance(state, dict):
@@ -291,7 +296,7 @@ def normalized(item, project, config):
             "title": item.get("name", "Untitled task"), "provider": "plane", "projectId": project["id"],
             "url": f"{config['baseUrl']}/{config['workspace']}/browse/{key}/",
             "description": markdown(item.get("description_html")) or item.get("description_stripped") or "",
-            "status": state.get("name", "Unknown"),
+            "status": state.get("name", "Unknown"), "stateId": state_id(item) or state.get("id"),
             "statusType": {"cancelled": "canceled", "unstarted": "unstarted"}.get(state.get("group"), state.get("group", "backlog")),
             "priority": {"name": str(item.get("priority", "none")).capitalize()},
             "assignee": ", ".join(names) or ("Assigned" if assignees else "Unassigned"),
@@ -357,8 +362,13 @@ def request(home, payload):
     project_id = valid_id(project_id)
     project_path = prefix + "projects/" + project_id + "/"
     project = project_info(call(config, project_path))
+    if op == "states":
+        states = rows(call(config, project_path + "states/", {"per_page": 100}))
+        return {"states": [{"id": state["id"], "name": state.get("name", "State"),
+                            "group": {"cancelled": "canceled"}.get(state.get("group"), state.get("group", "backlog"))}
+                           for state in states if isinstance(state, dict) and state.get("id")], "project": project}
     if op == "issues":
-        scope = payload.get("scope", "all")
+        scope, wanted = payload.get("scope", "all"), payload.get("state")
         me = call(config, "users/me/")["id"] if scope == "mine" else None
         query = str(payload.get("query", "")).casefold()
         def matches(item):
@@ -367,6 +377,8 @@ def request(home, payload):
             if scope == "mine" and me not in ids:
                 return False
             if scope == "unassigned" and ids:
+                return False
+            if wanted and state_id(item) != wanted:
                 return False
             content = normalized(item, project, config)
             return query in (content["identifier"] + " " + content["title"] + " " + content["description"]).casefold()
