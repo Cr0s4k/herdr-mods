@@ -513,6 +513,15 @@ click it again to unpin. You can also right-click → **Pin to top**, or drag a 
 the line to pin it, below to unpin it. Pinned spaces stay above the rest, with a line under them. Pins are saved
 in Herdr's shared state (`space.pinned`), so they survive restarts.
 
+### Keyboard
+
+**Ctrl-A E** (or moving left past the first pane) puts the keyboard in the sidebar, with an
+accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
+spaces and their agents; **→ ←** unfold and fold a space, and **←** on an agent goes back to
+its space. **Enter** shows the space or focuses the agent. On a space, **P** pins it, **F**
+focuses it, **H** hides it and **M** opens its menu; **N** adds a space. **Esc** leaves focus
+mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.
+
 ## Feature toggles
 
 The switch icon in the tab bar, after GitHub, opens **Features**: on/off switches for parts

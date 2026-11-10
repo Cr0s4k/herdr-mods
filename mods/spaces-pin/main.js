@@ -92,8 +92,21 @@ export default class Spaces extends View {
         this.held = false;
         if (!this.nav.some(n => n.key === this.cursor)) this.cursor = shared("spaces.focus") ? null : `space:${spaces().find(s => s.active)?.id}`;
         cx.notify();
-        cx.timer.after(30, (cx) => { this.handle.focus(); cx.notify(); });
+        cx.timer.after(30, (cx) => this.takeKeyboard(cx));
       }
+    });
+  }
+
+  // Herdr hands a block the keyboard only through pane.go; a key binding's
+  // command reaches the mod without it, so step left until the sidebar holds it.
+  takeKeyboard(cx, hops = 0) {
+    this.handle.focus();
+    cx.notify();
+    cx.timer.after(120, (cx) => {
+      if (this.handle.is_focused() || !this.keyboard) return;
+      if (hops >= 6) { this.keyboard = false; cx.notify(); return; }
+      run("pane.go", { direction: "left" });
+      this.takeKeyboard(cx, hops + 1);
     });
   }
 
