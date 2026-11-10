@@ -167,7 +167,7 @@ export default class Changes extends View {
       .child(div().text_color(t.dim).child("⎇"))
       .child(div().min_w(0).truncate().text_color(t.muted).child(s.branch))
       .child(div().flex_1())
-      .when(Boolean(status), (e) => e.child(div().flex_none().text_color(t.dim).child(status)))
+      .when(Boolean(status), (e) => e.child(div().flex_none().text_color(t.muted).child(status)))
       .when(!this.syncing && s.behind > 0, (e) => e.child(action("sync-pull", `↓${s.behind} Pull`, ["pull"], "Pull")))
       .when(!this.syncing && s.ahead > 0 && !s.gone, (e) => e.child(action("sync-push", `↑${s.ahead} Push`, ["push"], "Push")))
       .when(!this.syncing && (!s.upstream || s.gone), (e) => e.child(action("sync-publish", "Publish", ["push", "-u", "origin", "HEAD"], "Publish")))
@@ -350,7 +350,7 @@ export default class Changes extends View {
   }
 
   row({ kind, number, text, spans }, t) {
-    if (kind === "@") return div().w_full().px(12).h(22).flex_none().flex().items_center().truncate().bg(t.raised).text_color(t.dim).child(text);
+    if (kind === "@") return div().w_full().px(12).h(22).flex_none().flex().items_center().truncate().bg(t.raised).text_color(t.muted).child(text);
     return h_flex().w_full().h(22).flex_none().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .child(div().w(40).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
       .child(div().w(10).flex_none().text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.dim).child(kind === " " ? "" : kind))
@@ -399,7 +399,7 @@ export default class Changes extends View {
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(t.border)
         .child(div().w(14).text_size(12).text_color(statusColor(file.status, t)).child(file.status))
         .child(fileIcon(file.path, {}, t))
-        .child(h_flex().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
+        .child(h_flex().min_w(0).child(div().text_color(t.muted).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
         .when(file.add > 0, (e) => e.child(div().text_size(12).text_color(t.ansi2).child(`+${file.add}`)))
         .when(file.del > 0, (e) => e.child(div().text_size(12).text_color(t.ansi1).child(`−${file.del}`)))
         .child(div().flex_1())
@@ -408,7 +408,7 @@ export default class Changes extends View {
           .child(this.button("cm-split", "Split", () => setShared(SPLIT, true), split, t))))
         .child(div().w(8))
         .child(this.button("cm-prev", "↑", (cx) => step(-1, cx), false, t))
-        .child(div().text_size(12).text_color(t.dim).child(`${this.index + 1} / ${this.files.length}`))
+        .child(div().text_size(12).text_color(t.muted).child(`${this.index + 1} / ${this.files.length}`))
         .child(this.button("cm-next", "↓", (cx) => step(1, cx), false, t))
         .child(div().w(8))
         .child(this.button("cm-close", "✕", () => closeOverlay(props().overlay), false, t)))
@@ -420,13 +420,13 @@ export default class Changes extends View {
           .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-modal-diff", rows.length, 22, (i) => String(i),
             (range) => rows.slice(range.start, range.end).map((r) => this.row(r, t))).size_full()))))
         .child(Scrollbar.vertical("changes-modal-diff").viewport_from_layout().absolute().inset_0())
-        .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.dim).child("Loading…")))))
-      .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
+        .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.muted).child("Loading…")))))
+      .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child("↑ ↓ file").when(!this.pictures, (e) => e.child("S split / unified")).child("Esc close"));
   }
 
   diffRow({ kind, number, text }, t) {
-    if (kind === "@") return div().w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
+    if (kind === "@") return div().w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.muted).child(text);
     return h_flex().w_full().h(20).flex_none().gap(10).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .child(div().w(30).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
       .child(div().flex_1().min_w(0).truncate().child(text));
@@ -455,11 +455,11 @@ export default class Changes extends View {
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => this.view(i))
           .child(div().w(14).text_size(11).text_color(statusColor(f.status, t)).child(f.status))
           .child(fileIcon(f.path, {}, t))
-          .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
+          .child(h_flex().flex_1().min_w(0).child(div().text_color(t.muted).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
+      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.muted).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
         .child(Scrollbar.vertical("changes-list").absolute().inset_0()))
-      .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
+      .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.muted).child("Showing the first 1,000 changed files")))
       .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)))
       .when(Boolean(this.sync) && shared("features")?.syncBar !== false, el => el.child(this.syncBar(t)))
       .when(shared("features")?.commitBox !== false, el => el.child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)

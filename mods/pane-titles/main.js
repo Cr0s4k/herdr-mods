@@ -67,7 +67,7 @@ export default class Pane extends View {
       .child(div().flex_none().truncate().max_w(260).font_medium().text_color(t.foreground).child(name))
       .when(Boolean(summary), el => el.child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border)
         .text_size(10).text_color(t.muted).child(`${summary.files} ${summary.files === 1 ? "file" : "files"}`)))
-      .child(div().flex_1().truncate().text_color(t.dim).child(folder(p.cwd)))
+      .child(div().flex_1().truncate().text_color(t.muted).child(folder(p.cwd)))
       .when(Boolean(summary), el => el
         .child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${summary.add}`))
         .child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${summary.del}`)))

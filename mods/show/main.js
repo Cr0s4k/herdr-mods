@@ -246,7 +246,7 @@ export default class Show extends View {
         .child(h_flex().h(22).gap(7).items_center().text_size(12)
           .child(div().size(8).rounded(2).flex_none().bg(kindColor[item.kind] ?? t.dim))
           .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(item.name))
-          .child(div().text_size(11).text_color(t.dim).child(clock(item.time)))
+          .child(div().text_size(11).text_color(t.muted).child(clock(item.time)))
           .child(iconButton(`mark-${item.id}`, "✎", "Mark up", () => this.openEditor(item)))
           .child(iconButton(`open-${item.id}`, "↗", "Open", () => exec("open", [item.path])))
           .child(iconButton(`del-${item.id}`, "mods/show/x.svg", "Remove", (cx) => this.remove(item, cx))))
@@ -272,14 +272,14 @@ export default class Show extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(!this.embedded, el => el.child(div().font_semibold().child("Show")))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(title ?? ""))
-        .child(div().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.all ? "all spaces" : space?.name ?? ""))
+        .child(div().min_w(0).truncate().text_size(11).text_color(t.muted).child(this.all ? "all spaces" : space?.name ?? ""))
         .child(pill("scope", this.all ? "This space" : "All", false, (cx) => { this.all = !this.all; cx.notify(); }).flex_none())
         .when(items.length > 0, (el) => el.child(pill("clear-items", this.removing ? "Clearing…" : "Clear", false, (cx) => this.clear(cx))
           .flex_none().tooltip(this.all || !space ? "Remove all shown images" : "Remove shown images in this space")
           .when(this.removing, (b) => b.opacity(0.5))))
         .when(!this.embedded, el => el.child(moveToPaneButton("show", { all: this.all }, t))))
       .child(v_flex().id("show-list").flex_1().min_h(0).overflow_y_scrollbar().p(14).gap(18)
-        .when(!items.length, (el) => el.child(v_flex().gap(6).text_color(t.dim).text_size(12)
+        .when(!items.length, (el) => el.child(v_flex().gap(6).text_color(t.muted).text_size(12)
           .child(div().child(this.error ?? "Nothing shown yet."))
           .child(div().child("Agents post images with: herdr-show <file.png>"))))
         .children(groups.map((g, gi) => v_flex().id(`group-${gi}`).gap(14).flex_none()
@@ -387,7 +387,7 @@ export default class Show extends View {
     const root = v_flex().id("root").size_full().bg(t.popover).text_color(t.foreground).text_size(12.5)
       .track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .on_size_change((size, cx) => { this.size = size; cx.notify(); });
-    if (!this.base) return root.child(div().p(20).text_color(t.dim).child("Loading…"));
+    if (!this.base) return root.child(div().p(20).text_color(t.muted).child("Loading…"));
     const s = this.scale(), W = this.base.width * s, H = this.base.height * s;
     const stop = (_e, cx) => cx.stop_propagation();
     const chip = (id, label, on, action) => h_flex().id(id).h(28).px(10).items_center().rounded(7).text_size(12)

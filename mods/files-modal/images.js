@@ -25,7 +25,7 @@ export async function stageImage(root, path, rev) {
 const kb = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
 function frame(pic, color, t, room) {
-  if (!pic) return div().flex_1().min_h(0).flex().items_center().justify_center().text_color(t.dim).child("Cannot preview this image");
+  if (!pic) return div().flex_1().min_h(0).flex().items_center().justify_center().text_color(t.muted).child("Cannot preview this image");
   const scale = pic.width ? Math.min(1, room.width / pic.width, room.height / pic.height) : 0;
   return v_flex().flex_1().min_h(0).min_w(0).overflow_hidden().gap(8).items_center().justify_center()
     .child(div().flex_1().min_h(0).w_full().overflow_hidden().flex().items_center().justify_center().p(8)
@@ -33,7 +33,7 @@ function frame(pic, color, t, room) {
         .when(scale > 0, (e) => e.w(Math.floor(pic.width * scale) + 10).h(Math.floor(pic.height * scale) + 10))
         .when(!scale, (e) => e.size_full())
         .child(image(pic.file).size_full())))
-    .child(div().flex_none().text_size(11).text_color(t.dim)
+    .child(div().flex_none().text_size(11).text_color(t.muted)
       .child([pic.width ? `${pic.width} × ${pic.height}` : null, kb(pic.bytes)].filter(Boolean).join(" · ")));
 }
 

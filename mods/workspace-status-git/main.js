@@ -44,7 +44,7 @@ export default class WorkspaceStatus extends View {
   }
 
   counts(t) {
-    if (this.syncing) return div().text_color(t.dim).child(`${this.syncing === "Pull" ? "Pulling" : "Pushing"}…`);
+    if (this.syncing) return div().text_color(t.muted).child(`${this.syncing === "Pull" ? "Pulling" : "Pushing"}…`);
     const { ahead, behind } = this.sync;
     const count = (id, text, args, label) => div().id(id).px(4).rounded(4).cursor_pointer().hover(s => s.bg(t.hover))
       .on_click((_e, cx) => this.runSync(args, label, cx)).child(text);
@@ -79,6 +79,6 @@ export default class WorkspaceStatus extends View {
       .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
         .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
       .child(div().flex_1())
-      .child(div().id("palette").text_color(t.dim).on_click(() => run("app.palette")).child(this.hint(t)));
+      .child(div().id("palette").text_color(t.muted).on_click(() => run("app.palette")).child(this.hint(t)));
   }
 }

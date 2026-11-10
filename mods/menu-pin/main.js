@@ -172,7 +172,7 @@ export default class Menu extends View {
             .on_click((_e, cx) => this.choose(i, cx))
             .child(svg(menuIcon(it[1], it[2])).size(14).flex_none().text_color(t.muted))
             .child(div().flex_1().child(it[0]))
-            .child(div().text_size(11).text_color(t.dim).child(shortcut(it[1], it[2])))),
+            .child(div().text_size(11).text_color(t.muted).child(shortcut(it[1], it[2])))),
         ),
       );
   }

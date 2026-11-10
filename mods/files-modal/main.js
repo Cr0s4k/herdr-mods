@@ -189,7 +189,7 @@ export default class Files extends View {
         this.code = EditorState.new({ language: LANG[ext] ?? ext, readonly: true,
           value: text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text,
           font_family: settings().font_family, font_size: 13,
-          syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
+          syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.muted, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
       } catch { if (this.index === index) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
       finally { cx.notify(); }
     });
@@ -217,16 +217,16 @@ export default class Files extends View {
       })
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(t.border)
         .child(fileIcon(path, {}, t))
-        .child(h_flex().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
+        .child(h_flex().min_w(0).child(div().text_color(t.muted).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
         .when(Boolean(mark), el => el.child(div().text_size(12).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark)))
         .child(div().flex_1())
         .child(this.button("fm-prev", "↑", cx => step(-1, cx), t))
-        .child(div().text_size(12).text_color(t.dim).child(`${this.index + 1} / ${this.files.length}`))
+        .child(div().text_size(12).text_color(t.muted).child(`${this.index + 1} / ${this.files.length}`))
         .child(this.button("fm-next", "↓", cx => step(1, cx), t))
         .child(div().w(8))
         .child(this.button("fm-close", "✕", () => closeOverlay(p.overlay), t)))
-      .child(this.picture !== undefined ? imageView(this.picture, t) : this.code ? Editor.new(this.code).flex_1().min_h(0) : div().flex_1().p(16).text_color(t.dim).child(this.fileError || "Loading file…"))
-      .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.dim)
+      .child(this.picture !== undefined ? imageView(this.picture, t) : this.code ? Editor.new(this.code).flex_1().min_h(0) : div().flex_1().p(16).text_color(t.muted).child(this.fileError || "Loading file…"))
+      .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child("↑ ↓ file (before clicking into the text)").child("Esc close"));
   }
 
@@ -256,7 +256,7 @@ export default class Files extends View {
       .text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(!this.embedded, el => el.child(div().font_semibold().child("Files")))
-        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.root?.split(/[\\/]/).pop() ?? ""))
+        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.muted).child(this.root?.split(/[\\/]/).pop() ?? ""))
         .child(Button.new("files-collapse-all").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim)
           .disabled(this.folders.size === 0).opacity(this.folders.size ? 1 : 0.4)
           .tooltip("Collapse all folders").accessibility_label("Collapse all folders")
@@ -265,7 +265,7 @@ export default class Files extends View {
           .child(svg("mods/files-modal/collapse-all.svg").size(16)))
         .when(!this.embedded, el => el.child(moveToPaneButton("files", { folders: [...this.folders], root: this.root, on: this.on ?? null }, t))))
       .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
-        .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))));
+        .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.muted).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
+        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.muted).child("File list limited to 500 entries per folder and 5,000 total"))));
   }
 }

@@ -352,7 +352,7 @@ export default class Spaces extends View {
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
-    const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
+    const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.muted).child(collapsed ? "…" : "Loading…");
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : visible.flatMap(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
@@ -365,7 +365,7 @@ export default class Spaces extends View {
       const folded = !this.attention && this.folded.has(m);
       const icon = svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none();
       const badge = div().absolute().right(-3).bottom(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
-      const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
+      const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).text_color(t.muted)
         .when(collapsed, el => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip(m ? `${m} · ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer"))
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
@@ -389,7 +389,7 @@ export default class Spaces extends View {
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
           .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
       const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().rounded(7)
-        .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
+        .text_size(12).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", { machine: m ?? "" }))
         .when(collapsed, el => el.w(RAIL_CELL).rounded(6).justify_center().tooltip(`New space on ${m ?? "this computer"}`)
           .child(h_flex().size(18).rounded(5).border_1().border_color(t.dim).items_center().justify_center()
@@ -445,7 +445,7 @@ export default class Spaces extends View {
       .justify_end()
       .items_center()
       .text_size(11.5)
-      .text_color(t.dim)
+      .text_color(t.muted)
       .when(Boolean(where), (el) => el.child(div().min_w(0).truncate().child(where)))
       .when(g.ahead > 0, (el) => el.child(div().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`)))
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
@@ -606,7 +606,7 @@ export default class Spaces extends View {
         .on_mouse_down("right", () => this.menu(s))
         .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...s.name][0]?.toUpperCase() ?? "?"))
         .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(s.name))
-          .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.dim).child(s.machine)))))
+          .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.muted).child(s.machine)))))
       .child(v_flex().id(`spaces-focus-list-${s.id}`).flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .children(members.map(a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed })))
         .when(!members.length, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
@@ -646,7 +646,7 @@ export default class Spaces extends View {
     // or clamp the old offset against the focused space's agent count.
     const all = v_flex().id("spaces-all-view").size_full().min_h(0).bg(t.chrome).text_size(13)
       .when(Boolean(focus), el => el.invisible())
-      .child(h_flex().h(35).flex_none().pl(16).pr(10).gap(6).items_center().text_size(11.5).text_color(t.dim)
+      .child(h_flex().h(35).flex_none().pl(16).pr(10).gap(6).items_center().text_size(11.5).text_color(t.muted)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child(div().flex_1().child("Spaces")))
         .when(!collapsed && needsYouOn, el => el.child(div().id("spaces-needs-you").h(23).px(6).rounded(5).flex_none().flex().gap(4).items_center().cursor_pointer()

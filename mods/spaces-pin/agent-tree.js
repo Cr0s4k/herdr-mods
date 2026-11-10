@@ -144,7 +144,7 @@ export class AgentTree {
       .when(Boolean(pic), el => el.child(pic))
       .when(!compact, el => el.child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(state === "idle" && !on ? t.muted : t.foreground).child(name)))
       .when(!compact && kids.length > 0, el => el.child(div().id(`${prefix}agent-fold-${a.address}`).h(22).px(2).gap(2).flex_none().flex().items_center()
-        .text_size(10.5).text_color(t.dim).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
+        .text_size(10.5).text_color(t.muted).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
         .accessibility_label(`${open ? "Collapse" : "Expand"} subagents of ${name}`)
         .tooltip(`${open ? "Hide" : "Show"} ${kids.length} subagents`)
         .on_click((_e, cx) => { cx.stop_propagation(); this.toggle(a.address, cx); })
