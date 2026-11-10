@@ -1,5 +1,6 @@
 // A deterministic simulation. This module never starts agents, changes tickets or runs Git.
 export const STORE = "pipeline.prototype.v1";
+export const LIVE = "live:";
 export const VERSION = 3;
 export const ACTIVE = ["routing", "working", "input", "testing"];
 export const MOVING = ["routing", "working", "testing", "merging"];
@@ -7,6 +8,8 @@ export const DURATION = { routing: 2200, working: 9500, testing: 5500, merging: 
 export const SPEEDS = [1, 2, 4];
 export const REPOS = ["api", "web", "contracts", "docs"];
 export const LABELS = { backlog: "Backlog", queued: "Queued", routing: "Entering pipeline", working: "Implementing", input: "Needs your input", testing: "Running checks", review: "Awaiting approval", merging: "Merging", done: "Done", failed: "Checks failed" };
+export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Working", input: "Needs you in its terminal", review: "Ready for review", merging: "Merging", done: "Merged", failed: "Stopped" };
+export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[status];
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
   { id: "DEMO-102", title: "Build the checkout endpoint", repos: ["api"], priority: 3, depends: ["DEMO-101"], column: "Ready", description: "Implement the checkout endpoint against the shared contract. Cover validation and idempotency before creating the pull request." },
@@ -50,6 +53,13 @@ export function createPipeline(context, now = Date.now()) {
     tasks: CATALOG.map((item, index) => fresh(item, index < 5 ? "queued" : "backlog", index < 5 ? "Picked" : null)) };
 }
 
+export function createLive(context, now = Date.now()) {
+  const repo = (context.cwd ?? "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "project";
+  return { version: VERSION, live: true, context, repo, running: false, parallel: 2, reviewLimit: 4, delivery: "merge", agent: null, speed: 1, quota: 100, reserve: 0,
+    watch: false, column: "Ready", lastTick: now, sequence: 0, created: 0, events: [], tasks: [],
+    plan: "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree." };
+}
+
 export function migrate(state, now = Date.now()) {
   if (!state || state.version === VERSION) return state;
   if (![1, 2].includes(state.version) || !Array.isArray(state.tasks)) return createPipeline(state.context ?? {}, now);
@@ -72,13 +82,13 @@ export const outstandingCount = state => outstanding(state).reduce((count, task)
 export const dependencies = (state, task) => task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done");
 export const needsInput = task => task.status === "input";
 export const needsApproval = task => task.status === "review" && task.delivery !== "direct" && task.repos.some(repo => !task.approvals.includes(repo));
-export const quotaHeld = state => state.quota - 8 < state.reserve;
+export const quotaHeld = state => !state.live && state.quota - 8 < state.reserve;
 export function waitingReason(state, task) {
   const waits = dependencies(state, task);
   if (waits.length) return `Waiting for ${waits.join(", ")} to merge`;
   if (!state.running) return "Intake paused";
   if (quotaHeld(state)) return "Waiting for quota above the reserve";
-  if (outstandingCount(state) + task.repos.length > state.reviewLimit) return "Outstanding PR limit reached";
+  if (outstandingCount(state) + task.repos.length > state.reviewLimit) return state.live ? "Too many branches waiting for your review" : "Outstanding PR limit reached";
   if (activeTasks(state).length >= state.parallel) return "Waiting for a work slot";
   return "Ready for the planner";
 }
@@ -95,6 +105,12 @@ function enqueue(state, ids, source) {
   }
 }
 function approve(state, task, repos) {
+  if (state.live) {
+    if (task?.status !== "review" || task.merge) return 0;
+    task.status = "merging"; task.merge = true; task.error = null;
+    event(state, `${task.id} · merging into ${task.workspace?.target ?? "your branch"}.`, task.id);
+    return 1;
+  }
   if (task?.status !== "review" || task.delivery === "direct") return 0;
   const added = repos.filter(repo => task.repos.includes(repo) && !task.approvals.includes(repo));
   task.approvals.push(...added);
@@ -130,23 +146,31 @@ function explain(state, picked) {
   const reviews = state.tasks.filter(needsApproval).length;
   const asking = state.tasks.filter(needsInput).map(task => task.id);
   const holding = held.length ? ` Holding ${held.map(task => task.id).join(", ")} until ${held.length === 1 ? "its dependency merges" : "their dependencies merge"}.` : "";
-  if (picked.length) return `Launched ${picked.join(" + ")} by priority.${holding || " They can proceed independently."}`;
-  if (asking.length) return `${asking.join(", ")} ${asking.length === 1 ? "is paused until you answer. Its slot stays" : "are paused until you answer. Their slots stay"} reserved.`;
+  if (picked.length) return state.live ? `Starting ${picked.length === 1 ? "an agent" : "agents"} for ${picked.join(" + ")}, each in its own worktree.`
+    : `Launched ${picked.join(" + ")} by priority.${holding || " They can proceed independently."}`;
+  if (asking.length) return state.live ? `${asking.join(", ")} ${asking.length === 1 ? "is" : "are"} waiting for you in ${asking.length === 1 ? "its terminal" : "their terminals"}.`
+    : `${asking.join(", ")} ${asking.length === 1 ? "is paused until you answer. Its slot stays" : "are paused until you answer. Their slots stay"} reserved.`;
+  if (state.live && !state.running && !state.tasks.length) return "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree.";
   if (!state.running) return outstanding(state).length ? "Intake paused. Active work and approved merges can finish." : "Ready. Start the pipeline and the planner picks independent work first.";
   if (ready.length && quotaHeld(state)) return `Holding new work to protect your quota reserve. Reset the example quota to resume.${holding}`;
   if (ready.length) return `${ready[0].id}: ${waitingReason(state, ready[0])}.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} awaiting your approval.` : ""}${holding}`;
   if (held.length) return holding.trim();
-  if (outstanding(state).length) return `All queued work is in flight.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} awaiting your approval.` : ""}`;
+  if (outstanding(state).length) return `All queued work is in flight.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} ${state.live ? "ready for your review" : "awaiting your approval"}.` : ""}`;
+  if (state.live) return "Queue clear. Type a task to start another agent.";
   return state.watch ? `Queue clear. Watching ${state.column} for the next task.` : "Queue clear. Add tasks to keep the planner busy.";
 }
 
 // All mutations go through one reducer; multiple views share one pipeline.
+const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
+
 export function reduce(state, action, now = Date.now()) {
+  if (state.live && SIMULATED.includes(action.type)) return state;
   const next = JSON.parse(JSON.stringify(state));
   const row = id => next.tasks.find(task => task.id === id);
   switch (action.type) {
     case "run":
       next.running = !next.running;
+      if (next.live && action.space) next.space = action.space;
       event(next, next.running ? "Planner started. Looking for independent work." : "Intake paused. Active work will finish.");
       break;
     case "add": enqueue(next, action.ids ?? [], "Picked"); break;
@@ -155,6 +179,13 @@ export function reduce(state, action, now = Date.now()) {
       const title = String(action.title ?? "").replace(/\s+/g, " ").trim().slice(0, 90);
       if (!title) return state;
       next.created = (next.created ?? 0) + 1;
+      if (next.live) {
+        const id = `T-${next.created}`;
+        next.tasks.push({ ...fresh({ id, title, repos: [next.repo], priority: 2, depends: [], column: "Ready", description: "" }, "queued", "Typed"),
+          workspace: null, planned: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
+        event(next, `${id} joined the queue.`, id);
+        break;
+      }
       const id = `NEW-${next.created}`;
       next.tasks.push(fresh({ id, title, repos: guessRepos(title, next.created), priority: 2, depends: [], column: "Ready",
         description: "Created in Pipeline. The simulation picked its repositories from the title; change them while it waits in the queue." }, "backlog", null));
@@ -172,6 +203,108 @@ export function reduce(state, action, now = Date.now()) {
         ids.push(id);
       }
       enqueue(next, ids, "Picked");
+      break;
+    }
+    case "describe": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "queued") return state;
+      task.description = String(action.text ?? "").slice(0, 4000);
+      break;
+    }
+    case "agent": {
+      if (!next.live || !Array.isArray(action.value?.run)) return state;
+      next.agent = { key: action.value.key ?? null, name: action.value.name ?? "Agent", run: [...action.value.run] };
+      break;
+    }
+    case "launch": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "routing") return state;
+      task.launch = action.phase;
+      if (action.planned) task.planned = action.planned;
+      if (action.workspace) task.workspace = action.workspace;
+      break;
+    }
+    case "launched": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "routing") return state;
+      Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, error: null });
+      event(next, `${task.id} · ${action.agent ?? "agent"} started on ${task.workspace?.branch ?? "its branch"}.`, task.id);
+      break;
+    }
+    case "launchFailed": {
+      const task = row(action.id);
+      if (!next.live || !task) return state;
+      Object.assign(task, { status: "failed", slot: null, launch: null, error: action.error });
+      event(next, `${task.id} could not start · ${action.error}`, task.id);
+      break;
+    }
+    case "observe": {
+      const task = row(action.id);
+      if (!next.live || !task || task.status === action.status || !["working", "input", "review"].includes(task.status)) return state;
+      if (action.status === "failed") {
+        Object.assign(task, { status: "failed", slot: null, error: action.error });
+        event(next, `${task.id} stopped · ${action.error}`, task.id);
+        break;
+      }
+      if (task.status === "review") {
+        const used = new Set(activeTasks(next).map(other => other.slot));
+        task.slot = 0; while (used.has(task.slot)) task.slot++;
+      }
+      const started = task.worked;
+      task.status = action.status; task.reason = action.reason ?? null;
+      if (action.status === "working") task.worked = true;
+      if (action.status === "review") task.slot = null;
+      event(next, action.reason === "trust" ? `${task.id} · its agent asks whether to trust the new worktree.` : action.status === "input" ? `${task.id} needs you in its terminal.`
+        : action.status === "review" ? `${task.id} finished · ready for your review.` : started ? `${task.id} back to work.` : `${task.id} is working.`, task.id);
+      break;
+    }
+    case "autoTrust": if (!next.live) return state; next.autoTrust = !next.autoTrust; break;
+    case "trusted": {
+      const task = row(action.id);
+      if (!next.live || !task) return state;
+      if (task.status === "input" && task.reason === "trust") { task.status = "working"; task.reason = null; }
+      event(next, `${task.id} · trusted its new worktree${action.manual ? "" : " automatically"}.`, task.id);
+      break;
+    }
+    case "merged": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "merging") return state;
+      Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null });
+      event(next, `${task.id} merged into ${action.target}.`, task.id);
+      break;
+    }
+    case "mergeFailed": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "merging") return state;
+      Object.assign(task, { status: "review", merge: false, error: action.error });
+      event(next, `${task.id} not merged · ${action.error}`, task.id);
+      break;
+    }
+    case "cleaned": {
+      const task = row(action.id);
+      if (!next.live || !task) return state;
+      Object.assign(task, { workspace: null, planned: null, terminal: null, space: null, tab: null });
+      break;
+    }
+    case "discard": {
+      const task = row(action.id);
+      if (!next.live || !task || task.discard || ["merging", "done"].includes(task.status)) return state;
+      if (task.status === "queued" && !task.workspace) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); break; }
+      task.discard = true;
+      event(next, `${task.id} · stopping its agent and deleting its worktree and branch.`, task.id);
+      break;
+    }
+    case "discarded": {
+      if (!next.live || !row(action.id)) return state;
+      next.tasks = next.tasks.filter(task => task.id !== action.id);
+      event(next, `${action.id} discarded.`);
+      break;
+    }
+    case "discardFailed": {
+      const task = row(action.id);
+      if (!next.live || !task) return state;
+      Object.assign(task, { discard: false, error: action.error });
+      event(next, `${task.id} could not be discarded · ${action.error}`, task.id);
       break;
     }
     case "repos": {
@@ -223,11 +356,14 @@ export function reduce(state, action, now = Date.now()) {
       break;
     case "remove": {
       const task = row(action.id);
-      if (task?.status === "queued") { task.status = "backlog"; task.source = null; }
+      if (task?.status !== "queued") return state;
+      if (next.live) { if (task.workspace) return state; next.tasks = next.tasks.filter(other => other !== task); }
+      else { task.status = "backlog"; task.source = null; }
       break;
     }
-    case "reset": return createPipeline(next.context, now);
+    case "reset": return next.live ? state : createPipeline(next.context, now);
     case "tick": {
+      if (next.live) return state;
       // The tracker passes the time it was away (sleep, a closed app) so work resumes instead of catching up.
       const pause = Math.max(0, Number(action.pause) || 0);
       const moving = next.tasks.filter(task => MOVING.includes(task.status));
@@ -250,7 +386,7 @@ export function reduce(state, action, now = Date.now()) {
   if (next.watch) enqueue(next, next.tasks.filter(task => task.status === "backlog" && task.column === next.column).map(task => task.id), `Watch · ${next.column}`);
   // One integration at a time per repository, including cross-repository tasks.
   const locked = new Set(next.tasks.filter(task => task.status === "merging").flatMap(task => task.repos));
-  for (const task of next.tasks) {
+  for (const task of next.live ? [] : next.tasks) {
     if (task.status !== "review" || !(task.delivery === "direct" || task.repos.every(repo => task.approvals.includes(repo)))) continue;
     if (task.repos.some(repo => locked.has(repo))) continue;
     task.status = "merging"; task.since = now; task.repos.forEach(repo => locked.add(repo));
@@ -266,7 +402,8 @@ export function reduce(state, action, now = Date.now()) {
       const used = new Set(activeTasks(next).map(row => row.slot));
       let slot = 0; while (used.has(slot)) slot++;
       task.status = "routing"; task.slot = slot; task.since = now; task.attempts++; task.approvals = [];
-      next.quota -= 8; picked.push(task.id);
+      if (next.live) { task.launch = null; task.error = null; } else next.quota -= 8;
+      picked.push(task.id);
       event(next, `${task.id} entering slot ${slot + 1} · ${task.repos.join(" + ")}`, task.id);
     }
   }

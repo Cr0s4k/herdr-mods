@@ -6,7 +6,7 @@ const modelSource = await readFile(new URL("../mods/pipeline/pipeline-model.js",
 const model = await import(`data:text/javascript,${encodeURIComponent(modelSource)}`);
 const geometrySource = (await readFile(new URL("../mods/pipeline/geometry.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const geometry = await import(`data:text/javascript,${encodeURIComponent(`const ACTIVE = ${JSON.stringify(model.ACTIVE)};\n${geometrySource}`)}`);
-const world = { data: {}, storage: new Map() };
+const world = { data: {}, storage: new Map(), hc: [], runs: [] };
 function native() {
   const data = { nodes: [], styles: {}, handlers: {} };
   let element;
@@ -22,12 +22,16 @@ function native() {
 }
 const path = () => new Proxy({}, { get: (_target, key) => key === "build" ? () => ({}) : () => path() });
 globalThis.__pipelineView = {
+  TextareaState: { new: () => globalThis.__pipelineView.InputState.new() },
   ...model, ...geometry, View: class {}, div: native, svg: native, h_flex: native, v_flex: native,
-  Button: { new: id => native().id(id) }, Input: { new: native },
-  InputState: { new: () => { let value = ""; return { on() {}, focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
+  Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native },
+  InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
+  hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
+  knownAgents: async () => [], exec: async () => ({ code: 0, stdout: "" }), focused: () => ({ space: "sp-project" }),
+  trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   PathBuilder: { stroke: path }, window: { paint_path: native },
   shared: key => world.data[key], setShared: (key, value) => { world.data[key] = value; },
-  props: () => ({ context: { id: "project", name: "Project" } }), appWindow: () => ({ platform: "linux", active: true }),
+  props: () => ({ context: world.context ?? { id: "project", name: "Project" } }), appWindow: () => ({ platform: "linux", active: true }),
   theme: () => new Proxy({}, { get: (_obj, key) => key }),
   settings: () => ({ zoom: 1.1 }),
   localStorage: { getItem: key => world.storage.get(key) ?? null, setItem: (key, value) => world.storage.set(key, value) },
@@ -264,4 +268,121 @@ test("Settings can make the next working task ask a question", () => {
   click(view, "settings"); click(view, "ask");
   assert.equal(view.state().askNext, true);
   assert.equal(find(view.render(cx), "ask").styles.disabled[0], true);
+});
+
+function setupLive() {
+  world.data = {}; timers.length = 0; world.hc = []; world.runs = [];
+  world.context = { id: "shop", name: "shop", cwd: "/work/shop", on: null };
+  world.storage.set("mode", "live");
+  const view = new Pipeline(); view.init({}, cx);
+  world.context = null; world.storage.delete("mode");
+  view.repo = { root: "/work/shop", branch: "main" };
+  view.agentChoices = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: true }];
+  return view;
+}
+const agentTask = (view, id, patch) => Object.assign(row(view, id), { workspace: { root: `/wt/${id}`, cwd: `/wt/${id}`, branch: `pipeline/${id}`, base: "a".repeat(40), target: "main" },
+  terminal: "t9", space: "s9", tab: "tb9", agent: "Claude Code", slot: 0, ...patch });
+
+test("Live keeps its own pipeline beside the simulation, and typed tasks become agent tasks", () => {
+  const view = setupLive();
+  assert.equal(view.storeKey(), "live:shop");
+  assert.ok(world.data["pipeline.prototype.v1"].shop, "the simulation is still there");
+  view.title.set_value("Add a dark mode toggle");
+  click(view, "create");
+  assert.deepEqual([row(view, "T-1").status, row(view, "T-1").repos], ["queued", ["shop"]]);
+  const scene = view.render(cx);
+  for (const id of ["add", "watch", "quota", "speed", "delivery"]) assert.equal(find(scene, id), undefined, `${id} is simulation only`);
+  assert.ok(find(scene, "agent"));
+  click(view, "mode-simulation");
+  assert.equal(view.state().live, undefined);
+  click(view, "mode-live");
+  assert.equal(row(view, "T-1").title, "Add a dark mode toggle");
+});
+
+test("Live needs a project folder", () => {
+  const view = setup();
+  assert.equal(find(view.render(cx), "mode-live").styles.disabled[0], true);
+});
+
+test("the agent setting picks which program each task starts", () => {
+  const view = setupLive();
+  click(view, "agent"); click(view, "agent-codex");
+  assert.deepEqual(view.state().agent, { key: "codex", name: "Codex", run: ["codex"] });
+  assert.ok(find(view.render(cx), "agent").nodes.includes("Codex"));
+});
+
+test("queued live task details are saved when the field loses focus", () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "Add a dark mode toggle" }, cx);
+  view.inspect("T-1", cx);
+  view.details.set_value("Follow the system preference first.");
+  view.details.emit("blur", cx);
+  assert.equal(row(view, "T-1").description, "Follow the system preference first.");
+});
+
+test("a finished agent merges from its card; failures retry and discards ask twice", () => {
+  const view = setupLive();
+  for (const title of ["A", "B", "C"]) view.act({ type: "create", title }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null });
+  agentTask(view, "T-2", { status: "failed", slot: null, error: "Its terminal closed." });
+  agentTask(view, "T-3", { status: "working", slot: 1 });
+  assert.ok(find(view.render(cx), "approve-T-1").nodes.includes("Merge"));
+  click(view, "approve-T-1");
+  assert.equal(row(view, "T-1").status, "merging");
+  click(view, "retry-T-2");
+  assert.equal(row(view, "T-2").status, "queued");
+  view.inspect("T-3", cx);
+  click(view, "discard-T-3");
+  assert.equal(row(view, "T-3").discard, false);
+  click(view, "discard-T-3");
+  assert.equal(row(view, "T-3").discard, true);
+});
+
+test("a waiting agent's Answer opens its terminal, and messages are typed into it", async () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "input" });
+  click(view, "answer-T-1");
+  assert.deepEqual(world.runs, [["space.select", { id: "s9" }], ["tab.select", { id: "tb9" }], ["pane.focus", { terminal: "t9" }]]);
+  view.inspect("T-1", cx);
+  view.message.set_value("Use the home page");
+  const spawned = [];
+  view.send(row(view, "T-1"), { ...cx, spawn: fn => spawned.push(fn) });
+  assert.equal(view.message.value(), "");
+  await spawned[0](cx);
+  assert.deepEqual(world.hc.at(-1), ["send", "--force", "t9", "Use the home page"]);
+  assert.equal(view.sent.ok, true);
+});
+
+test("every live task state renders in the scene and the inspector, and example keys do nothing", () => {
+  const view = setupLive();
+  const statuses = ["queued", "routing", "working", "input", "review", "merging", "failed", "done"];
+  statuses.forEach((status, i) => { view.act({ type: "create", title: `Task ${i}` }, cx); agentTask(view, `T-${i + 1}`, { status, slot: ["routing", "working", "input"].includes(status) ? i : null }); });
+  for (let i = 1; i <= statuses.length; i++) { view.inspect(`T-${i}`, cx); assert.ok(view.render(cx)); }
+  view.open(null, cx);
+  press(view, "a");
+  assert.equal(view.drawer, null);
+  assert.equal(findAll(view.render(cx), "bar-").length, 0, "real work has no simulated progress bars");
+});
+
+test("Start records the space it was pressed in, and Trust answers the prompt from the card", async () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  press(view, "space");
+  assert.equal(view.state().space, "sp-project");
+  agentTask(view, "T-1", { status: "input", reason: "trust" });
+  const scene = view.render(cx);
+  assert.equal(find(scene, "answer-T-1"), undefined);
+  const spawned = [];
+  world.hc = [];
+  world.screen = "❯ No, exit\n  Yes, I trust this folder";
+  try {
+    view.trust(row(view, "T-1"), { ...cx, spawn: fn => spawned.push(fn) });
+    await spawned[0](cx);
+  } finally { world.screen = null; }
+  assert.ok(find(scene, "trust-T-1"));
+  assert.deepEqual(world.hc.at(-1), ["keys", "t9", "down", "enter"]);
+  assert.deepEqual([row(view, "T-1").status, row(view, "T-1").reason], ["working", null]);
+  click(view, "settings"); click(view, "auto-trust");
+  assert.equal(view.state().autoTrust, true);
 });

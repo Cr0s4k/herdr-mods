@@ -16,7 +16,7 @@ def git(cwd, *args, optional=False):
 
 
 def repository(cwd, provider="linear"):
-    if provider not in ("linear", "plane"):
+    if provider not in ("linear", "plane", "pipeline"):
         raise ValueError("Unsupported ticket provider.")
     root = Path(git(cwd, "rev-parse", "--show-toplevel")).resolve()
     common = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()

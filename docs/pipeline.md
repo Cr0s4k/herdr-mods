@@ -4,7 +4,7 @@ An interactive native Herdr prototype. Visitor mode: Operate. The user observes 
 
 The approved direction is a stable constellation with left-to-right flow: picked tasks and watched columns feed a queue; a central planner chooses work; workers produce related PRs; approvals release coordinated merges. Both task intake methods share one queue. Quota reserve, dependency completion and outstanding PR limits govern dispatch. Review releases a worker slot. Doing, Review and Done correspond to successful launch, verified output and completed integration.
 
-This milestone uses labeled synthetic tasks and a deterministic simulation of planning, execution, checks, quota and PRs. It does not start real agents, modify task services or change Git repositories. The eventual planner will be an agent, with constraints enforced by the execution engine. Background execution after quitting Herdr is outside the initial scope. Closing the view keeps the prototype progressing through a tracker in the tab bar; state is saved and resumes without catching up elapsed time while Herdr was closed.
+The simulation uses labeled synthetic tasks and a deterministic model of planning, execution, checks, quota and PRs; it does not start agents, modify task services or change Git repositories. Live mode (below) runs real agents. The eventual planner will be an agent, with constraints enforced by the execution engine. Background execution after quitting Herdr is outside the initial scope. Closing the view keeps the prototype progressing through a tracker in the tab bar; state is saved and resumes without catching up elapsed time while Herdr was closed.
 
 ## Direction contract
 
@@ -20,6 +20,10 @@ FORM: User-selected constellation, confirmed in conversation. Code-led native da
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 
-## Validation and next milestone
+## Live execution (first version)
 
-Check the mod in Herdr, inspect full-width and narrow-pane compositions, and exercise intake, concurrency, quota pause, failure/retry, per-repository approval and dependency release. No shipping raster assets are needed. Live provider adapters, agent planning and actual Git delivery remain future implementation work.
+Live mode runs real agents on the project's repository. Tasks are typed in Pipeline; each dispatched task gets an isolated worktree and branch (`pipeline/<task>-<run>`, made by the shared `mods/linear/worktrees.py` helper) and an agent tab in the space Start was pressed in. Herdr's agent status drives the card: working, blocked (Needs you), done or idle after working (Ready for review). Agents that report no status yet are checked for their folder-trust prompt. Approving a task runs `mods/pipeline/delivery.py`: commit leftovers, rebase onto the project folder's current branch, fast-forward, then close the agent's tab and remove the worktree and branch. The runner (`mods/pipeline/pipeline-live.js`) lives in the tab-bar tracker, runs one Git job at a time and never replays a start it could not confirm.
+
+## Next milestone
+
+Plane and watched columns as live task sources, a check command between the agent finishing and review, pull requests as an alternative delivery, and dependencies between typed tasks.

@@ -151,11 +151,47 @@ appear only in Personal library as unverified. Claude's built-ins that have no l
 manifest are not indexed. A plain repository `skills/` folder contains source files and
 does not itself install those skills for either agent.
 
-## Pipeline prototype
+## Pipeline
 
-**Pipeline** in the top toolbar opens a visual task pipeline in its own tab. This is an
-interactive **simulation** with example tasks and repositories: it does not start real
-agents, update Plane or Linear, create PRs, or change Git repositories.
+**Pipeline** in the top toolbar opens a visual task pipeline for the current project in its
+own tab. The header switches between **Simulation** (example tasks and pretend agents) and
+**Live** (real coding agents on your repository).
+
+### Live
+
+Live runs real agents on the project's Git repository, one isolated worktree and branch per
+task, so parallel agents never touch each other or your checkout.
+
+1. Type a task into **New task** and press Enter. Click it to add details for the agent;
+   the title and details are its first message.
+2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
+   default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
+   and opens the agent as a tab named after the task in the space you started from, so it
+   appears under that space in the sidebar. The agent is the first installed one Herdr knows
+   (Claude Code, Codex…); pick another with the agent button.
+3. The card follows the agent: **Working**, **Needs you** when it waits for you (click
+   **Answer** to jump to its terminal, or message it from the task's inspector), and **Ready
+   for review** when it finishes. A new worktree first asks whether to trust the folder:
+   click **Trust** on the card, or turn on **Trust new worktrees automatically** in
+   Settings.
+4. Review the change summary in the inspector, send feedback if it needs another pass, then
+   **Merge** (or **Merge N tasks**, Y). Merging commits anything the agent left, rebases its
+   branch onto the branch your project folder is on and fast-forwards, so history stays
+   linear. It refuses, and keeps the task in review with the reason, while your folder has
+   uncommitted changes or the branch conflicts. Afterwards the agent's tab closes and its
+   worktree and branch are removed. **Discard** (asked twice) stops the agent and deletes the
+   worktree and branch.
+
+Agents run in herdr-core, so they keep going when the Pipeline tab or Herdr is closed; the
+tab-bar tracker catches up when Herdr opens. A start that Herdr can't confirm after a
+restart is never repeated: the task stops with a note to check before retrying. Live needs
+Python 3 and Git where the project lives, and a project folder (open Pipeline from a
+space).
+
+### Simulation
+
+The simulation uses example tasks and repositories: it does not start agents, update Plane
+or Linear, create PRs, or change Git repositories.
 
 Type a task into **New task** and press Enter; it joins the queue at once, with its
 repositories guessed from the title (change them in the task's inspector while it waits).
@@ -179,10 +215,11 @@ focus (click it to open Pipeline). **Answer** on the card, **Answer N questions*
 status strip, or Q opens the question; pick an option (or press its number) or type your
 own answer, and the task resumes where it stopped and the next question opens. Settings
 has **Simulate a question** to make the next working task ask. Real agents will appear in
-the sidebar on their own once Pipeline launches them; this only simulates that moment.
+the sidebar on their own; this only simulates that moment.
 
-Keys, with the scene focused: Space start/pause, N new task, A examples, Q answer,
-Y approve all, R retry failed, S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
+Keys, with the scene focused: Space start/pause, N new task, A examples, Q answer (in
+Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
+S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
 **PR approval** in the status strip switches to **Auto-merge** (merge after checks).
 Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,
 the animation toggle and **Reset example pipeline**. **Quota** simulates exhaustion and
@@ -192,7 +229,7 @@ stops while Herdr isn't the active window.
 The tab-bar tracker keeps simulations progressing while their view is closed. It writes
 the shared state only when a stage changes, so an idle or waiting pipeline costs nothing.
 State is saved per project folder and machine, and resumes without fast-forwarding while
-Herdr was closed. The agreed design and future live-execution scope are in
+Herdr was closed. The agreed design and what comes next are in
 [docs/pipeline.md](docs/pipeline.md).
 
 ## Tasks and Plane

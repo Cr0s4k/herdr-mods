@@ -4,6 +4,9 @@ import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8");
 const model = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+globalThis.__pipelineLiveModel = model;
+const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, reduce } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { createPipeline, reduce, activeTasks, outstanding, waitingReason, migrate, progress, guessRepos, needsApproval, needsInput, VERSION } = model;
 const context = { id: "project", name: "Project", cwd: "/project", on: null };
 let clock = 0;
@@ -230,10 +233,12 @@ test("saved version 1 pipelines migrate their elapsed time", () => {
 
 async function tracker(values) {
   values.toasts = [];
-  globalThis.__pipelineTracker = { ...model, shared: key => values.get(key), setShared: (key, value) => { values.set(key, value); values.writes = (values.writes ?? 0) + 1; },
-    notify: toast => values.toasts.push(toast), panes: () => values.panes ?? [], focused: () => values.focused ?? null };
+  globalThis.__pipelineTracker = { ...model, ...live, shared: key => values.get(key), setShared: (key, value) => { values.set(key, value); values.writes = (values.writes ?? 0) + 1; },
+    notify: toast => values.toasts.push(toast), panes: () => values.panes ?? [], focused: () => values.focused ?? null,
+    agents: () => [], terminals: () => [], spaces: () => [], run() {}, exec() {}, readTextFile() {}, appHome: () => "", knownAgents: async () => [] };
+  const names = ["shared", "setShared", "notify", "panes", "focused", "agents", "terminals", "spaces", "run", "exec", "readTextFile", "appHome", "knownAgents"];
   const trackerSource = (await readFile(new URL("../mods/pipeline/tracker.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-  const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, MOVING, reduce, migrate } = globalThis.__pipelineTracker;\nconst { shared, setShared, notify, panes, focused } = Object.fromEntries(["shared", "setShared", "notify", "panes", "focused"].map(name => [name, (...args) => globalThis.__pipelineTracker[name](...args)]));\n${trackerSource}`)}`);
+  const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, MOVING, reduce, migrate, LiveRunner, prompt } = globalThis.__pipelineTracker;\nconst { ${names.join(", ")} } = Object.fromEntries(${JSON.stringify(names)}.map(name => [name, (...args) => globalThis.__pipelineTracker[name](...args)]));\n${trackerSource}`)}`);
   const callbacks = [];
   const host = { timer: { every: (_ms, fn) => callbacks.push(fn) } };
   new PipelineTracker().start(host); new PipelineTracker().start(host);

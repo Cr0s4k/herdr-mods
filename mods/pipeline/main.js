@@ -1,8 +1,9 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
-import { h_flex, v_flex, Button, Input, InputState } from "gpui-base";
-import { shared, setShared, theme, props, exec, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
+import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
+import { STORE, LIVE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
+import { trustKeys } from "./pipeline-live.js";
 
 const CHROME = 50 + 46 + 36 + 32;
 const COMET = ["●", "•", "·", "", "", ""];
@@ -13,13 +14,16 @@ const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.blocked : task.status === "done" ? t.ansi2
   : ["review", "merging"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
 function cardStatus(state, task) {
+  if (task.discard) return "Discarding…";
+  if (state.live && task.status === "review") return task.error ? "Not merged · see why" : "Ready for review";
+  if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
   if (task.status === "queued") {
     const waits = dependencies(state, task);
     if (waits.length) return `Needs ${waits.join(", ")}`;
     return { "Ready for the planner": "Next up", "Waiting for a work slot": "Waiting for a slot", "Waiting for quota above the reserve": "Held by quota reserve", "Outstanding PR limit reached": "Held by PR limit", "Intake paused": "Queued · intake paused" }[waitingReason(state, task)] ?? "Queued";
   }
   if (task.status === "input") return "Needs you";
-  if (ACTIVE.includes(task.status)) return `${LABELS[task.status]} · slot ${task.slot + 1}`;
+  if (ACTIVE.includes(task.status)) return `${labelFor(state, task.status)} · slot ${task.slot + 1}`;
   if (needsApproval(task)) {
     const left = task.repos.filter(repo => !task.approvals.includes(repo)).length;
     return left === task.repos.length ? count(left, "PR") + " ready" : `${left} of ${task.repos.length} left`;
@@ -44,10 +48,19 @@ export default class Pipeline extends View {
     this.reply = InputState.new({ placeholder: "Or type your own answer" });
     this.reply.on("change", (_e, cx) => cx.notify());
     this.reply.on("submit", (_e, cx) => this.answer(this.selected, this.reply.value(), cx));
+    this.message = InputState.new({ placeholder: "Message the agent" });
+    this.message.on("change", (_e, cx) => cx.notify());
+    this.message.on("submit", (_e, cx) => this.send(this.state()?.tasks.find(task => task.id === this.selected), cx));
+    this.details = TextareaState.new({ placeholder: "Context, constraints, how to check it…", rows: 4 });
+    this.details.on("blur", (_e, cx) => this.saveDetails(cx));
+    this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
+    this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
+    this.repo = null; this.agentChoices = [];
     this.motion = localStorage.getItem("motion") !== "false";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
     if (saved?.version !== VERSION) setShared(STORE, { ...all, [this.id]: saved ? migrate(saved) : createPipeline(this.context) });
+    if (this.mode === "live") this.enterLive(cx);
     if (appWindow()?.platform === "macos") cx.spawn(async cx => {
       try {
         const result = await exec("defaults", ["read", "com.apple.universalaccess", "reduceMotion"]);
@@ -59,32 +72,121 @@ export default class Pipeline extends View {
         const command = await nextCommand(), state = this.state();
         if (!state) continue;
         if (command === "focus") this.handle.focus();
-        else if ((command === "start" && !state.running) || (command === "pause" && state.running)) this.act({ type: "run" }, cx);
+        else if ((command === "start" && !state.running) || (command === "pause" && state.running)) this.toggleRun(cx);
         else if (command === "new") { this.title.focus(); cx.notify(); }
         else if (command === "approve") this.act({ type: "approveAll" }, cx);
         else if (command === "retry") this.act({ type: "retry" }, cx);
         else if (command === "answer") this.nextQuestion(cx);
+        else if (command === "live" || command === "simulation") this.setMode(command, cx);
         else if (DRAWERS.includes(command)) this.open(command, cx);
         else if (command === "close") this.open(null, cx);
       }
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.handle.release(); }
-  state() { return shared(STORE)?.[this.id]; }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.handle.release(); }
+  storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
+  state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
-    const all = shared(STORE) ?? {}, state = all[this.id];
+    const all = shared(STORE) ?? {}, key = this.storeKey(), state = all[key];
     if (!state) return;
     const next = reduce(state, action);
-    if (next !== state) setShared(STORE, { ...all, [this.id]: next });
+    if (next !== state) setShared(STORE, { ...all, [key]: next });
     cx.notify();
+  }
+  toggleRun(cx) { this.act({ type: "run", space: focused()?.space ?? null }, cx); }
+  trust(task, cx) {
+    if (!task?.terminal) return;
+    cx.spawn(async cx => {
+      const screen = await hc(["read", task.terminal, "--lines", "40"]).catch(() => null);
+      const keys = screen?.code === 0 ? trustKeys(screen.stdout) : null;
+      const sent = keys && await hc(["keys", task.terminal, ...keys]).then(result => result.code === 0, () => false);
+      if (sent) this.act({ type: "trusted", id: task.id, manual: true }, cx); else { this.focusAgent(task); cx.notify(); }
+    });
+  }
+  setMode(mode, cx) {
+    if (mode === this.mode || (mode === "live" && !this.context.cwd)) return;
+    this.mode = mode; this.drawer = null; this.selected = null; this.confirm = null;
+    localStorage.setItem("mode", mode);
+    if (mode === "live") this.enterLive(cx);
+    this.handle.focus(); cx.notify();
+  }
+  enterLive(cx) {
+    const all = shared(STORE) ?? {}, key = LIVE + this.id;
+    if (!all[key]) setShared(STORE, { ...all, [key]: createLive(this.context) });
+    const { cwd, on } = this.context;
+    cx.spawn(async cx => {
+      try {
+        const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
+        const branch = await exec("git", ["symbolic-ref", "--short", "HEAD"], { cwd, on });
+        this.repo = top.code === 0 ? { root: top.stdout.trim(), branch: branch.code === 0 ? branch.stdout.trim() : null }
+          : { error: "This folder isn't in a Git repository, so Live can't give agents their own worktrees." };
+      } catch { this.repo = { error: "Git couldn't be run for this folder." }; }
+      try { this.agentChoices = (await knownAgents({ on })).filter(agent => agent.installed); } catch { this.agentChoices = []; }
+      cx.notify();
+    });
+  }
+  agentName(state) { return state.agent?.name ?? this.agentChoices[0]?.name ?? "Agent"; }
+  focusAgent(task) {
+    if (!task?.terminal) return;
+    try {
+      if (task.space) run("space.select", { id: task.space });
+      if (task.tab) run("tab.select", { id: task.tab });
+      run("pane.focus", { terminal: task.terminal });
+    } catch { /* Its space may have closed; the card will follow the agent's status. */ }
+  }
+  send(task, cx) {
+    const text = this.message.value().trim();
+    if (!text || !task?.terminal) return;
+    this.message.set_value("");
+    this.sent = { id: task.id, pending: true };
+    cx.spawn(async cx => {
+      const result = await hc(["send", ...(task.status === "input" ? ["--force"] : []), task.terminal, text]).catch(error => ({ code: 1, stderr: String(error) }));
+      this.sent = result.code === 0 ? { id: task.id, ok: true } : { id: task.id, error: result.stderr?.trim() || "The agent couldn't be reached." };
+      cx.notify();
+    });
+    cx.notify();
+  }
+  saveDetails(cx) {
+    const task = this.state()?.tasks.find(task => task.id === this.detailsFor);
+    if (task && this.details.value() !== (task.description ?? "")) this.act({ type: "describe", id: task.id, text: this.details.value() }, cx);
+  }
+  peekAt(task, cx) {
+    const key = `${task.id}:${task.status}:${task.terminal}:${task.workspace?.root}`;
+    if (this.peek.key === key) return;
+    this.peek = { key, screen: [], diff: [] };
+    const { on } = this.context;
+    cx.spawn(async cx => {
+      const peek = { key, screen: [], diff: [] };
+      if (task.terminal && ["input", "working", "review"].includes(task.status)) {
+        const screen = await hc(["read", task.terminal, "--lines", "60"]).catch(() => null);
+        const lines = screen?.code === 0 ? screen.stdout.split("\n").map(line => line.trimEnd()) : [];
+        while (lines.length && !lines.at(-1)) lines.pop();
+        peek.screen = lines.slice(-14);
+        while (peek.screen.length && !peek.screen[0]) peek.screen.shift();
+      }
+      if (task.workspace && ["review", "merging"].includes(task.status)) {
+        const diff = await exec("git", ["-C", task.workspace.root, "diff", "--stat", task.workspace.base], { on }).catch(() => null);
+        const status = await exec("git", ["-C", task.workspace.root, "status", "--porcelain"], { on }).catch(() => null);
+        const fresh = (status?.stdout ?? "").split("\n").filter(line => line.startsWith("??")).length;
+        peek.diff = [...(diff?.stdout ?? "").trimEnd().split("\n").filter(Boolean), ...(fresh ? [`plus ${fresh} new file${fresh === 1 ? "" : "s"} not yet committed`] : [])];
+      }
+      if (this.peek.key === key) { this.peek = peek; cx.notify(); }
+    });
   }
   open(drawer, cx) {
     this.drawer = drawer;
     if (drawer === "picker") this.search.focus(); else if (!drawer) this.handle.focus();
     cx.notify();
   }
-  inspect(id, cx) { this.selected = id; this.drawer = "task"; cx.notify(); }
+  inspect(id, cx) {
+    if (this.drawer === "task" && this.detailsFor) this.saveDetails(cx);
+    const task = this.state()?.tasks.find(task => task.id === id);
+    this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null;
+    this.detailsFor = task?.status === "queued" && this.state()?.live ? id : null;
+    if (this.detailsFor) this.details.set_value(task.description ?? "");
+    cx.notify();
+  }
   nextQuestion(cx) {
     const task = this.state()?.tasks.find(needsInput);
     if (task) { this.inspect(task.id, cx); this.handle.focus(); }
@@ -141,9 +243,12 @@ export default class Pipeline extends View {
       done: state.tasks.filter(task => task.status === "done").length,
     };
     const held = state.running && info.queued > 0 && quotaHeld(state);
-    info.status = info.questions ? `Waiting for your answer` : !state.running ? (info.active ? "Intake paused · finishing active work" : "Paused")
-      : held ? "Waiting for quota" : info.active ? "Pipeline running" : info.approvals ? "Waiting for your approval" : info.queued ? "Waiting" : "Watching for work";
-    info.color = held || info.failed || info.questions ? t.blocked : state.running ? t.accent : t.muted;
+    const unusable = state.live && this.repo?.error;
+    info.status = unusable ? "Not a Git repository" : info.questions ? (state.live ? "An agent needs you" : "Waiting for your answer")
+      : !state.running ? (info.active ? (state.live ? "Intake paused · agents keep working" : "Intake paused · finishing active work") : "Paused")
+      : held ? "Waiting for quota" : info.active ? (state.live ? "Agents working" : "Pipeline running")
+      : info.approvals ? (state.live ? "Waiting for your review" : "Waiting for your approval") : info.queued ? "Waiting" : "Watching for work";
+    info.color = held || info.failed || info.questions || unusable ? t.blocked : state.running ? t.accent : t.muted;
     const narrow = this.size.width < 820;
     const root = v_flex().id("pipeline-root").size_full().min_w(0).min_h(0).bg(t.canvas).text_color(t.foreground).text_size(13)
       .track_focus(this.handle)
@@ -160,7 +265,7 @@ export default class Pipeline extends View {
       .child(h_flex().relative().flex_1().min_h(0).min_w(0)
         .child(div().id("pipeline-viewport").flex_1().min_w(0).h_full().overflow_scrollbar()
           .child(this.scene(state, t, info, motion, now, cx)))
-        .when(Boolean(this.drawer), el => el.child(this.inspector(state, t)
+        .when(Boolean(this.drawer), el => el.child(this.inspector(state, t, cx)
           .when(this.size.width > 1180, node => node.relative())
           .when(this.size.width <= 1180, node => node.absolute().right(0).top(0).bottom(0)))))
       .child(this.footer(state, t));
@@ -173,9 +278,9 @@ export default class Pipeline extends View {
       if (this.drawer) this.open(null, cx); else { this.handle.focus(); cx.notify(); }
       cx.stop_propagation(); return;
     }
-    if (!this.handle.is_focused()) return;
+    if (!this.handle.is_focused() || (this.state()?.live && ["a", "s"].includes(e.keystroke))) return;
     const actions = {
-      space: () => this.act({ type: "run" }, cx),
+      space: () => this.toggleRun(cx),
       n: () => { this.title.focus(); cx.notify(); },
       a: () => this.open("picker", cx),
       y: () => this.act({ type: "approveAll" }, cx),
@@ -184,7 +289,7 @@ export default class Pipeline extends View {
       s: () => this.speed(cx),
     };
     const asked = this.drawer === "task" ? this.state()?.tasks.find(task => task.id === this.selected && needsInput(task)) : null;
-    const option = asked?.question.options[Number(e.keystroke) - 1];
+    const option = asked?.question?.options[Number(e.keystroke) - 1];
     const action = option ? () => this.answer(asked.id, option, cx) : actions[e.keystroke];
     if (action) { action(); cx.stop_propagation(); }
   }
@@ -193,14 +298,20 @@ export default class Pipeline extends View {
     return h_flex().h(50).px(20).gap(10).items_center().flex_none()
       .child(icon("pipeline", 20).text_color(t.accent))
       .child(div().text_size(16).font_semibold().flex_none().child("Pipeline"))
-      .child(div().px(6).py(2).rounded(4).bg(t.raised).text_size(10).text_color(t.muted).flex_none().child("Simulation"))
-      .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${state.context.name} · example repositories: ${REPOS.join(", ")}`))
-      .child(this.button("speed", `${state.speed}×`, cx => this.speed(cx), t, { icon: "bolt", selected: state.speed > 1, hint: `Simulation speed ${state.speed}× (S)` }))
+      .child(h_flex().p(2).gap(2).rounded(7).bg(t.raised).flex_none()
+        .child(this.button("mode-simulation", "Simulation", cx => this.setMode("simulation", cx), t, { small: true, selected: !state.live, hint: "Example tasks and simulated agents" }))
+        .child(this.button("mode-live", "Live", cx => this.setMode("live", cx), t, { small: true, selected: Boolean(state.live), disabled: !this.context.cwd,
+          hint: this.context.cwd ? "Real agents, each in its own Git worktree" : "Open Pipeline from a project to run real agents" })))
+      .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
+        ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""} · ${this.agentName(state)} in its own worktree per task`
+        : `${state.context.name} · example repositories: ${REPOS.join(", ")}`))
+      .when(!state.live, el => el.child(this.button("speed", `${state.speed}×`, cx => this.speed(cx), t, { icon: "bolt", selected: state.speed > 1, hint: `Simulation speed ${state.speed}× (S)` })))
       .when(!narrow, el => el.child(this.button("motion", "Motion", cx => this.toggleMotion(cx), t,
         { icon: "motion", iconOnly: true, selected: this.motion && !this.reducedMotion, hint: this.reducedMotion ? "System Reduce Motion is enabled" : `${this.motion ? "Turn off" : "Turn on"} animation` })))
       .child(this.button("settings", "Settings", cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "settings", iconOnly: true, selected: this.drawer === "settings", hint: "Pipeline settings" }))
-      .child(this.button("run", state.running ? "Pause intake" : "Start pipeline", cx => this.act({ type: "run" }, cx), t,
-        { icon: state.running ? "pause" : "play", primary: !state.running, hint: `${state.running ? "Pause intake; active work finishes" : "Start dispatching queued work"} (Space)` }));
+      .child(this.button("run", state.running ? "Pause intake" : "Start pipeline", cx => this.toggleRun(cx), t,
+        { icon: state.running ? "pause" : "play", primary: !state.running, disabled: Boolean(state.live && this.repo?.error && !state.running),
+          hint: `${state.running ? "Pause intake; active work finishes" : state.live ? "Start an agent for each queued task, up to the parallel limit" : "Start dispatching queued work"} (Space)` }));
   }
 
   commands(state, t) {
@@ -210,10 +321,11 @@ export default class Pipeline extends View {
         .child(icon("plus", 13).text_color(t.muted))
         .child(div().flex_1().min_w(0).child(Input.new(this.title).w_full().text_size(12).accessibility_label("New task title")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true, hint: "Add to the queue (Enter)" }))))
-      .child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
-      .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch }))
-      .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: "Parallel work slots" }))
-      .child(this.button("quota", `Quota ${state.quota}%`, cx => this.open(this.drawer === "quota" ? null : "quota", cx), t, { icon: "gauge", hint: "Example quota and reserve controls" }));
+      .when(state.live, el => el.child(this.button("agent", this.agentName(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent each task starts with" })))
+      .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
+        .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch })))
+      .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }))
+      .when(!state.live, el => el.child(this.button("quota", `Quota ${state.quota}%`, cx => this.open(this.drawer === "quota" ? null : "quota", cx), t, { icon: "gauge", hint: "Example quota and reserve controls" })));
   }
 
   status(state, t, info, motion) {
@@ -224,14 +336,15 @@ export default class Pipeline extends View {
       .child(div().flex_none().child(`${info.queued} queued`))
       .child(div().flex_none().child(`${info.done} done`))
       .child(div().flex_1())
-      .when(info.questions > 0, el => el.child(this.button("answer-next", `Answer ${count(info.questions, "question")}`, cx => this.nextQuestion(cx), t,
-        { icon: "question", primary: true, small: true, hint: "Open the next question waiting for you (Q)" })))
-      .when(info.approvals > 0, el => el.child(this.button("approve-all", `Approve ${count(info.approvals, "task")}`, cx => this.act({ type: "approveAll" }, cx), t,
-        { icon: "check", primary: true, small: true, hint: "Approve every PR waiting for you (Y)" })))
+      .when(info.questions > 0, el => el.child(this.button("answer-next", state.live ? `${info.questions} need${info.questions === 1 ? "s" : ""} you` : `Answer ${count(info.questions, "question")}`, cx => this.nextQuestion(cx), t,
+        { icon: "question", primary: true, small: true, hint: state.live ? "Show the next agent waiting for you (Q)" : "Open the next question waiting for you (Q)" })))
+      .when(info.approvals > 0, el => el.child(this.button("approve-all", state.live ? `Merge ${count(info.approvals, "task")}` : `Approve ${count(info.approvals, "task")}`, cx => this.act({ type: "approveAll" }, cx), t,
+        { icon: "check", primary: true, small: true, hint: state.live ? `Merge every finished branch into ${this.repo?.branch ?? "your branch"}, one at a time (Y)` : "Approve every PR waiting for you (Y)" })))
       .when(info.failed > 0, el => el.child(this.button("retry-all", `Retry ${info.failed} failed`, cx => this.act({ type: "retry" }, cx), t,
         { icon: "reset", small: true, hint: "Return failed tasks to the queue (R)" })))
-      .child(this.button("delivery", state.delivery === "pr" ? "PR approval" : "Auto-merge", cx => this.act({ type: "delivery", value: state.delivery === "pr" ? "direct" : "pr" }, cx), t,
-        { small: true, selected: state.delivery === "direct", hint: state.delivery === "pr" ? "New changes wait for your approval. Click to merge after checks pass." : "New changes merge after checks pass. Click to require approval." }));
+      .when(Boolean(state.live), el => el.child(div().flex_none().child(this.repo?.error ?? `Merges into ${this.repo?.branch ?? "your branch"}`)))
+      .when(!state.live, el => el.child(this.button("delivery", state.delivery === "pr" ? "PR approval" : "Auto-merge", cx => this.act({ type: "delivery", value: state.delivery === "pr" ? "direct" : "pr" }, cx), t,
+        { small: true, selected: state.delivery === "direct", hint: state.delivery === "pr" ? "New changes wait for your approval. Click to merge after checks pass." : "New changes merge after checks pass. Click to require approval." })));
   }
 
   footer(state, t) {
@@ -243,7 +356,8 @@ export default class Pipeline extends View {
         .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
         .on_click((_e, cx) => this.open(this.drawer === "activity" ? null : "activity", cx))
         .child(div().min_w(0).truncate().child(latest?.message ?? "Start the pipeline to watch your first tasks enter.")))
-      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child("Space start · N new · A examples · Q answer · Y approve · R retry · S speed")));
+      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child(state.live ? "Space start · N new · Q needs you · Y merge · R retry"
+        : "Space start · N new · A examples · Q answer · Y approve · R retry · S speed")));
   }
 
   bar(task, state, width, color, motion, now, cx) {
@@ -340,22 +454,24 @@ export default class Pipeline extends View {
 
     g.slots.forEach((slot, i) => {
       const launching = state.tasks.find(task => task.status === "routing" && task.slot === i);
+      const occupied = state.tasks.some(task => ACTIVE.includes(task.status) && task.status !== "routing" && task.slot === i);
       canvas.child(v_flex().absolute().left(slot.x - CARD.w / 2).top(slot.y - CARD.h / 2).w(CARD.w).h(CARD.h).gap(4).items_center().justify_center()
         .rounded(9).border_1().border_dashed().border_color(t.border).bg(t.canvas)
-        .child(div().text_size(11).text_color(t.muted).child(`Slot ${i + 1}`))
-        .child(div().text_size(11).text_color(t.muted).child(i >= state.parallel ? "Finishing active work" : launching ? `Launching ${launching.id}` : "Available")));
+        .when(!occupied, el => el.child(div().text_size(11).text_color(t.muted).child(`Slot ${i + 1}`))
+          .child(div().text_size(11).text_color(t.muted).child(i >= state.parallel ? "Finishing active work" : launching ? `Launching ${launching.id}` : "Available"))));
     });
 
     canvas.child(this.button("queue", `Queue · ${g.queue.length}`, cx => this.open("queue", cx), t, { hint: "Every queued task" }).absolute().left(30).top(14));
     canvas.child(this.button("review-list", `Review · ${g.review.length}`, cx => this.open("review", cx), t, { hint: "Tasks awaiting approval, merging or failed" }).absolute().right(30).top(14));
     if (!g.queue.length) canvas.child(v_flex().absolute().left(30).top(70).w(CARD.w).gap(6)
       .child(div().text_size(13).child(state.watch ? `Watching ${state.column}` : "Queue is clear"))
-      .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.watch ? "New example tasks enter here." : "Type a task above or press A for examples.")));
+      .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.live ? "Type a task above. Each one gets its own agent, branch and worktree."
+        : state.watch ? "New example tasks enter here." : "Type a task above or press A for examples.")));
     if (g.queue.length > g.queueShown.length) canvas.child(this.button("queue-more", `+${g.queue.length - g.queueShown.length} more queued`, cx => this.open("queue", cx), t)
       .absolute().left(30).top(92 + g.queueShown.length * 76 - 16).w(CARD.w));
     if (!g.review.length) canvas.child(v_flex().absolute().right(30).top(70).w(CARD.w).gap(6)
       .child(icon("check", 17).text_color(t.muted))
-      .child(div().text_size(12).line_height(1.45).text_color(t.muted).child("Checked changes dock here for approval and merge.")));
+      .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.live ? "Finished work docks here for your review and merge." : "Checked changes dock here for approval and merge.")));
     if (g.review.length > g.reviewShown.length) canvas.child(this.button("review-more", `+${g.review.length - g.reviewShown.length} more in review`, cx => this.open("review", cx), t)
       .absolute().right(30).top(92 + g.reviewShown.length * 88 - 20).w(CARD.w));
 
@@ -383,8 +499,8 @@ export default class Pipeline extends View {
       .bg(kind === "comet" ? t.accent : kind === "star" ? t.canvas : selected ? t.selected : t.surface)
       .border_1().border_color(selected ? t.accent : ["failed", "input"].includes(task.status) ? t.blocked : kind === "star" ? t.canvas : kind === "comet" ? t.accent : t.border)
       .text_color(t.foreground).text_size(12).tab_index(0).flex().items_center().justify_center()
-      .accessibility_label(`${task.id}: ${task.title}. ${LABELS[task.status]}. ${task.repos.join(", ")}`)
-      .tooltip(task.status === "queued" ? `${task.title}\n${waitingReason(state, task)}` : `${task.title}\n${LABELS[task.status]}`)
+      .accessibility_label(`${task.id}: ${task.title}. ${labelFor(state, task.status)}. ${task.repos.join(", ")}`)
+      .tooltip(task.status === "queued" ? `${task.title}\n${waitingReason(state, task)}` : `${task.title}\n${labelFor(state, task.status)}`)
       .hover(el => el.bg(round ? (kind === "comet" ? t.accent : t.hover) : t.hover).border_color(t.accent)).focus(el => el.border_color(t.accent))
       .on_click((_e, cx) => this.inspect(task.id, cx));
     if (kind === "star") card.child(div().id(`pipeline-twinkle-${task.id}`).size(newest ? 9 : 7).rounded(5).bg(color)
@@ -403,23 +519,27 @@ export default class Pipeline extends View {
           : div().text_size(10).text_color(task.status === "failed" ? t.blocked : t.muted).truncate().when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
-    if (ACTIVE.includes(task.status) && kind === "card" && !asking) wrap.child(div().absolute().left(10).bottom(6).w(CARD.w - 20).h(2).rounded(1).bg(t.raised)
+    if (ACTIVE.includes(task.status) && kind === "card" && !asking && !state.live) wrap.child(div().absolute().left(10).bottom(6).w(CARD.w - 20).h(2).rounded(1).bg(t.raised)
       .child(this.bar(task, state, CARD.w - 20, t.accent, motion, now, cx)));
-    if (task.status === "merging" && kind === "review") wrap.child(div().absolute().left(9).bottom(6).w(CARD.w - 18).h(2).rounded(1).bg(t.raised)
+    if (task.status === "merging" && kind === "review" && !state.live) wrap.child(div().absolute().left(9).bottom(6).w(CARD.w - 18).h(2).rounded(1).bg(t.raised)
       .child(this.bar(task, state, CARD.w - 18, t.ansi2, motion, now, cx)));
-    if (kind === "review" && needsApproval(task)) {
+    if (kind === "review" && needsApproval(task) && state.live) wrap.child(this.button(`approve-${task.id}`, "Merge", cx => this.act({ type: "approve", id: task.id }, cx), t,
+      { icon: "check", primary: true, small: true, hint: `Merge ${task.id} into ${task.workspace?.target ?? "your branch"}` }).absolute().right(8).bottom(8));
+    else if (kind === "review" && needsApproval(task)) {
       const left = task.repos.filter(repo => !task.approvals.includes(repo)).length;
       wrap.child(this.button(`approve-${task.id}`, left > 1 ? `Approve ${left}` : "Approve", cx => this.act({ type: "approve", id: task.id }, cx), t,
         { icon: "check", primary: true, small: true, hint: `Approve ${task.id}'s ${count(left, "PR")}` }).absolute().right(8).bottom(8));
     }
-    if (asking) wrap.child(this.button(`answer-${task.id}`, "Answer", cx => { this.inspect(task.id, cx); this.handle.focus(); }, t,
-      { icon: "question", primary: true, small: true, hint: task.question?.text ?? "Answer the agent" }).absolute().right(8).bottom(8));
+    if (asking && task.reason === "trust") wrap.child(this.button(`trust-${task.id}`, "Trust", cx => this.trust(task, cx), t,
+      { icon: "check", primary: true, small: true, hint: "Answer “Yes, I trust this folder” in its terminal. The worktree is your repository at its current commit." }).absolute().right(8).bottom(8));
+    else if (asking) wrap.child(this.button(`answer-${task.id}`, "Answer", cx => { if (state.live) this.focusAgent(task); else { this.inspect(task.id, cx); this.handle.focus(); } }, t,
+      { icon: "question", primary: true, small: true, hint: state.live ? "Open its agent's terminal" : task.question?.text ?? "Answer the agent" }).absolute().right(8).bottom(8));
     if (kind === "review" && task.status === "failed") wrap.child(this.button(`retry-${task.id}`, "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t,
       { icon: "reset", small: true, hint: `Return ${task.id} to the queue` }).absolute().right(8).bottom(8));
     return wrap;
   }
 
-  inspector(state, t) {
+  inspector(state, t, cx) {
     const titles = { picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
@@ -446,10 +566,10 @@ export default class Pipeline extends View {
           .on_click((_e, cx) => this.inspect(item.task, cx)).child(item.message)
         : this.label(item.message, t));
     }
-    else if (this.drawer === "settings") this.settings(body, state, t);
+    else if (this.drawer === "settings") state.live ? this.liveSettings(body, state, t) : this.settings(body, state, t);
     else if (this.drawer === "quota") this.quota(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
-    else if (this.drawer === "task") this.detail(body, state, t);
+    else if (this.drawer === "task") this.detail(body, state, t, cx);
     return panel.child(body);
   }
   taskRow(task, state, t, fn, picked = false) {
@@ -517,9 +637,79 @@ export default class Pipeline extends View {
     body.child(this.button("arrival", `Move example task to ${state.column}`, cx => this.act({ type: "arrival" }, cx), t, { icon: "plus", disabled: !state.tasks.some(task => task.status === "backlog") }));
     body.child(this.label("This button simulates someone moving a task on the board. No external task service is changed.", t));
   }
-  detail(body, state, t) {
+  liveSettings(body, state, t) {
+    const chosen = state.agent?.name ?? this.agentChoices[0]?.name;
+    body.child(this.heading("Agent"));
+    body.child(this.label("Each task starts this agent in its own worktree, with the task as its first message.", t));
+    if (!this.agentChoices.length) body.child(this.label(this.repo ? "No installed coding agent was found on this machine." : "Looking for installed agents…", t));
+    for (const agent of this.agentChoices) body.child(this.button(`agent-${agent.key ?? agent.name}`, agent.name, cx => this.act({ type: "agent", value: { key: agent.key, name: agent.name, run: agent.run } }, cx), t,
+      { selected: chosen === agent.name, icon: chosen === agent.name ? "check" : null, hint: agent.run.join(" ") }).w_full().justify_start());
+    body.child(this.button("auto-trust", state.autoTrust ? "Trusting new worktrees automatically" : "Trust new worktrees automatically", cx => this.act({ type: "autoTrust" }, cx), t,
+      { icon: state.autoTrust ? "check" : null, selected: Boolean(state.autoTrust), hint: "Answer the agent's “Do you trust this folder?” prompt for worktrees Pipeline made from your repository" }).w_full().justify_start());
+    body.child(this.label("Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.", t));
+    this.stepper(body, "Parallel agents", "Lowering the limit lets running agents finish.", state.parallel, "parallel", 1, 6, t);
+    this.stepper(body, "Branches waiting for review", "New agents wait while this many finished branches are unmerged.", state.reviewLimit, "reviewLimit", 1, 10, t);
+    body.child(this.heading("Merging"));
+    body.child(this.label(`Merge commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its space closes and the worktree and branch are removed.`, t));
+    body.child(div().h(1).bg(t.border));
+    body.child(this.button("motion-setting", this.motion ? "Turn animation off" : "Turn animation on", cx => this.toggleMotion(cx), t));
+    body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
+  }
+  screen(lines, t, caption) {
+    return v_flex().w_full().gap(4)
+      .when(Boolean(caption), el => el.child(this.label(caption, t)))
+      .child(v_flex().w_full().p(10).rounded(6).bg(t.background).border_1().border_color(t.border).font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
+        .children(lines.map(line => div().min_h(15).truncate().child(line || " "))));
+  }
+  liveDetail(body, state, task, t, cx) {
+    this.peekAt(task, cx);
+    const ws = task.workspace ?? task.planned, target = ws?.target ?? this.repo?.branch ?? "your branch";
+    body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
+    body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : labelFor(state, task.status)))
+      .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}`))));
+    if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
+    if (task.status === "queued") {
+      body.child(this.heading("Details for the agent"));
+      body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
+      body.child(this.label("The title and these details are the agent's first message. Saved when you leave the field.", t));
+      body.child(this.label(waitingReason(state, task), t));
+    } else if (task.description) body.child(div().text_size(12).line_height(1.5).text_color(t.muted).child(task.description));
+    if (task.terminal && task.status !== "done" && !task.discard) {
+      if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))
+        .child(this.button(`trust-task-${task.id}`, "Trust this worktree", cx => this.trust(task, cx), t, { icon: "check", primary: true, hint: "Answers “Yes, I trust this folder” in its terminal" }));
+      body.child(this.button(`open-${task.id}`, "Open agent", () => this.focusAgent(task), t, { icon: "terminal", primary: task.status === "input", hint: "Show its terminal" }));
+      if (this.peek.screen.length) body.child(this.screen(this.peek.screen, t, task.status === "input" ? "It's waiting for you. The end of its screen:" : "The end of its screen:"));
+      body.child(h_flex().gap(6).items_center()
+        .child(Input.new(this.message).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Message the agent"))
+        .child(this.button(`send-${task.id}`, task.status === "review" ? "Send feedback" : "Send", cx => this.send(task, cx), t,
+          { disabled: !this.message.value().trim(), hint: "Types into its terminal and presses Enter" })));
+      if (this.sent?.id === task.id) body.child(this.label(this.sent.error ?? (this.sent.pending ? "Sending…" : "Sent. The card follows what the agent does next."), t));
+    }
+    if (task.status === "review" && !task.discard) {
+      body.child(this.heading("Changes"));
+      body.child(this.peek.diff.length ? this.screen(this.peek.diff, t) : this.label("Reading the branch…", t));
+      body.child(this.button(`merge-${task.id}`, `Merge into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
+        { icon: "check", primary: true, hint: "Commits anything left, rebases onto it and fast-forwards. Your project folder must have no uncommitted changes." }));
+    }
+    if (task.status === "merging") body.child(this.label(`Merging into ${target}…`, t));
+    if (task.status === "failed" && !task.discard) body.child(this.button(`retry-task-${task.id}`, task.workspace ? "Retry in the same worktree" : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
+    if (task.status === "queued" && !task.workspace) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
+    else if (!["merging", "done"].includes(task.status) && !task.discard) {
+      const sure = this.confirm === task.id;
+      body.child(this.button(`discard-${task.id}`, sure ? "Delete its branch and worktree" : "Discard", cx => {
+        if (sure) { this.confirm = null; this.act({ type: "discard", id: task.id }, cx); } else { this.confirm = task.id; cx.notify(); }
+      }, t, { icon: "x", hint: sure ? "Stops its agent and deletes the worktree and branch. This can't be undone." : "Stop this task and throw its work away" }));
+      if (sure) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child("Click again to stop its agent and delete the worktree and branch. Unmerged work is lost."));
+    }
+    if (ws) body.child(this.label(`Branch ${ws.branch}${task.workspace?.cwd ? ` · ${task.workspace.cwd}` : ""}`, t));
+    const events = state.events.filter(item => item.task === task.id).slice(0, 6);
+    if (events.length) body.child(this.heading("Task history"));
+    for (const item of events) body.child(this.label(item.message, t));
+  }
+  detail(body, state, t, cx) {
     const task = state.tasks.find(task => task.id === this.selected);
     if (!task) { body.child(this.label("Select a task in the scene.", t)); return; }
+    if (state.live) { this.liveDetail(body, state, task, t, cx); return; }
     body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
     body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(LABELS[task.status])));
     if (needsInput(task)) body.child(v_flex().gap(10).p(12).rounded(8).border_1().border_color(t.blocked).bg(t.blocked + "14")

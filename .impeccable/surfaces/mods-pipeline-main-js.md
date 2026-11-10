@@ -11,7 +11,7 @@ An interactive native Herdr prototype. Visitor mode: Operate. The user observes 
 
 The approved direction is a stable constellation with left-to-right flow: picked tasks and watched columns feed a queue; a central planner chooses work; workers produce related PRs; approvals release coordinated merges. Both task intake methods share one queue. Quota reserve, dependency completion and outstanding PR limits govern dispatch. Review releases a worker slot. Doing, Review and Done correspond to successful launch, verified output and completed integration.
 
-This milestone uses labeled synthetic tasks and a deterministic simulation of planning, execution, checks, quota and PRs. It does not start real agents, modify task services or change Git repositories. The eventual planner will be an agent, with constraints enforced by the execution engine. Background execution after quitting Herdr is outside the initial scope. Closing the view keeps the prototype progressing through a tracker in the tab bar; state is saved and resumes without catching up elapsed time while Herdr was closed.
+The simulation uses labeled synthetic tasks and a deterministic model of planning, execution, checks, quota and PRs; it does not start agents, modify task services or change Git repositories. Live mode (below) runs real agents. The eventual planner will be an agent, with constraints enforced by the execution engine. Background execution after quitting Herdr is outside the initial scope. Closing the view keeps the prototype progressing through a tracker in the tab bar; state is saved and resumes without catching up elapsed time while Herdr was closed.
 
 ## Direction contract
 
@@ -29,4 +29,4 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
 ## Validation and next milestone
 
-Check the mod in Herdr, inspect full-width and narrow-pane compositions, and exercise intake, concurrency, quota pause, failure/retry, per-repository approval and dependency release. No shipping raster assets are needed. Live provider adapters, agent planning and actual Git delivery remain future implementation work.
+Check the mod in Herdr, inspect full-width and narrow-pane compositions, and exercise intake, concurrency, quota pause, failure/retry, per-repository approval and dependency release. No shipping raster assets are needed. Live mode now starts real agents and merges their branches; Plane as a live source, checks, pull requests and agent planning remain future work.

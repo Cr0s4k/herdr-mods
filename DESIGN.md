@@ -146,6 +146,10 @@ The inspector is 330 wide, capped at the pane width minus 16. Above width 1180 i
 
 Herdr reports painted bounds while builder lengths are zoomed by the host. Pipeline divides measured width and height by `Number(settings().zoom) || 1` before computing geometry and breakpoints. Keep all scene, drawer and breakpoint calculations in this same logical coordinate space. Native `loop()` lengths are the exception: they are not zoomed, so multiply any looped `left`, `top`, `width` or `height` by the zoom.
 
+### Live mode
+
+The header's Simulation / Live switch is a pair of small actions on a raised track. Live keeps the same scene: the queue holds typed tasks for the project's repository, slots hold real agents (no stage bars, since real work has no known length), review cards carry Merge, and waiting agents show the Needs you pill with Answer (opens the agent's terminal) or Trust (for the folder-trust prompt). The live inspector shows the agent's latest screen in the terminal font on `t.background`, a message field that types into the agent, the branch's change summary, Merge, and a Discard that asks twice. Live omits Examples, Watch, Quota, speed and the delivery toggle; the status strip names the branch merges go into.
+
 ## Elevation & Depth
 
 The inspected native components use flat surfaces, tonal layering and thin borders. They define no custom shadow vocabulary. Selected backgrounds, accent borders and the inspector's opaque surface carry hierarchy; the overlay inspector keeps its separating border. Pipeline's single-stroke curves and dashed planner orbit remain quiet background structure rather than elevated decoration.
