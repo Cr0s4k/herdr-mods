@@ -389,7 +389,7 @@ def request(home, payload):
         private_json(maps_path, mappings)
         return {"mapped": bool(project_id)}
     project_id = payload.get("project") or mapping.get(key)
-    if op == "detail":
+    if op in ("detail", "update_state", "add_link"):
         parts = str(payload.get("id", "")).split(":")
         if len(parts) != 3 or parts[0] != "plane":
             raise PlaneError("Invalid Plane task. Refresh the task list.")
@@ -427,6 +427,21 @@ def request(home, payload):
     if op == "detail":
         item = call(config, project_path + "work-items/" + item_id + "/", {"expand": "state,assignees"})
         return normalized(item, project, config)
+    if op == "update_state":
+        wanted, path = valid_id(payload.get("state")), project_path + "work-items/" + item_id + "/"
+        if state_id(call(config, path)) == wanted:
+            return {"changed": False}
+        call(config, path, method="PATCH", body={"state": wanted})
+        return {"changed": True}
+    if op == "add_link":
+        url, title = str(payload.get("url", "")).strip(), str(payload.get("title", "")).strip()[:255]
+        if urllib.parse.urlsplit(url).scheme not in ("https", "http") or len(url) > 2000:
+            raise PlaneError("Pipeline can only link a web address.", "validation")
+        path = project_path + "work-items/" + item_id + "/links/"
+        if any(isinstance(link, dict) and str(link.get("url", "")).rstrip("/") == url.rstrip("/") for link in pages(config, path)):
+            return {"changed": False}
+        call(config, path, method="POST", body={"url": url, "title": title or url})
+        return {"changed": True}
     if op == "create":
         title = str(payload.get("title", "")).strip()
         if not title or len(title) > 255:

@@ -167,14 +167,25 @@ task, so parallel agents never touch each other or your checkout.
    project linked to this repository in the Tasks panel: pick open tickets and **Queue**
    them, or **Watch a state** (say Ready) so tickets in it join the queue by themselves within
    a minute, each one once. A Plane task keeps the ticket's key (HMOD-12), priority and
-   description, and the inspector links back to it. Pipeline only reads Plane; ticket status
-   and assignee stay in your Plane workflow, and agents are told not to change them.
+   description, and the inspector links back to it.
    **Linear** (L) works the same way, with the connection the Linear panel uses: choose My
    tickets, Unassigned or All tickets and optionally a Linear project, then pick tickets (up
    to 10 at a time) or watch a state. States are merged by name across the teams of the listed
    tickets, and a watch needs My tickets or a project, so a workspace-wide state can't flood
    the queue. Linear's list shortens descriptions, so Pipeline reads each ticket in full
    before it is queued.
+
+   By default Pipeline only reads Plane and Linear. **Ticket updates** in Settings lets it
+   move a ticket as its work goes, per tracker: a state **When its agent starts** and one
+   **When the work merges** (locally, or the pull request merged on GitHub), picked from the
+   linked Plane project's states or Linear's states for the teams of queued tickets, and
+   **Link pull requests to the ticket**, which adds "PR #12: title" when the pull request
+   opens. Each update first reads the ticket, so a state it already has or a link it already
+   carries is left alone, and a retried task doesn't move its ticket again. Updates never
+   hold up or stop a task: the inspector shows the last one ("Moved to In Progress in
+   Plane"), or what failed with **Try again**, and the task history records each. Linear
+   updates need a connection with Write permission; without it the inspector offers
+   **Connect Linear**. Agents are still told not to change a ticket's status or assignee.
 
    Tasks can wait for each other. A ticket brings its **blocked by** links from Plane or
    Linear: a blocker that is also in the pipeline holds the task until that task merges, and
@@ -390,13 +401,15 @@ The reader reuses an existing Claude Code Linear MCP login from its credential f
 standard macOS keychain entry. Claude continues to manage that login: if it expires, reconnect
 with Claude's `/mcp`. Herdr does not copy, refresh, or modify Claude's credentials. For a
 separate connection, use the header's **Linear connection** settings button, then **Connect
-with API key**. A local terminal asks privately for a key with Read permission, validates it,
+with API key**. A local terminal asks privately for a key with Read permission (add Write if
+Pipeline should update tickets), validates it,
 and saves it with owner-only permissions at `~/.config/herdr-app/linear/credentials.json`.
 Return to the panel and refresh. The same setup is available with `herdr-linear connect`.
 The reader prefers `LINEAR_API_KEY`, then its saved key, then Claude's login.
 
-Linear access uses the [official MCP server](https://linear.app/docs/mcp), with only read
-operations, and Python 3's standard library. Ticket access and credentials stay on this
+Linear access uses the [official MCP server](https://linear.app/docs/mcp) and Python 3's
+standard library. The panel only reads; the reader refuses every write except the two
+Pipeline's ticket updates make with `save_issue` (a state, or a link). Ticket access and credentials stay on this
 computer; a selected remote machine is only the destination for an agent handoff.
 
 ## Loops

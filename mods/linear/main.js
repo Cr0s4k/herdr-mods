@@ -429,7 +429,7 @@ export default class Linear extends View {
         else run("tab.new", { ...args, space: this.context.space });
       }))
       .child(this.button("linear-key-settings", "Open Linear key settings", cx => cx.open_url("https://linear.app/settings/account/security")))
-      .child(div().text_size(11.5).text_color(t.muted).whitespace_normal().child("Create a key with Read permission. After connecting, return here and refresh. LINEAR_API_KEY is also supported. Existing Claude logins stay managed by Claude; reconnect there with /mcp if they expire."))
+      .child(div().text_size(11.5).text_color(t.muted).whitespace_normal().child("Create a key with Read permission, plus Write if Pipeline should update tickets. After connecting, return here and refresh. LINEAR_API_KEY is also supported. Existing Claude logins stay managed by Claude; reconnect there with /mcp if they expire."))
       .child(this.button("linear-connection-back", "Back to tickets", cx => { this.setup = false; this.authError = false; this.refresh(cx); cx.notify(); }));
   }
 

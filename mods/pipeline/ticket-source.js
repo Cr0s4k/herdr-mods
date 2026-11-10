@@ -60,3 +60,8 @@ export async function ticketBlockers(provider, issues) {
     return { key: key ?? null, uuid: found?.uuid ?? null, title: found?.title ?? blocker.title ?? "", url: found?.url ?? null, closed: found ? !openIssue(found) : null };
   })]));
 }
+
+// The only writes Pipeline makes to a tracker: a ticket's state, and a link to its pull request.
+export const updateTicket = (provider, ticket, update) => readTickets(provider, update.kind === "link"
+  ? { op: "add_link", id: ticket.uuid, url: update.url, title: update.title }
+  : { op: "update_state", id: ticket.uuid, state: update.state.id });

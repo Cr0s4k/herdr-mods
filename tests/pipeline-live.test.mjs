@@ -738,3 +738,104 @@ test("with pull requests, a task that waited starts from origin so it has its bl
   await step(new live.LiveRunner(world.host));
   assert.equal(world.scripts[0][1].remote, undefined, "work that waited for nothing starts from the project folder");
 });
+
+const updating = (settings, updateTicket) => {
+  const world = prHost(), calls = [];
+  let state = reduce(reduce(createLive(context, 0), { type: "deliver", value: "pr" }, 0), { type: "addTickets", provider: "plane", issues: [ticket(4, { title: "Fix login" })] }, 0);
+  if (settings) state = reduce(state, { type: "ticketUpdates", provider: "plane", ...settings }, 0);
+  world.store = { [id]: reduce(state, { type: "run" }, 0) };
+  world.host.updateTicket = async (provider, row, update) => { calls.push([provider, row.uuid, update.kind, update.state?.id ?? update.url, update.title]); return updateTicket ? updateTicket(update, calls) : { changed: true }; };
+  world.updates = calls; world.panes = [{ terminal: "t9" }]; world.host.read = async () => "";
+  return world;
+};
+
+test("ticket updates are off by default, so a ticket's work leaves its tracker alone", async () => {
+  const world = updating(null);
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "HMOD-4" }, 0) };
+  await settle(runner); await settle(runner);
+  assert.equal(row(world.state(), "HMOD-4").status, "pr");
+  assert.deepEqual(world.updates, []);
+  assert.equal(row(world.state(), "HMOD-4").ticket.pending, undefined);
+});
+
+test("ticket update settings are per provider and say what they will do", () => {
+  let state = reduce(createLive(context, 0), { type: "ticketUpdates", provider: "plane", start: { id: "doing", name: "In Progress" } }, 0);
+  assert.deepEqual(state.ticketUpdates.plane, { start: { id: "doing", name: "In Progress" }, merge: null, link: false });
+  assert.match(state.events[0].message, /^Plane tickets move to In Progress when their agent starts\.$/);
+  assert.equal(reduce(state, { type: "ticketUpdates", provider: "plane", start: { id: "doing", name: "In Progress" } }, 0), state);
+  state = reduce(state, { type: "ticketUpdates", provider: "linear", merge: { id: "Done", name: "Done" }, link: true }, 0);
+  assert.match(state.events[0].message, /^Linear tickets move to Done when their work merges and get their pull request linked\.$/);
+  state = reduce(state, { type: "ticketUpdates", provider: "plane", start: null }, 0);
+  assert.match(state.events[0].message, /no longer updates Plane tickets/);
+  assert.equal(reduce(state, { type: "ticketUpdates", provider: "jira", link: true }, 0), state);
+  assert.equal(reduce(createPipeline(context, 0), { type: "ticketUpdates", provider: "plane", link: true }, 0).ticketUpdates, undefined);
+  const linear = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", issues: [{ uuid: "u-1", identifier: "PRO-1", title: "T", team: "Core" }] }, 0);
+  assert.equal(row(linear, "PRO-1").ticket.team, "Core", "Linear states come from the teams of queued tickets");
+});
+
+test("a ticket moves when its agent starts, gets its pull request linked, and moves again on merge", async () => {
+  let github = { state: "OPEN" };
+  const world = updating({ start: { id: "doing", name: "In Progress" }, merge: { id: "done", name: "Done" }, link: true });
+  world.host.delivery = async (_context, payload) => payload.op === "publish" ? { url: "https://github.com/me/shop/pull/12", number: 12 } : payload.op === "pr_state" ? github : {};
+  const runner = new live.LiveRunner(world.host);
+  await settle(runner);
+  assert.equal(row(world.state(), "HMOD-4").status, "working");
+  await settle(runner);
+  assert.deepEqual(world.updates, [["plane", "plane:p:4", "start", "doing", undefined]]);
+  let task = row(world.state(), "HMOD-4");
+  assert.deepEqual([task.ticket.update.ok, task.ticket.update.text, task.ticket.status, task.ticket.pending], [true, "Moved to In Progress in Plane", "In Progress", []]);
+  assert.ok(world.state().events.some(item => item.message === "HMOD-4 · moved to In Progress in Plane."));
+  await settle(runner);
+  assert.equal(world.updates.length, 1, "a made update is not repeated");
+  world.agents = [{ address: "t9", status: "working" }]; await settle(runner);
+  world.agents = [{ address: "t9", status: "done" }]; await settle(runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "HMOD-4" }, 0) };
+  await settle(runner); await settle(runner);
+  assert.deepEqual(world.updates[1], ["plane", "plane:p:4", "link", "https://github.com/me/shop/pull/12", "PR #12: Fix login"]);
+  assert.equal(row(world.state(), "HMOD-4").ticket.update.text, "Linked PR #12 in Plane");
+  github = { state: "MERGED" }; world.clock(61000);
+  await settle(runner); await settle(runner);
+  task = row(world.state(), "HMOD-4");
+  assert.equal(task.status, "done");
+  assert.deepEqual(world.updates[2], ["plane", "plane:p:4", "merge", "done", undefined]);
+  assert.equal(task.ticket.update.text, "Moved to Done in Plane");
+});
+
+test("a failed update never changes the task, waits for Try again, and a moved ticket isn't moved again on retry", async () => {
+  let fail = true;
+  const world = updating({ start: { id: "doing", name: "In Progress" } }, () => {
+    if (fail) throw Object.assign(new Error("Pipeline needs write access to Linear. Connect a key with Write permission."), { kind: "write_access" });
+    return { changed: false };
+  });
+  const runner = new live.LiveRunner(world.host);
+  await settle(runner); await settle(runner);
+  let task = row(world.state(), "HMOD-4");
+  assert.equal(task.status, "working");
+  assert.deepEqual([task.ticket.update.ok, task.ticket.update.errorKind, task.ticket.failed.map(update => update.kind)], [false, "write_access", ["start"]]);
+  assert.match(world.state().events[0].message, /^HMOD-4 · couldn't update Plane · Pipeline needs write access/);
+  await settle(runner); await settle(runner);
+  assert.equal(world.updates.length, 1, "failures are not retried by themselves");
+  fail = false;
+  world.store = { [id]: reduce(world.state(), { type: "ticketRetry", id: "HMOD-4" }, 0) };
+  assert.equal(reduce(world.state(), { type: "ticketRetry", id: "HMOD-4" }, 0), world.state(), "nothing failed is waiting");
+  await settle(runner);
+  task = row(world.state(), "HMOD-4");
+  assert.deepEqual([world.updates.length, task.ticket.update.text, task.ticket.failed], [2, "Already In Progress in Plane", []]);
+  let state = reduce(world.state(), { type: "launchFailed", id: "HMOD-4", error: "Closed." }, 0);
+  state = reduce(state, { type: "retry", id: "HMOD-4" }, 0);
+  assert.equal(row(state, "HMOD-4").status, "routing");
+  state = reduce(state, { type: "launched", id: "HMOD-4", space: "s", tab: "t", terminal: "t9" }, 0);
+  assert.deepEqual(row(state, "HMOD-4").ticket.pending, [], "a retried task doesn't move its ticket again");
+});
+
+test("a result for an update that is no longer pending changes nothing", () => {
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(1)] }, 0);
+  state = reduce(state, { type: "ticketUpdates", provider: "plane", start: { id: "doing", name: "Doing" } }, 0);
+  assert.equal(reduce(state, { type: "ticketUpdated", id: "HMOD-1", n: 1, ok: true }, 0), state);
+  state = reduce(reduce(state, { type: "run" }, 0), { type: "launched", id: "HMOD-1", space: "s", tab: "t", terminal: "t9" }, 0);
+  const n = row(state, "HMOD-1").ticket.pending[0].n;
+  assert.equal(reduce(state, { type: "ticketUpdated", id: "HMOD-1", n: n + 1, ok: true }, 0), state);
+  assert.equal(row(reduce(state, { type: "discarded", id: "HMOD-1" }, 0), "HMOD-1"), undefined);
+});

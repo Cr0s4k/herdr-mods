@@ -69,9 +69,68 @@ class LinearTest(unittest.TestCase):
             self.assertEqual([(state["id"], state["type"]) for state in states], [("Todo", "unstarted"), ("In Progress", "started"), ("Ready for agent", "unstarted")])
             self.assertEqual({c.args[1] for c in call.call_args_list}, {"list_issue_statuses"})
 
-    def test_only_read_tools_can_be_called(self):
-        with self.assertRaises(reader.LinearError):
-            reader.call("token", "update_issue", {})
+    def test_only_read_tools_and_the_two_allowed_writes_can_be_called(self):
+        for name, args in [("update_issue", {}), ("save_issue", {"id": "A-1", "title": "x"}), ("save_issue", {"id": "A-1", "state": "Done", "assignee": "me"}),
+                           ("save_issue", {"title": "new", "team": "Core"}), ("save_comment", {"issueId": "A-1", "body": "x"}), ("create_attachment", {"issue": "A-1"}),
+                           ("delete_attachment", {"id": "x"})]:
+            with patch.object(reader.urllib.request, "urlopen") as urlopen:
+                with self.assertRaises(reader.LinearError):
+                    reader.call("token", name, args)
+                urlopen.assert_not_called()
+        reply = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"id": "A-1"}}}).encode()
+        for args in [{"id": "A-1", "state": "Done"}, {"id": "A-1", "links": [{"url": "https://x.test", "title": "x"}]}]:
+            with patch.object(reader.urllib.request, "urlopen") as urlopen:
+                urlopen.return_value.__enter__.return_value.read.return_value = reply
+                self.assertEqual(reader.call("token", "save_issue", args), {"id": "A-1"})
+
+    def test_state_updates_and_links_read_the_ticket_first_and_skip_what_it_already_has(self):
+        issue = {"id": "u-1", "status": {"name": "In Progress"}, "attachments": [{"url": "https://github.test/o/r/pull/12", "title": "PR #12: Fix"}]}
+        def call(_token, name, args):
+            calls.append((name, args))
+            return issue if name == "get_issue" else {"id": "u-1"}
+        with patch.object(reader, "credential", return_value=("secret-token", "test")) as credential, patch.object(reader, "call", side_effect=call):
+            calls = []
+            self.assertEqual(reader.request("/app", {"op": "update_state", "id": "u-1", "state": "in progress"})["data"], {"changed": False})
+            self.assertEqual([name for name, _ in calls], ["get_issue"])
+            self.assertTrue(credential.call_args.args[1], "writes ask for a credential that can write")
+            calls = []
+            self.assertEqual(reader.request("/app", {"op": "update_state", "id": "u-1", "state": "Done"})["data"], {"changed": True})
+            self.assertEqual(calls[-1], ("save_issue", {"id": "u-1", "state": "Done"}))
+            calls = []
+            self.assertEqual(reader.request("/app", {"op": "add_link", "id": "u-1", "url": "https://github.test/o/r/pull/12/", "title": "PR #12: Fix"})["data"], {"changed": False})
+            self.assertEqual([name for name, _ in calls], ["get_issue"])
+            self.assertEqual(reader.request("/app", {"op": "add_link", "id": "u-1", "url": "https://github.test/o/r/pull/13", "title": "PR #13: Fix"})["data"], {"changed": True})
+            self.assertEqual(calls[-1], ("save_issue", {"id": "u-1", "links": [{"url": "https://github.test/o/r/pull/13", "title": "PR #13: Fix"}]}))
+            for payload in [{"op": "add_link", "id": "u-1", "url": "file:///etc/passwd"}, {"op": "update_state", "id": "u-1", "state": ""}]:
+                with self.assertRaises(reader.LinearError):
+                    reader.request("/app", payload)
+
+    def test_a_connection_without_write_access_says_so_and_unconfirmed_writes_are_distinct(self):
+        denied = {"jsonrpc": "2.0", "id": 1, "result": {"isError": True, "content": [{"type": "text", "text": "Invalid scope: write required secret-token"}]}}
+        with self.assertRaises(reader.LinearError) as caught:
+            reader.parse_rpc(json.dumps(denied), write=True)
+        self.assertEqual((caught.exception.kind, str(caught.exception)), ("write_access", reader.WRITE_ACCESS))
+        with self.assertRaises(reader.LinearError) as caught:
+            reader.parse_rpc(json.dumps(denied))
+        self.assertNotEqual(caught.exception.kind, "write_access", "reads keep their own message")
+        refused = {"jsonrpc": "2.0", "id": 1, "result": {"isError": True, "content": [{"type": "text", "text": "State not found secret-token"}]}}
+        with self.assertRaises(reader.LinearError) as caught:
+            reader.parse_rpc(json.dumps(refused), write=True)
+        self.assertEqual(caught.exception.kind, "request")
+        self.assertNotIn("secret-token", str(caught.exception))
+        args = {"id": "A-1", "state": "Done"}
+        for error, kind in [(urllib.error.HTTPError(reader.ENDPOINT, 403, "x", {}, None), "write_access"), (urllib.error.HTTPError(reader.ENDPOINT, 502, "x", {}, None), "uncertain"), (TimeoutError(), "uncertain")]:
+            with patch.object(reader.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(reader.LinearError) as caught:
+                    reader.call("token", "save_issue", args)
+            self.assertEqual(caught.exception.kind, kind)
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / ".credentials.json").write_text(json.dumps({"mcpOAuth": {"linear": {"serverUrl": reader.ENDPOINT + "/readonly", "accessToken": "read-token"}}}))
+            with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": folder, "LINEAR_API_KEY": ""}), patch.object(reader.sys, "platform", "linux"):
+                self.assertEqual(reader.credential(folder), ("read-token", "Claude login"))
+                with self.assertRaises(reader.LinearError) as caught:
+                    reader.credential(folder, write=True)
+            self.assertEqual(caught.exception.kind, "write_access")
 
     def test_existing_claude_login_is_read_without_modification(self):
         with tempfile.TemporaryDirectory() as folder:

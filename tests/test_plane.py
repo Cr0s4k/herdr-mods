@@ -203,6 +203,49 @@ class PlaneTest(unittest.TestCase):
         self.assertEqual(rows[0]["uuid"], f"plane:{PROJECT['id']}:{open_id}")
         self.assertEqual(found[f"plane:{PROJECT['id']}:{old}"], [], "an instance without relations has no blockers")
 
+    def test_state_updates_and_links_read_the_ticket_first_and_skip_what_it_already_has(self):
+        ticket, done = f"plane:{PROJECT['id']}:{ITEM_ID}", "77777777-7777-4777-8777-777777777777"
+        calls, links = [], [{"id": "l1", "url": "https://github.test/o/r/pull/12"}]
+        def call(_config, path, params=None, method="GET", body=None):
+            calls.append((path.removeprefix("workspaces/herdr/projects/" + PROJECT["id"] + "/"), method, body))
+            if path.endswith("/links/") and method == "GET":
+                return {"results": links, "next_page_results": False}
+            return item(state=done) if path.endswith(ITEM_ID + "/") else PROJECT
+        with patch.object(plane, "call", side_effect=call):
+            self.assertEqual(plane.request(self.home, {"op": "update_state", "id": ticket, "state": done}), {"changed": False})
+            self.assertNotIn("PATCH", [method for _, method, _ in calls])
+            calls.clear()
+            other = "88888888-8888-4888-8888-888888888888"
+            self.assertEqual(plane.request(self.home, {"op": "update_state", "id": ticket, "state": other}), {"changed": True})
+            self.assertEqual(calls[-1], (f"work-items/{ITEM_ID}/", "PATCH", {"state": other}))
+            calls.clear()
+            self.assertEqual(plane.request(self.home, {"op": "add_link", "id": ticket, "url": "https://github.test/o/r/pull/12/", "title": "PR #12: Fix"}), {"changed": False})
+            self.assertNotIn("POST", [method for _, method, _ in calls])
+            self.assertEqual(plane.request(self.home, {"op": "add_link", "id": ticket, "url": "https://github.test/o/r/pull/13", "title": "PR #13: Fix"}), {"changed": True})
+            self.assertEqual(calls[-1], (f"work-items/{ITEM_ID}/links/", "POST", {"url": "https://github.test/o/r/pull/13", "title": "PR #13: Fix"}))
+            for payload in [{"op": "add_link", "id": ticket, "url": "javascript:alert(1)"}, {"op": "update_state", "id": ticket, "state": "Done"},
+                            {"op": "update_state", "id": "linear:x", "state": done}]:
+                with self.assertRaises(plane.PlaneError):
+                    plane.request(self.home, payload)
+
+    def test_an_unconfirmed_update_is_reported_once_and_never_retried(self):
+        ticket, writes = f"plane:{PROJECT['id']}:{ITEM_ID}", []
+        def call(_config, path, params=None, method="GET", body=None):
+            if method != "GET":
+                writes.append(path)
+                raise plane.PlaneError("Plane could not confirm the save. Check the task in Plane before trying again.", "uncertain")
+            return item(state="99999999-9999-4999-8999-999999999999") if path.endswith(ITEM_ID + "/") else PROJECT
+        with patch.object(plane, "call", side_effect=call):
+            with self.assertRaises(plane.PlaneError) as caught:
+                plane.request(self.home, {"op": "update_state", "id": ticket, "state": "77777777-7777-4777-8777-777777777777"})
+        self.assertEqual(caught.exception.kind, "uncertain")
+        self.assertEqual(len(writes), 1)
+        error = urllib.error.HTTPError("https://plane.example.test", 502, "secret-token", {}, None)
+        with patch.object(plane.urllib.request.OpenerDirector, "open", side_effect=error):
+            with self.assertRaises(plane.PlaneError) as caught:
+                plane.call(CONFIG, "work-items/x/", method="PATCH", body={"state": "x"})
+        self.assertEqual(caught.exception.kind, "uncertain")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
-import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeeds, prChecklist, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, window as appWindow } from "herdr";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeeds, prChecklist, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -94,6 +94,7 @@ export default class Pipeline extends View {
     this.repo = null; this.agentChoices = []; this.codexModels = [];
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
     this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
+    this.updateStates = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, states: [], error: null }]));
     this.linearFilter = { scope: "mine", project: null };
     try { this.linearFilter = { ...this.linearFilter, ...JSON.parse(localStorage.getItem(`linear:${this.id}`) ?? "{}") }; } catch (_) { /* A damaged filter falls back to My tickets. */ }
     this.projects = null;
@@ -260,6 +261,7 @@ export default class Pipeline extends View {
     if (drawer === "settings" && this.state()?.live) {
       this.checkInput.set_value(this.state().check?.command ?? "");
       this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
+      if (drawer !== this.drawer) this.loadUpdateStates(cx);
     }
     if (SOURCES[drawer] && !this.state()?.live) return;
     if (drawer === "schedule") { this.timeError = null; for (const kind of ["start", "pause"]) this.times[kind].set_value(this.state()?.schedule?.[kind] ?? ""); }
@@ -292,6 +294,27 @@ export default class Pipeline extends View {
       if (this.ticketRequests[provider] !== request) return;
       this.sources[provider] = next; cx.notify();
     });
+  }
+  // States to move tickets to: the linked Plane project's, and Linear's merged by name over the teams of its queued tickets.
+  loadUpdateStates(cx) {
+    const state = this.state(), context = { cwd: this.context.cwd, on: this.context.on };
+    const teams = [...new Set([...state.tasks.filter(task => task.ticket?.provider === "linear" && task.status !== "done").map(task => task.ticket.team),
+      ...this.sources.linear.issues.map(issue => issue.team)].filter(Boolean))].slice(0, 5);
+    for (const provider of Object.keys(SOURCES)) {
+      if (provider === "linear" && !teams.length) { this.updateStates.linear = { loading: false, states: [], error: null }; continue; }
+      this.updateStates[provider] = { ...this.updateStates[provider], loading: true, error: null };
+      cx.spawn(async cx => {
+        let next;
+        try { next = { states: (await readTickets(provider, provider === "plane" ? { op: "states", context } : { op: "states", teams })).states ?? [], error: null }; }
+        catch (error) { next = { states: [], error: error?.message || String(error) }; }
+        this.updateStates[provider] = { ...next, loading: false }; cx.notify();
+      });
+    }
+  }
+  connectLinear() {
+    const args = { name: "Connect Linear", argv: ["python3", `${appHome()}/mods/linear/herdr-linear`, "--home", appHome(), "connect"] };
+    if (this.context.on) run("space.new", { ...args, machine: "" });
+    else run("tab.new", { ...args, space: focused()?.space });
   }
   setLinearFilter(change, cx) {
     this.linearFilter = { ...this.linearFilter, ...change }; this.projects = null; this.ticketPicked.clear();
@@ -378,12 +401,15 @@ export default class Pipeline extends View {
   }
   motionSwitch(t) {
     const on = this.motion && !this.reducedMotion, locked = this.reducedMotion;
-    return Switch.new("pipeline-motion-setting").checked(on).disabled(locked).on_change((_value, cx) => this.toggleMotion(cx))
-      .accessibility_label("Animation")
+    return this.switchRow("motion-setting", "Animation", locked ? "Off while the system's Reduce Motion is on" : "Flowing work, progress bars and the spinning ring", on, cx => this.toggleMotion(cx), t, locked);
+  }
+  switchRow(id, title, hint, on, fn, t, locked = false) {
+    return Switch.new(`pipeline-${id}`).checked(on).disabled(locked).on_change((_value, cx) => fn(cx))
+      .accessibility_label(title)
       .child(h_flex().py(6).gap(12).items_center().opacity(locked ? 0.55 : 1).when(!locked, el => el.cursor_pointer())
         .child(v_flex().flex_1().min_w(0).gap(3)
-          .child(div().text_size(12).font_medium().child("Animation"))
-          .child(div().text_size(11).text_color(t.muted).child(locked ? "Off while the system's Reduce Motion is on" : "Flowing work, progress bars and the spinning ring")))
+          .child(div().text_size(12).font_medium().child(title))
+          .child(div().text_size(11).text_color(t.muted).child(hint)))
         .child(div().w(30).h(18).p(2).flex_none().flex().items_center().rounded(9)
           .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.border)
           .when(on, el => el.justify_end())
@@ -892,7 +918,7 @@ export default class Pipeline extends View {
     body.child(this.heading("Watch a state"));
     body.child(this.label(watch ? `Tickets in ${watch.name}${watch.filter?.label ? ` (${watch.filter.label})` : ""} join the queue within a minute, each one once.`
       : !watchable ? "Choose a project or My tickets to watch a state, so tickets from other teams don't flood the queue."
-      : `Choose a state and its tickets join the queue by themselves, each one once. Pipeline never changes ${service}.`, t));
+      : `Choose a state and its tickets join the queue by themselves, each one once. Pipeline changes ${service} only as Ticket updates in Settings say.`, t));
     if (state.sourceErrors?.[provider]) body.child(warn(state.sourceErrors[provider]));
     const current = row => watch?.id === row.id && JSON.stringify(watch?.filter ?? null) === JSON.stringify(filtered);
     body.child(h_flex().gap(6).flex_wrap().children(source.states.filter(row => openIssue({ statusType: row.group ?? row.type })).map(row =>
@@ -986,9 +1012,44 @@ export default class Pipeline extends View {
     body.child(this.label(state.delivery === "pr"
       ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
       : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its tab closes and the worktree and branch are removed.`, t));
+    this.ticketUpdates(body, state, t);
     body.child(div().h(1).bg(t.border));
     body.child(this.motionSwitch(t));
     body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
+  }
+  ticketUpdates(body, state, t) {
+    body.child(this.heading("Ticket updates"));
+    body.child(this.label("Pipeline can move a ticket as its work goes and link its pull request. Updates never hold up a task: one that fails waits in the task's inspector for Try again.", t));
+    for (const [provider, service] of Object.entries(SOURCES)) {
+      const setup = state.ticketUpdates?.[provider] ?? {}, source = this.updateStates[provider];
+      body.child(div().pt(4).text_size(12).font_semibold().child(service));
+      if (source.loading) body.child(this.label("Loading states…", t));
+      else if (source.error) body.child(this.label(source.error, t));
+      else if (!source.states.length) body.child(this.label(provider === "plane" ? "No states were found for the Plane project linked to this repository."
+        : "Queue a Linear ticket first: states come from the teams of queued tickets.", t));
+      for (const [kind, title] of Object.entries(UPDATE_KINDS)) {
+        const options = [...source.states, ...(setup[kind] && !source.states.some(row => row.id === setup[kind].id) ? [setup[kind]] : [])];
+        body.child(this.label(title, t));
+        body.child(h_flex().gap(6).flex_wrap()
+          .child(this.button(`update-${provider}-${kind}-none`, "Don't change", cx => this.act({ type: "ticketUpdates", provider, [kind]: null }, cx), t, { small: true, selected: !setup[kind] }))
+          .children(options.map(row => this.button(`update-${provider}-${kind}-${row.id}`, row.name, cx => this.act({ type: "ticketUpdates", provider, [kind]: { id: row.id, name: row.name } }, cx), t,
+            { small: true, selected: setup[kind]?.id === row.id, hint: `${title}, move its ${service} ticket to ${row.name}` }))));
+      }
+      body.child(this.switchRow(`update-${provider}-link`, "Link pull requests to the ticket", `Adds “PR #N: title” to the ${service} ticket when its pull request opens`,
+        Boolean(setup.link), cx => this.act({ type: "ticketUpdates", provider, link: !setup.link }, cx), t));
+      if (provider === "linear") body.child(this.label("Linear updates need a connection with Write permission.", t));
+    }
+  }
+  ticketUpdateDetail(body, task, t) {
+    const ticket = task.ticket, service = SOURCES[ticket.provider], failed = ticket.failed ?? [];
+    for (const update of failed) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked)
+      .child(`${update.kind === "link" ? `Couldn't link PR #${update.number}` : `Couldn't move it to ${update.state.name}`}: ${update.error}`));
+    if (failed.length) body.child(h_flex().gap(8).flex_wrap()
+      .child(this.button(`ticket-retry-${task.id}`, "Try again", cx => this.act({ type: "ticketRetry", id: task.id }, cx), t, { icon: "reset", hint: `Make the ${service} update again` }))
+      .when(ticket.provider === "linear" && failed.some(update => update.errorKind === "write_access"), el => el.child(this.button(`linear-connect-${task.id}`, "Connect Linear", () => this.connectLinear(), t,
+        { icon: "linear", hint: "Opens a terminal that asks privately for a key with Write permission" }))));
+    else if (ticket.pending?.length) body.child(this.label(`Updating ${service}…`, t));
+    else if (ticket.update?.ok) body.child(this.label(ticket.update.text, t));
   }
   tuning(body, state, t) {
     const key = this.agentKey(state), options = AGENT_OPTIONS[key];
@@ -1055,6 +1116,7 @@ export default class Pipeline extends View {
     const ticket = task.ticket, service = SOURCES[ticket?.provider];
     if (service) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${service} ${ticket.key} · ${ticket.status} · ${task.source}`))
       .when(Boolean(ticket.url), el => el.child(this.button(`${ticket.provider}-link-${task.id}`, `Open in ${service}`, () => this.openLink(ticket.url), t, { small: true, icon: ticket.provider, hint: ticket.url }))));
+    if (service) this.ticketUpdateDetail(body, task, t);
     if (task.status === "queued") {
       body.child(this.heading("Details for the agent"));
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));

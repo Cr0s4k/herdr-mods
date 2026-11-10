@@ -37,7 +37,7 @@ globalThis.__pipelineView = {
   shared: key => world.data[key], setShared: (key, value) => { world.data[key] = value; },
   props: () => ({ context: world.context ?? { id: "project", name: "Project" } }), appWindow: () => ({ platform: "linux", active: true }),
   theme: () => new Proxy({}, { get: (_obj, key) => key }),
-  settings: () => ({ zoom: 1.1 }),
+  settings: () => ({ zoom: 1.1 }), appHome: () => "/app",
   localStorage: { getItem: key => world.storage.get(key) ?? null, setItem: (key, value) => world.storage.set(key, value) },
 };
 const uiSource = (await readFile(new URL("../mods/pipeline/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -671,6 +671,63 @@ test("a missing Linear connection points to the Linear panel", async () => {
   click(view, "open-linear");
   assert.deepEqual(world.runs.at(-1), ["tabs-show.linear", undefined]);
   world.planeReply = null;
+});
+
+test("Live settings choose ticket updates per tracker from its states, off by default", async () => {
+  const view = setupLive();
+  view.act({ type: "addTickets", provider: "linear", issues: [{ uuid: "u-1", identifier: "PRO-1", title: "T", team: "Core" }] }, cx);
+  world.planeCalls = [];
+  world.planeReply = (payload, provider) => provider === "plane" ? { states: [{ id: "doing", name: "In Progress", group: "started" }, { id: "done", name: "Done", group: "completed" }] }
+    : { states: [{ id: "In Review", name: "In Review", type: "started" }] };
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  view.open("settings", spawning);
+  while (spawned.length) await spawned.shift()(spawning);
+  assert.deepEqual(world.planeCalls.map(call => [call.provider, call.op, call.context?.cwd ?? call.teams.join()]), [["plane", "states", "/work/shop"], ["linear", "states", "Core"]]);
+  let scene = view.render(cx);
+  assert.match(text(scene), /Ticket updates/);
+  for (const provider of ["plane", "linear"]) for (const kind of ["start", "merge"]) assert.equal(find(scene, `update-${provider}-${kind}-none`).styles.bg[0], "selected", "Don't change is the default");
+  assert.equal(find(scene, "update-plane-link").styles.checked[0], false);
+  click(view, "update-plane-start-doing");
+  click(view, "update-plane-merge-done");
+  find(view.render(cx), "update-linear-link").handlers.on_change(true, cx);
+  click(view, "update-linear-merge-In Review");
+  assert.deepEqual(view.state().ticketUpdates, { plane: { start: { id: "doing", name: "In Progress" }, merge: { id: "done", name: "Done" }, link: false },
+    linear: { start: null, merge: { id: "In Review", name: "In Review" }, link: true } });
+  scene = view.render(cx);
+  assert.equal(find(scene, "update-plane-start-doing").styles.bg[0], "selected");
+  assert.equal(find(scene, "update-linear-link").styles.checked[0], true);
+  view.updateStates.plane = { loading: false, states: [], error: "Connect Plane with its instance URL, workspace slug and API key." };
+  scene = view.render(cx);
+  assert.ok(find(scene, "update-plane-start-doing"), "a saved state stays visible when states can't be read");
+  assert.match(text(scene), /Connect Plane with its instance URL/);
+  click(view, "update-plane-start-none");
+  assert.equal(view.state().ticketUpdates.plane.start, null);
+  world.planeReply = null;
+});
+
+test("a ticket task's inspector shows its last update, or the failure with Try again", () => {
+  const view = setupLive();
+  view.act({ type: "addTickets", provider: "linear", issues: [{ uuid: "u-1", identifier: "PRO-1", title: "T", team: "Core", url: "https://linear.test/PRO-1" }] }, cx);
+  view.act({ type: "ticketUpdates", provider: "linear", start: { id: "In Progress", name: "In Progress" } }, cx);
+  view.act({ type: "run" }, cx);
+  view.act({ type: "launched", id: "PRO-1", space: "s9", tab: "tb9", terminal: "t9", agent: "Claude Code" }, cx);
+  view.inspect("PRO-1", cx);
+  assert.match(text(view.render(cx)), /Updating Linear…/);
+  const n = () => row(view, "PRO-1").ticket.pending[0].n;
+  view.act({ type: "ticketUpdated", id: "PRO-1", n: n(), ok: false, error: "Pipeline needs write access to Linear. Connect a key with Write permission.", errorKind: "write_access" }, cx);
+  let scene = view.render(cx);
+  assert.equal(row(view, "PRO-1").status, "working", "a failed update leaves the task alone");
+  assert.match(text(scene), /Couldn't move it to In Progress: Pipeline needs write access to Linear/);
+  assert.match(text(scene), /couldn't update Linear/, "the task history records it");
+  click(view, "linear-connect-PRO-1");
+  assert.deepEqual(world.runs.at(-1), ["tab.new", { name: "Connect Linear", argv: ["python3", "/app/mods/linear/herdr-linear", "--home", "/app", "connect"], space: "sp-project" }]);
+  click(view, "ticket-retry-PRO-1");
+  assert.deepEqual(row(view, "PRO-1").ticket.failed, []);
+  view.act({ type: "ticketUpdated", id: "PRO-1", n: n(), ok: true, changed: true }, cx);
+  scene = view.render(cx);
+  assert.equal(find(scene, "ticket-retry-PRO-1"), undefined);
+  assert.match(text(scene), /Moved to In Progress in Linear/);
+  assert.match(text(scene), /Linear PRO-1 · In Progress/);
 });
 
 test("a newer save shows an explanation instead of the scene and is not overwritten", () => {

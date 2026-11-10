@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Read Linear through its official MCP server. Credentials never leave this process."""
+"""Read Linear through its official MCP server, and make the two updates Pipeline needs. Credentials never leave this process."""
 import argparse
 import getpass
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ENDPOINT = "https://mcp.linear.app/mcp"
 FIELDS = ["id", "uuid", "title", "status", "statusType", "assignee", "assigneeId",
           "team", "project", "priority", "url", "updatedAt"]
+READS = {"list_issues", "get_issue", "list_projects", "list_issue_statuses", "get_user"}
+# Each write is a tool and the exact arguments it may take; every other write is refused.
+WRITES = {("save_issue", ("id", "state")), ("save_issue", ("id", "links"))}
+WRITE_ACCESS = "Pipeline needs write access to Linear. Connect a key with Write permission."
+DENIED = re.compile(r"permission|scope|forbidden|not allowed|unauthori[sz]ed|read[- ]?only|access denied", re.I)
 
 
 class LinearError(Exception):
@@ -22,7 +29,7 @@ class LinearError(Exception):
         self.kind = kind
 
 
-def credential(app_home):
+def credential(app_home, write=False):
     token = os.environ.get("LINEAR_API_KEY", "").strip()
     if token:
         return token, "API key"
@@ -54,13 +61,22 @@ def credential(app_home):
     entries = [entry for data in candidates for entry in data.get("mcpOAuth", {}).values()
                if isinstance(entry, dict) and entry.get("serverUrl", "").rstrip("/") in
                (ENDPOINT, ENDPOINT + "/readonly") and entry.get("accessToken")]
+    if write and entries:
+        entries = [entry for entry in entries if entry.get("serverUrl", "").rstrip("/") == ENDPOINT]
+        if not entries:
+            raise LinearError(WRITE_ACCESS, "write_access")
     if entries:
         entry = max(entries, key=lambda item: item.get("expiresAt", 0) or 0)
         return entry["accessToken"], "Claude login"
     raise LinearError("Connect Linear to browse your tickets.", "auth")
 
 
-def parse_rpc(raw):
+def denied(data):
+    text = json.dumps(data)[:4000]
+    return bool(DENIED.search(text))
+
+
+def parse_rpc(raw, write=False):
     # Streamable HTTP may return either JSON or a stream containing a JSON-RPC event.
     try:
         data = json.loads(raw)
@@ -77,11 +93,15 @@ def parse_rpc(raw):
                     continue
         if data is None:
             raise LinearError("Linear returned an unreadable response. Try refreshing.")
-    if data.get("error"):
-        raise LinearError("Linear could not complete the request. Try refreshing.")
     result = data.get("result", {})
-    if result.get("isError"):
+    if data.get("error") or result.get("isError"):
         # Do not echo arbitrary transport output, which could contain credential details.
+        if write and denied(data.get("error") or result):
+            raise LinearError(WRITE_ACCESS, "write_access")
+        if write:
+            raise LinearError("Linear refused the update. Check the ticket and its team's states in Linear.")
+        if data.get("error"):
+            raise LinearError("Linear could not complete the request. Try refreshing.")
         raise LinearError("Linear could not load these tickets. Check the search or project and retry.")
     if isinstance(result.get("structuredContent"), dict):
         return result["structuredContent"]
@@ -95,7 +115,8 @@ def parse_rpc(raw):
 
 
 def call(token, name, arguments):
-    if name not in {"list_issues", "get_issue", "list_projects", "list_issue_statuses", "get_user"}:
+    write = (name, tuple(sorted(arguments))) in WRITES
+    if name not in READS and not write:
         raise LinearError("Unsupported Linear operation.")
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": name, "arguments": arguments}}
@@ -104,21 +125,59 @@ def call(token, name, arguments):
         "Accept": "application/json, text/event-stream"})
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
-            return parse_rpc(response.read(4 * 1024 * 1024).decode())
+            return parse_rpc(response.read(4 * 1024 * 1024).decode(), write)
     except urllib.error.HTTPError as error:
+        if write and error.code == 403:
+            raise LinearError(WRITE_ACCESS, "write_access")
         if error.code in (401, 403):
             raise LinearError("Your Linear connection needs attention. Reconnect in Claude with /mcp, or connect an API key below.", "auth")
         if error.code == 429:
             raise LinearError("Linear is rate limiting requests. Wait a moment, then refresh.", "rate_limit")
+        if write and error.code >= 500:
+            raise LinearError("Linear could not confirm the update. Check the ticket in Linear before trying again.", "uncertain")
         raise LinearError("Linear is unavailable. Try refreshing in a moment.")
     except (urllib.error.URLError, TimeoutError, OSError):
+        if write:
+            raise LinearError("The update could not be confirmed. Check the ticket in Linear before trying again.", "uncertain")
         raise LinearError("Cannot reach Linear. Check your connection, then refresh.")
 
 
+def named(value):
+    return str((value.get("name") if isinstance(value, dict) else value) or "")
+
+
+def attachments(issue):
+    found = issue.get("attachments") or []
+    if isinstance(found, dict):
+        found = found.get("nodes") or found.get("attachments") or []
+    return [row for row in found if isinstance(row, dict)] if isinstance(found, list) else []
+
+
 def request(app_home, payload):
-    token, source = credential(app_home)
     operation = payload.get("op", "issues")
-    if operation == "issues":
+    token, source = credential(app_home, operation in ("update_state", "add_link"))
+    if operation == "update_state":
+        issue_id, state = str(payload.get("id") or ""), str(payload.get("state") or "").strip()
+        if not issue_id or not state:
+            raise LinearError("Choose a Linear state for Pipeline to set.", "validation")
+        issue = call(token, "get_issue", {"id": issue_id, "fields": ["id", "status"]})
+        if named(issue.get("status")).casefold() == state.casefold():
+            data = {"changed": False}
+        else:
+            call(token, "save_issue", {"id": issue_id, "state": state})
+            data = {"changed": True}
+    elif operation == "add_link":
+        issue_id, url = str(payload.get("id") or ""), str(payload.get("url") or "").strip()
+        title = str(payload.get("title") or "").strip()[:255] or url
+        if not issue_id or urllib.parse.urlsplit(url).scheme not in ("https", "http") or len(url) > 2000:
+            raise LinearError("Pipeline can only link a web address.", "validation")
+        issue = call(token, "get_issue", {"id": issue_id, "fields": ["id", "attachments"]})
+        if any(str(row.get("url", "")).rstrip("/") == url.rstrip("/") for row in attachments(issue)):
+            data = {"changed": False}
+        else:
+            call(token, "save_issue", {"id": issue_id, "links": [{"url": url, "title": title}]})
+            data = {"changed": True}
+    elif operation == "issues":
         args = {"limit": 50, "fields": FIELDS, "includeArchived": False, "orderBy": "updatedAt"}
         if payload.get("scope") == "mine":
             args["assignee"] = "me"
@@ -176,7 +235,7 @@ def request(app_home, payload):
 
 
 def connect(app_home):
-    print("Connect Linear\n\nCreate a personal API key with Read permission at:\nhttps://linear.app/settings/account/security\n")
+    print("Connect Linear\n\nCreate a personal API key with Read permission, plus Write if Pipeline should update tickets, at:\nhttps://linear.app/settings/account/security\n")
     token = getpass.getpass("Paste your API key (hidden): ").strip()
     if not token:
         raise LinearError("No key entered. Your existing connection was kept.", "auth")

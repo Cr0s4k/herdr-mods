@@ -288,6 +288,28 @@ function unlink(state, id) {
     event(state, `${task.id} no longer waits for ${id}, which was removed.`, task.id);
   }
 }
+export const UPDATE_KINDS = { start: "When its agent starts", merge: "When the work merges" };
+// Ticket updates wait on the task until the runner makes them; none of them changes the task's own status.
+function ticketUpdate(state, task, kind) {
+  const ticket = task.ticket, setup = state.ticketUpdates?.[ticket?.provider];
+  if (!ticket || !setup) return;
+  let update;
+  if (kind === "link") {
+    if (!setup.link || !task.pr?.url) return;
+    update = { kind, url: task.pr.url, number: task.pr.number, title: `PR #${task.pr.number}: ${task.title}` };
+  } else {
+    if (!setup[kind]?.id || (kind === "start" && ticket.moved?.includes("start"))) return;
+    update = { kind, state: { id: setup[kind].id, name: setup[kind].name } };
+  }
+  ticket.serial = (ticket.serial ?? 0) + 1;
+  ticket.pending = [...(ticket.pending ?? []).filter(other => other.kind !== kind), { ...update, n: ticket.serial }];
+  ticket.failed = (ticket.failed ?? []).filter(other => other.kind !== kind);
+}
+export function updateText(ticket, update, changed = true) {
+  const service = SOURCES[ticket?.provider] ?? "its tracker";
+  if (update.kind === "link") return changed ? `Linked PR #${update.number} in ${service}` : `PR #${update.number} was already linked in ${service}`;
+  return changed ? `Moved to ${update.state.name} in ${service}` : `Already ${update.state.name} in ${service}`;
+}
 function reviewed(state, task) {
   if (state.delivery === "pr" ? state.autoPr : state.autoMerge) approve(state, task);
 }
@@ -377,7 +399,7 @@ export function reduce(state, action, now = Date.now()) {
         let id = String(issue.identifier || `T-${++next.created}`);
         if (next.tasks.some(task => task.id === id)) { let n = 2; while (next.tasks.some(task => task.id === `${id}-${n}`)) n++; id = `${id}-${n}`; }
         next.tasks.push(liveTask(next, { id, title: String(issue.title).slice(0, 200), description: String(issue.description ?? "").slice(0, 8000),
-          priority: PRIORITIES[issue.priority?.name] ?? 1, ticket: { provider, uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status },
+          priority: PRIORITIES[issue.priority?.name] ?? 1, ticket: { provider, uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status, ...(issue.team ? { team: String(issue.team) } : {}) },
           blockers: cleanBlockers(issue.blockers) }, action.source ?? name));
         next.claimed = [...next.claimed.filter(uuid => uuid !== issue.uuid), issue.uuid].slice(-500);
         event(next, `${id} joined the queue · ${action.source ?? name}`, id);
@@ -395,6 +417,50 @@ export function reduce(state, action, now = Date.now()) {
       next.watching = { ...next.watching, [provider]: watch };
       next.sourceErrors = { ...next.sourceErrors, [provider]: null };
       event(next, watch ? `Watching ${name} for tickets in ${watch.name}${watch.filter?.label ? ` · ${watch.filter.label}` : ""}.` : `Stopped watching ${name}.`);
+      break;
+    }
+    case "ticketUpdates": {
+      const provider = action.provider, name = SOURCES[provider];
+      if (!next.live || !name) return state;
+      const now = { start: null, merge: null, link: false, ...next.ticketUpdates?.[provider] }, value = { ...now };
+      for (const kind of Object.keys(UPDATE_KINDS)) if (kind in action) value[kind] = action[kind]?.id ? { id: String(action[kind].id), name: String(action[kind].name ?? action[kind].id) } : null;
+      if ("link" in action) value.link = Boolean(action.link);
+      if (JSON.stringify(value) === JSON.stringify(now)) return state;
+      next.ticketUpdates = { ...next.ticketUpdates, [provider]: value };
+      const changes = [value.start && `move to ${value.start.name} when their agent starts`, value.merge && `move to ${value.merge.name} when their work merges`,
+        value.link && "get their pull request linked"].filter(Boolean);
+      event(next, changes.length ? `${name} tickets ${changes.join(", ").replace(/, ([^,]*)$/, " and $1")}.` : `Pipeline no longer updates ${name} tickets.`);
+      break;
+    }
+    case "ticketUpdated": {
+      const task = row(action.id), ticket = task?.ticket, update = ticket?.pending?.find(other => other.n === action.n);
+      if (!next.live || !update) return state;
+      const service = SOURCES[ticket.provider];
+      ticket.pending = ticket.pending.filter(other => other !== update);
+      const { n, ...request } = update;
+      if (action.ok) {
+        const text = updateText(ticket, update, action.changed !== false);
+        ticket.update = { kind: update.kind, ok: true, error: null, at: now, text };
+        ticket.moved = [...new Set([...(ticket.moved ?? []), update.kind])];
+        if (update.state) ticket.status = update.state.name;
+        event(next, `${task.id} · ${text[0].toLowerCase()}${text.slice(1)}.`, task.id);
+      } else {
+        const error = String(action.error || `${service} could not be updated.`).slice(0, 300);
+        ticket.update = { kind: update.kind, ok: false, error, errorKind: action.errorKind ?? null, at: now };
+        ticket.failed = [...(ticket.failed ?? []).filter(other => other.kind !== update.kind), { ...request, error, errorKind: action.errorKind ?? null }];
+        event(next, `${task.id} · couldn't update ${service} · ${error}`, task.id);
+      }
+      break;
+    }
+    case "ticketRetry": {
+      const task = row(action.id), ticket = task?.ticket;
+      if (!next.live || !ticket?.failed?.length) return state;
+      for (const { error, errorKind, ...update } of ticket.failed) {
+        ticket.serial = (ticket.serial ?? 0) + 1;
+        ticket.pending = [...(ticket.pending ?? []).filter(other => other.kind !== update.kind), { ...update, n: ticket.serial }];
+      }
+      ticket.failed = [];
+      event(next, `${task.id} · trying the ${SOURCES[ticket.provider]} update again.`, task.id);
       break;
     }
     case "sourceError": {
@@ -468,6 +534,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "routing") return state;
       Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, tuning: action.tuning || null, error: null });
       event(next, `${task.id} · ${action.agent ?? "agent"} started on ${task.workspace?.branch ?? "its branch"}.`, task.id);
+      ticketUpdate(next, task, "start");
       break;
     }
     case "launchFailed": {
@@ -592,6 +659,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "merging") return state;
       Object.assign(task, { status: "pr", merge: false, error: null, pr: { url: action.url, number: action.number } });
       event(next, `${task.id} · pull request #${action.number} opened. It finishes when it's merged on GitHub.`, task.id);
+      ticketUpdate(next, task, "link");
       break;
     }
     case "prStatus": {
@@ -613,6 +681,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || !["merging", "pr"].includes(task?.status)) return state;
       Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null });
       event(next, `${task.id} merged into ${action.target}.`, task.id);
+      ticketUpdate(next, task, "merge");
       break;
     }
     case "mergeFailed": {
