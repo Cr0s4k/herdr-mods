@@ -4,8 +4,9 @@ import { readFile } from "node:fs/promises";
 
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
-const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, tuningFor, tuningLabel } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
+const liveFile = await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8");
+const liveImports = liveFile.match(/^import \{([^}]*)\} from "\.\/pipeline-model\.js";/m)[1];
+const live = await import(`data:text/javascript,${encodeURIComponent(`const {${liveImports}} = globalThis.__pipelineLiveModel;\n${liveFile.replace(/^import .*;\n/gm, "")}`)}`);
 const { STORE, LIVE, createLive, createPipeline, reduce, activeTasks } = model;
 const context = { id: "project", name: "shop", cwd: "/work/shop", on: null };
 const id = `${LIVE}project`;
@@ -24,7 +25,7 @@ function host(state, overrides = {}) {
       return { root: `/wt/${payload.ticket.key}`, cwd: `/wt/${payload.ticket.key}`, branch: `pipeline/${payload.ticket.key}-abc` };
     },
     async delivery(_context, payload) { world.scripts.push(["delivery", payload]); return { target: "main" }; },
-    start: (_context, task, workspace, agent, space) => { world.started.push({ task: task.id, workspace, agent: agent.name, space }); return space ? "tab" : "space"; },
+    start: (_context, task, workspaces, agent, space) => { world.started.push({ task: task.id, workspaces, agent: agent.name, run: agent.run, space }); return space ? "tab" : "space"; },
     keys: async (terminal, keys) => world.calls.push(["keys", terminal, ...keys]),
     locate: async () => ({ space: "s9", tab: "tb9", terminal: "t9" }),
     ...overrides,
@@ -66,12 +67,13 @@ test("a launch makes a worktree, starts the chosen agent there and tracks its te
   const task = row(world.state(), "T-1");
   assert.equal(task.status, "working");
   assert.deepEqual([task.terminal, task.space, task.agent], ["t9", "s9", "Claude Code"]);
-  assert.equal(task.workspace.branch, "pipeline/T-1-add-a-dark-mode-toggle-abc");
+  assert.equal(task.workspaces.shop.branch, "pipeline/T-1-add-a-dark-mode-toggle-abc");
+  assert.equal(task.workspaces.shop.source, "/work/shop");
   assert.deepEqual(world.scripts.map(([, payload]) => payload.op), ["inspect", "create"]);
   assert.equal(world.scripts[0][1].provider, "pipeline");
-  assert.deepEqual(world.started, [{ task: "T-1", workspace: task.workspace, agent: "Claude Code", space: undefined }]);
+  assert.deepEqual(world.started, [{ task: "T-1", workspaces: model.workspacesOf(task), agent: "Claude Code", run: ["claude"], space: undefined }]);
   assert.equal(task.own, "space", "without a known space, the agent gets its own");
-  assert.match(live.prompt(task, task.workspace), /^Add a dark mode toggle\n\nHerdr Pipeline made an isolated Git worktree[\s\S]*merges it into main\.$/);
+  assert.match(live.prompt(task, model.workspacesOf(task)), /^Add a dark mode toggle\n\nHerdr Pipeline made an isolated Git worktree[\s\S]*merges it into main\.$/);
 });
 
 test("a chosen agent wins over the first installed one, and a missing agent fails the launch clearly", async () => {
@@ -109,7 +111,7 @@ test("Codex models are read from its own cache, hidden ones left out, in its ord
 test("an unconfirmed start is never replayed after a restart", async () => {
   const state = reduce(typed("A", "B"), { type: "run" }, 0);
   Object.assign(row(state, "T-1"), { launch: "starting" });
-  Object.assign(row(state, "T-2"), { launch: "creating", workspace: { root: "/wt/b", cwd: "/wt/b", branch: "pipeline/b", base: "b".repeat(40), target: "main" } });
+  Object.assign(row(state, "T-2"), { launch: "creating", workspaces: { shop: { root: "/wt/b", cwd: "/wt/b", branch: "pipeline/b", base: "b".repeat(40), target: "main", source: "/work/shop" } } });
   const world = host(state);
   const runner = new live.LiveRunner(world.host);
   runner.start();
@@ -153,7 +155,7 @@ test("merging lands the branch, closes the agent's space and removes the worktre
   world.scripts = [];
   await step(runner);
   const task = row(world.state(), "T-1");
-  assert.deepEqual([task.status, task.workspace, task.terminal], ["done", null, null]);
+  assert.deepEqual([task.status, task.workspaces, task.terminal], ["done", null, null]);
   assert.deepEqual(world.scripts.map(([, payload]) => [payload.op, payload.force]), [["merge", undefined], ["remove", false]]);
   assert.equal(world.scripts[0][1].title, "T-1 A");
   assert.deepEqual(world.calls.at(-1), ["space.close", { id: "s9", confirmed: true }]);
@@ -173,7 +175,7 @@ test("a refused merge returns the task to review with the reason", async () => {
   const task = row(world.state(), "T-1");
   assert.deepEqual([task.status, task.merge], ["review", false]);
   assert.match(task.error, /uncommitted changes/);
-  assert.ok(task.workspace, "nothing is cleaned up");
+  assert.ok(task.workspaces, "nothing is cleaned up");
 });
 
 test("discarding stops the agent and force-removes its worktree and branch", async () => {
@@ -201,7 +203,7 @@ test("a task discarded while its worktree is being made never starts an agent", 
   });
   await step(new live.LiveRunner(world.host));
   assert.deepEqual(world.started, []);
-  assert.equal(row(world.state(), "T-1").planned.branch, "pipeline/a", "a discard can still find what it planned");
+  assert.equal(row(world.state(), "T-1").planned.shop.branch, "pipeline/a", "a discard can still find what it planned");
 });
 
 test("only one job runs at a time", () => {
@@ -455,8 +457,8 @@ test("with pull request delivery, approving pushes the branch and opens a PR int
   assert.deepEqual([publish.op, publish.target, publish.title, publish.branch], ["publish", "main", "Add a dark mode toggle", "pipeline/T-1-add-a-dark-mode-toggle-abc"]);
   assert.match(publish.body, /^Add a dark mode toggle\n\nOpened by Herdr Pipeline from pipeline\//);
   const task = row(world.state(), "T-1");
-  assert.deepEqual([task.status, task.merge, task.pr], ["pr", false, { url: "https://github.com/me/shop/pull/12", number: 12 }]);
-  assert.ok(task.workspace && task.terminal, "nothing is cleaned up while the PR is open");
+  assert.deepEqual([task.status, task.merge, task.prs], ["pr", false, { shop: { url: "https://github.com/me/shop/pull/12", number: 12 } }]);
+  assert.ok(task.workspaces && task.terminal, "nothing is cleaned up while the PR is open");
 });
 
 test("a merged PR finishes the task and cleans up; a closed one returns it to review", async () => {
@@ -474,7 +476,7 @@ test("a merged PR finishes the task and cleans up; a closed one returns it to re
   github = { state: "MERGED" };
   world.clock(62000); await settle(runner);
   const task = row(world.state(), "T-1");
-  assert.deepEqual([task.status, task.workspace, task.terminal], ["done", null, null]);
+  assert.deepEqual([task.status, task.workspaces, task.terminal], ["done", null, null]);
   assert.deepEqual(world.scripts.at(-1)[1].op === "remove" && world.scripts.at(-1)[1].force, true, "the merged branch is deleted locally");
   assert.match(world.state().events.find(event => /merged into/.test(event.message)).message, /merged into main on GitHub \(#12\)/);
 
@@ -486,7 +488,7 @@ test("a merged PR finishes the task and cleans up; a closed one returns it to re
   await step(again);
   closed.clock(1000); await settle(again);
   const back = row(closed.state(), "T-1");
-  assert.deepEqual([back.status, back.pr, back.error], ["review", null, "Pull request #12 was closed without merging."]);
+  assert.deepEqual([back.status, back.prs, back.error], ["review", null, "Pull request #12 was closed without merging."]);
 });
 
 test("an open PR keeps what it waits for from GitHub, without rewriting state when nothing changed", async () => {
@@ -499,7 +501,7 @@ test("an open PR keeps what it waits for from GitHub, without rewriting state wh
   await step(runner);
   world.clock(1000); await settle(runner);
   const task = row(world.state(), "T-1");
-  assert.deepEqual([task.status, task.pr.status], ["pr", waiting]);
+  assert.deepEqual([task.status, task.prs.shop.status], ["pr", waiting]);
   assert.equal(model.prNeeds(task).label, "Checks failing · 1");
   const before = world.state();
   github = { state: "OPEN", status: { ...waiting } };
@@ -508,11 +510,11 @@ test("an open PR keeps what it waits for from GitHub, without rewriting state wh
   github = { state: "OPEN", status: { ...waiting, failed: 0, failing: [], passed: 4, review: "APPROVED", mergeState: "CLEAN" } };
   world.clock(123000); await settle(runner);
   assert.equal(model.prNeeds(row(world.state(), "T-1")).label, "Ready to merge");
-  assert.equal(reduce(world.state(), { type: "prStatus", id: "T-1", url: "https://github.com/me/shop/pull/99", status: waiting }, 0), world.state(), "another PR's answer is ignored");
+  assert.equal(reduce(world.state(), { type: "prStatus", id: "T-1", repo: "shop", url: "https://github.com/me/shop/pull/99", status: waiting }, 0), world.state(), "another PR's answer is ignored");
 });
 
 test("a PR's most pressing need comes first", () => {
-  const needs = status => model.prNeeds({ pr: { number: 3, status: status && { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 0, ...status } }, workspace: { target: "main" } });
+  const needs = status => model.prNeeds({ repos: ["shop"], prs: { shop: { number: 3, status: status && { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 0, ...status } } }, workspaces: { shop: { target: "main" } } });
   assert.deepEqual(needs(null), { label: "PR #3 open", tone: "wait" });
   assert.equal(needs({ draft: true, failed: 2 }).label, "Draft · mark it ready");
   assert.deepEqual(needs({ mergeable: "CONFLICTING", failed: 2 }), { label: "Conflicts with main", tone: "blocked" });
@@ -524,7 +526,7 @@ test("a PR's most pressing need comes first", () => {
   assert.equal(needs({ mergeState: "BLOCKED" }).label, "Blocked by branch rules");
   assert.equal(needs({ mergeState: "UNKNOWN" }).label, "GitHub is checking it");
   assert.deepEqual(needs({ review: "APPROVED", passed: 4 }), { label: "Ready to merge", tone: "ready" });
-  const list = model.prChecklist({ pr: { status: { draft: false, mergeable: "MERGEABLE", mergeState: "BEHIND", review: "APPROVED", failed: 1, failing: ["lint"], pending: 0, passed: 2 } }, workspace: { target: "main" } });
+  const list = model.prChecklist({ status: { draft: false, mergeable: "MERGEABLE", mergeState: "BEHIND", review: "APPROVED", failed: 1, failing: ["lint"], pending: 0, passed: 2 } }, "main");
   assert.deepEqual(list.map(item => [item.name, item.value, item.tone]), [["Checks", "1 failing: lint", "blocked"], ["Review", "Approved", "ready"], ["Merge", "Behind main. Update the branch", "wait"]]);
 });
 
@@ -564,7 +566,7 @@ test("with pull requests opening automatically, finished work pushes without wai
   let state = reduce(reduce(reduce(typed("A"), { type: "deliver", value: "pr" }, 0), { type: "autoPr" }, 0), { type: "check", command: "npm test", fix: false }, 0);
   state = reduce(state, { type: "run" }, 0);
   const task = row(state, "T-1");
-  Object.assign(task, { status: "testing", checkRun: 1, workspace: { root: "/wt/T-1", branch: "b", base: "a", target: "main" } });
+  Object.assign(task, { status: "testing", checkRun: 1, workspaces: { shop: { root: "/wt/T-1", branch: "b", base: "a", target: "main" } } });
   assert.equal(row(reduce(state, { type: "checkPassed", id: "T-1", run: 1 }, 0), "T-1").status, "merging");
   const failed = reduce(state, { type: "checkFailed", id: "T-1", run: 1, fix: false }, 0);
   assert.equal(row(reduce(failed, { type: "reviewAnyway", id: "T-1" }, 0), "T-1").status, "review", "failing checks still wait for you");
@@ -580,7 +582,7 @@ test("with merging automatic, finished work merges without waiting for approval"
 
   let state = reduce(reduce(typed("A"), { type: "autoMerge" }, 0), { type: "check", command: "npm test", fix: false }, 0);
   state = reduce(state, { type: "run" }, 0);
-  Object.assign(row(state, "T-1"), { status: "testing", checkRun: 1, workspace: { root: "/wt/T-1", branch: "b", base: "a", target: "main" } });
+  Object.assign(row(state, "T-1"), { status: "testing", checkRun: 1, workspaces: { shop: { root: "/wt/T-1", branch: "b", base: "a", target: "main" } } });
   assert.equal(row(reduce(state, { type: "checkPassed", id: "T-1", run: 1 }, 0), "T-1").status, "merging");
   const failed = reduce(state, { type: "checkFailed", id: "T-1", run: 1, fix: false }, 0);
   assert.equal(row(reduce(failed, { type: "reviewAnyway", id: "T-1" }, 0), "T-1").status, "review", "failing checks still wait for you");
@@ -838,4 +840,312 @@ test("a result for an update that is no longer pending changes nothing", () => {
   const n = row(state, "HMOD-1").ticket.pending[0].n;
   assert.equal(reduce(state, { type: "ticketUpdated", id: "HMOD-1", n: n + 1, ok: true }, 0), state);
   assert.equal(row(reduce(state, { type: "discarded", id: "HMOD-1" }, 0), "HMOD-1"), undefined);
+});
+
+const across = (...titles) => {
+  let state = reduce(typed(...titles), { type: "addRepository", path: "/work/api" }, 0);
+  for (const task of state.tasks) state = reduce(state, { type: "repos", id: task.id, repo: "api" }, 0);
+  return state;
+};
+const RUN = "abc123abc123";
+function multi(state, overrides = {}) {
+  const world = host(state, {
+    async worktree(at, payload) {
+      const repo = at.cwd.split("/").pop(), key = (payload.tickets?.[0] ?? payload.ticket).key, run = payload.runId ?? RUN;
+      world.scripts.push(["worktree", { ...payload, at: at.cwd }]);
+      if (payload.op === "inspect") return { base: "a".repeat(40), branch: "main", runId: run, workspaces: [{ root: `/wt/${repo}/${key}`, branch: `pipeline/${key}-${run}` }] };
+      return { root: `/wt/${repo}/${key}`, cwd: `/wt/${repo}/${key}`, branch: payload.plan.workspaces[0].branch };
+    },
+    ...overrides,
+  });
+  return world;
+}
+
+test("Live settings keep the project repository first and add others once, with unique names", () => {
+  let state = createLive(context, 0);
+  assert.deepEqual(state.repositories, [{ name: "shop", path: "/work/shop" }]);
+  state = reduce(state, { type: "addRepository", path: "/work/api/" }, 0);
+  state = reduce(state, { type: "addRepository", path: "/other/shop" }, 0);
+  assert.deepEqual(state.repositories.map(repo => [repo.name, repo.path]), [["shop", "/work/shop"], ["api", "/work/api"], ["shop-2", "/other/shop"]]);
+  assert.equal(reduce(state, { type: "addRepository", path: "/work/api" }, 0), state, "a repository is added once");
+  assert.equal(reduce(state, { type: "removeRepository", name: "shop" }, 0), state, "the project repository stays");
+  assert.equal(reduce(createPipeline(context, 0), { type: "addRepository", path: "/x" }, 0).repositories, undefined);
+
+  state = reduce(state, { type: "create", title: "Checkout" }, 0);
+  state = reduce(state, { type: "addTickets", provider: "linear", issues: [{ uuid: "u-1", identifier: "PRO-1", title: "Ticket" }] }, 0);
+  assert.deepEqual([row(state, "T-1").repos, row(state, "PRO-1").repos], [["shop"], ["shop"]], "new tasks start with the project repository only");
+  state = reduce(reduce(state, { type: "repos", id: "T-1", repo: "api" }, 0), { type: "repos", id: "T-1", repo: "shop-2" }, 0);
+  assert.deepEqual(row(state, "T-1").repos, ["shop", "api", "shop-2"]);
+  state = reduce(state, { type: "repos", id: "T-1", repo: "shop" }, 0);
+  assert.deepEqual(row(state, "T-1").repos, ["api", "shop-2"], "a task may leave the project repository out");
+  assert.equal(reduce(state, { type: "repos", id: "T-1", repo: "web" }, 0), state, "only known repositories");
+  state = reduce(state, { type: "removeRepository", name: "api" }, 0);
+  assert.deepEqual(row(state, "T-1").repos, ["shop-2"], "a removed repository leaves queued tasks");
+  state = reduce(state, { type: "removeRepository", name: "shop-2" }, 0);
+  assert.deepEqual(row(state, "T-1").repos, ["shop"], "a task left with none falls back to the project");
+  assert.equal(reduce(state, { type: "repos", id: "T-1", repo: "shop" }, 0), state, "a task keeps at least one");
+});
+
+test("a task across repositories gets a worktree in each on one branch, and its agent opens them all", async () => {
+  const world = multi(reduce(across("Add checkout"), { type: "run" }, 0));
+  await step(new live.LiveRunner(world.host));
+  const task = row(world.state(), "T-1");
+  assert.equal(task.status, "working");
+  assert.deepEqual(world.scripts.map(([, payload]) => [payload.op, payload.at, payload.runId]),
+    [["inspect", "/work/shop", undefined], ["create", "/work/shop", undefined], ["inspect", "/work/api", RUN], ["create", "/work/api", undefined]]);
+  assert.deepEqual(Object.keys(task.workspaces), ["shop", "api"]);
+  assert.equal(task.workspaces.api.branch, task.workspaces.shop.branch, "the same branch name in each repository");
+  assert.equal(task.workspaces.api.source, "/work/api");
+  assert.deepEqual(world.started[0].workspaces.map(ws => ws.name), ["shop", "api"], "the agent starts in the first repository");
+  assert.deepEqual(world.started[0].run, ["claude", "--add-dir=/wt/api/T-1-add-checkout"]);
+  assert.match(live.prompt(task, world.started[0].workspaces), new RegExp(["each repository this task touches, all on the branch pipeline/T-1-add-checkout-abc123abc123:",
+    "- shop: /wt/shop/T-1-add-checkout, started from main at aaaaaaa", "- api: /wt/api/T-1-add-checkout, started from main at aaaaaaa", "Your working folder is shop's worktree"].join("\n")));
+  assert.match(world.state().events.find(item => /started on/.test(item.message)).message, /pipeline\/T-1-add-checkout-abc123abc123 in shop \+ api\.$/);
+  const limited = reduce(reduce(across("A", "B", "C"), { type: "reviewLimit", value: 5 }, 0), { type: "run" }, 0);
+  assert.deepEqual([model.outstandingCount(limited), model.waitingReason(limited, row(limited, "T-3"))], [4, "Too many branches waiting for your review"], "the review limit counts repositories");
+  assert.deepEqual(model.agentRun(createLive(context, 0), { key: "codex", run: ["codex"] }, ["/wt/x"]), ["codex", "--add-dir=/wt/x"]);
+  assert.deepEqual(model.agentRun(createLive(context, 0), { key: "aider", run: ["aider"] }, ["/wt/x"]), ["aider"], "other agents find the paths in their first message");
+});
+
+test("a launch that stopped part way reuses the worktrees it made and the same branch name", async () => {
+  const state = reduce(reduce(across("A"), { type: "deliver", value: "pr" }, 0), { type: "run" }, 0);
+  Object.assign(row(state, "T-1"), { depends: ["T-0"], unblocked: true,
+    workspaces: { shop: { root: "/wt/shop/x", cwd: "/wt/shop/x", branch: "pipeline/x-feedfeedfeed", base: "b".repeat(40), target: "main", source: "/work/shop", run: "feedfeedfeed" } } });
+  const world = multi(state);
+  await step(new live.LiveRunner(world.host));
+  assert.deepEqual(world.scripts.map(([, payload]) => [payload.op, payload.at, payload.runId, payload.remote]),
+    [["inspect", "/work/api", "feedfeedfeed", true], ["create", "/work/api", undefined, undefined]], "a task that waited fetches every repository from origin");
+  assert.equal(row(world.state(), "T-1").status, "working");
+});
+
+test("checks run in every repository's worktree, and a failure names the repository", async () => {
+  const results = { "/wt/shop/T-1-a": { code: 0, output: "shop ok" }, "/wt/api/T-1-a": { code: 1, output: "FAIL api" } };
+  const world = multi(reduce(reduce(across("A"), { type: "check", command: "npm test" }, 0), { type: "run" }, 0), {
+    check: async (_context, cwd) => { world.checks.push(cwd); return results[cwd]; }, send: async (terminal, text) => world.sent.push(text) });
+  world.checks = []; world.sent = [];
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  await finished(world, runner);
+  assert.deepEqual(world.checks, ["/wt/shop/T-1-a", "/wt/api/T-1-a"]);
+  let task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.checkRepos, task.checkOutput], ["working", ["api"], "api: failed\nFAIL api"]);
+  assert.match(world.sent[0], /^The check command failed after your change:\n\$ npm test\napi: failed\nFAIL api/, "fixes go to the one agent");
+  assert.match(world.state().events[0].message, /T-1 checks failed in api · sent the output back/);
+  results["/wt/api/T-1-a"] = { code: 0, output: "api ok" };
+  await finished(world, runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.checked, task.checkOutput], ["review", "passed", "shop: passed\nshop ok\n\napi: passed\napi ok"]);
+});
+
+async function acrossInReview(world, runner) {
+  await step(runner);
+  world.panes = [{ terminal: "t9" }];
+  world.agents = [{ address: "t9", status: "working" }]; await step(runner);
+  world.agents = [{ address: "t9", status: "done" }]; await step(runner);
+}
+
+test("merging lands every repository or none, and says which landed when a fast-forward still fails", async () => {
+  let reply = { target: "main", targets: { shop: "main", api: "main" }, merged: ["shop", "api"], failed: null };
+  const world = multi(reduce(across("A"), { type: "run" }, 0), {
+    async delivery(_at, payload) { world.scripts.push(["delivery", { ...payload, at: _at.cwd }]); if (payload.op === "merge") { if (reply instanceof Error) throw reply; return reply; } return {}; } });
+  const runner = new live.LiveRunner(world.host);
+  await acrossInReview(world, runner);
+  assert.equal(row(world.state(), "T-1").status, "review");
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  assert.match(world.state().events[0].message, /T-1 · merging into main in shop \+ api\./);
+  reply = { target: "main", targets: { shop: "main", api: "main" }, merged: ["shop"], failed: { name: "api", error: "main moved in a way the branch can't fast-forward onto." } };
+  world.scripts = [];
+  await step(runner);
+  const merge = world.scripts[0][1];
+  assert.deepEqual(merge.repos.map(repo => [repo.name, repo.root, repo.worktree, repo.base]), [["shop", "/work/shop", "/wt/shop/T-1-a", "a".repeat(40)], ["api", "/work/api", "/wt/api/T-1-a", "a".repeat(40)]]);
+  let task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.approvals], ["review", []]);
+  assert.equal(task.error, "shop merged, but api did not: main moved in a way the branch can't fast-forward onto. Merging again finishes api; shop won't merge twice.");
+  assert.equal(world.scripts.length, 1, "nothing is cleaned up");
+  reply = { target: "main", targets: { shop: "main", api: "main" }, merged: ["shop", "api"], failed: null };
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  world.scripts = [];
+  await step(runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.workspaces], ["done", null]);
+  assert.match(world.state().events.find(item => /merged into/.test(item.message)).message, /T-1 merged into main in shop \+ api\./);
+  assert.deepEqual(world.scripts.slice(1).map(([, payload]) => [payload.op, payload.at, payload.root, payload.worktree, payload.force]),
+    [["remove", "/work/shop", "/work/shop", "/wt/shop/T-1-a", false], ["remove", "/work/api", "/work/api", "/wt/api/T-1-a", false]], "every worktree and branch is removed");
+});
+
+test("one integration at a time per repository: a second task waits while the first merges", () => {
+  let state = reduce(reduce(across("A", "B"), { type: "create", title: "C" }, 0), { type: "run" }, 0);
+  for (const taskId of ["T-1", "T-2", "T-3"]) Object.assign(row(state, taskId), { status: "review", slot: null });
+  state = reduce(state, { type: "approve", id: "T-1" }, 0);
+  state = reduce(state, { type: "approve", id: "T-2" }, 0);
+  assert.deepEqual(["T-1", "T-2"].map(taskId => row(state, taskId).status), ["merging", "review"], "T-2 shares shop and api with T-1");
+  assert.equal(model.needsApproval(row(state, "T-2")), false, "approved, so it no longer waits for you");
+  assert.equal(reduce(state, { type: "approve", id: "T-2" }, 0), state);
+  state = reduce(state, { type: "removeRepository", name: "api" }, 0);
+  state = reduce(state, { type: "merged", id: "T-1", target: "main" }, 0);
+  assert.equal(row(state, "T-2").status, "merging", "it goes once the repositories are free");
+  state = reduce(state, { type: "approve", id: "T-3" }, 0);
+  assert.equal(row(state, "T-3").status, "review", "T-3 only touches shop, which T-2 holds");
+  state = reduce(state, { type: "mergeFailed", id: "T-2", error: "conflict" }, 0);
+  assert.deepEqual([row(state, "T-2").status, row(state, "T-3").status], ["review", "merging"]);
+  assert.equal(model.needsApproval(row(state, "T-2")), true, "a refused merge waits for you again");
+});
+
+const prsAcross = github => {
+  let now = 0, n = 11;
+  const world = multi(reduce(reduce(across("Add checkout"), { type: "deliver", value: "pr" }, 0), { type: "run" }, 0), {
+    now: () => now,
+    async delivery(at, payload) {
+      world.scripts.push(["delivery", { ...payload, at: at.cwd }]);
+      const repo = at.cwd.split("/").pop();
+      if (payload.op === "publish") return world.skip?.includes(repo) ? { skipped: true } : { url: `https://github.com/me/${repo}/pull/${++n}`, number: n };
+      if (payload.op === "pr_state") return github(repo, payload.url);
+      return {};
+    },
+  });
+  world.clock = value => { now = value; };
+  return world;
+};
+
+test("pull requests open one per repository, each body linking the others", async () => {
+  const world = prsAcross(() => ({ state: "OPEN" }));
+  const runner = new live.LiveRunner(world.host);
+  await acrossInReview(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  assert.match(world.state().events[0].message, /opening pull requests into main in shop \+ api/);
+  world.scripts = [];
+  await step(runner);
+  const calls = world.scripts.map(([, payload]) => payload);
+  assert.deepEqual(calls.map(payload => [payload.op, payload.at, payload.optional ?? payload.url]),
+    [["publish", "/work/shop", true], ["publish", "/work/api", true], ["pr_edit", "/work/shop", "https://github.com/me/shop/pull/12"], ["pr_edit", "/work/api", "https://github.com/me/api/pull/13"]]);
+  assert.match(calls[2].body, /^Add checkout\n\nOpened by Herdr Pipeline from pipeline\/T-1-add-checkout-abc123abc123\.\n\nThis change spans 2 repositories\. Merge these too:\n- api: https:\/\/github\.com\/me\/api\/pull\/13$/);
+  assert.match(calls[3].body, /- shop: https:\/\/github\.com\/me\/shop\/pull\/12$/);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.prs], ["pr", { shop: { url: "https://github.com/me/shop/pull/12", number: 12 }, api: { url: "https://github.com/me/api/pull/13", number: 13 } }]);
+  assert.equal(model.prNeeds(task).label, "2 PRs open");
+  assert.match(world.state().events[0].message, /pull requests open: shop #12, api #13\. It finishes when every one is merged on GitHub/);
+
+  const skipped = prsAcross(() => ({ state: "OPEN" }));
+  skipped.skip = ["api"];
+  const again = new live.LiveRunner(skipped.host);
+  await acrossInReview(skipped, again);
+  skipped.store = { [id]: reduce(skipped.state(), { type: "approve", id: "T-1" }, 0) };
+  skipped.scripts = [];
+  await step(again);
+  assert.deepEqual(Object.keys(row(skipped.state(), "T-1").prs), ["shop"], "a repository the agent left alone gets no pull request");
+  assert.equal(skipped.scripts.filter(([, payload]) => payload.op === "pr_edit").length, 0);
+  skipped.skip = ["api", "shop"];
+  const none = reduce(reduce(skipped.state(), { type: "prClosed", id: "T-1", repo: "shop" }, 0), { type: "approve", id: "T-1" }, 0);
+  skipped.store = { [id]: none };
+  await step(again);
+  assert.match(row(skipped.state(), "T-1").error, /no changes to open a pull request for/);
+});
+
+test("the card shows the most pressing need across pull requests; the task finishes when every one merged", async () => {
+  const states = { shop: { state: "OPEN", status: { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: "APPROVED", failed: 0, failing: [], pending: 0, passed: 2 } },
+    api: { state: "OPEN", status: { draft: false, mergeable: "MERGEABLE", mergeState: "BLOCKED", review: "REVIEW_REQUIRED", failed: 1, failing: ["test"], pending: 0, passed: 1 } } };
+  const world = prsAcross(repo => states[repo]);
+  const runner = new live.LiveRunner(world.host);
+  await acrossInReview(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.clock(1000); await settle(runner);
+  let task = row(world.state(), "T-1");
+  assert.deepEqual([model.prNeeds(task).label, model.prNeeds(task).tone], ["api · Checks failing · 1", "blocked"]);
+  assert.equal(model.prChecklist(task.prs.api, "main")[0].value, "1 failing: test", "the inspector lists each PR on its own");
+  states.api = { state: "OPEN", status: { ...states.shop.status } };
+  world.clock(62000); await settle(runner);
+  assert.equal(model.prNeeds(row(world.state(), "T-1")).label, "Ready to merge");
+  states.shop = { state: "MERGED" };
+  world.clock(123000); await settle(runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.prs.shop.merged, model.prNeeds(task).label], ["pr", true, "Ready to merge"]);
+  assert.match(world.state().events[0].message, /shop #12 merged on GitHub\. Waiting for api #13\./);
+  world.scripts = [];
+  world.clock(184000); await settle(runner);
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_state").length, 1, "a merged PR is no longer asked about");
+  states.api = { state: "MERGED" };
+  world.clock(245000); await settle(runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.workspaces], ["done", null]);
+  assert.match(world.state().events.find(item => /merged on GitHub:/.test(item.message)).message, /T-1 merged on GitHub: shop #12, api #13\./);
+  assert.deepEqual(world.scripts.filter(([, payload]) => payload.op === "remove").map(([, payload]) => [payload.root, payload.force]), [["/work/shop", true], ["/work/api", true]]);
+});
+
+test("a pull request closed without merging sends the task back to review with the others left open", async () => {
+  const states = { shop: { state: "OPEN" }, api: { state: "OPEN" } };
+  const world = prsAcross(repo => states[repo]);
+  const runner = new live.LiveRunner(world.host);
+  await acrossInReview(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  states.api = { state: "CLOSED" };
+  world.clock(1000); await settle(runner);
+  let task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, Object.keys(task.prs), task.approvals], ["review", ["shop"], []]);
+  assert.match(task.error, /^api's pull request #13 was closed without merging\. The others are left as they are/);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  world.scripts = [];
+  await step(runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual(Object.keys(task.prs), ["shop", "api"]);
+  assert.equal(task.prs.api.number, 15, "a new pull request for the closed one");
+  states.shop = { state: "MERGED" };
+  world.clock(62000); await settle(runner);
+  world.store = { [id]: reduce(world.state(), { type: "prClosed", id: "T-1", repo: "api", url: task.prs.api.url }, 0) };
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  world.scripts = [];
+  await step(runner);
+  assert.deepEqual(world.scripts.filter(([, payload]) => payload.op === "publish").map(([, payload]) => payload.at), ["/work/api"], "a merged repository isn't published again");
+});
+
+test("discarding a task across repositories removes every worktree and branch, even when one fails", async () => {
+  let fail = true;
+  const world = multi(reduce(across("A"), { type: "run" }, 0), {
+    async delivery(at, payload) { world.scripts.push(["delivery", { ...payload, at: at.cwd }]); if (fail && at.cwd === "/work/shop") throw new Error("busy"); return {}; } });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.store = { [id]: reduce(world.state(), { type: "discard", id: "T-1" }, 0) };
+  world.scripts = [];
+  await step(runner);
+  assert.deepEqual(world.scripts.map(([, payload]) => [payload.op, payload.at, payload.force]), [["remove", "/work/shop", true], ["remove", "/work/api", true]]);
+  assert.equal(row(world.state(), "T-1").error, "shop: busy");
+  fail = false;
+  world.store = { [id]: reduce(world.state(), { type: "discard", id: "T-1" }, 0) };
+  await step(runner);
+  assert.equal(world.state().tasks.length, 0);
+});
+
+test("a ticket's pull requests are linked in one update for the task", () => {
+  let state = reduce(reduce(createLive(context, 0), { type: "deliver", value: "pr" }, 0), { type: "addRepository", path: "/work/api" }, 0);
+  state = reduce(state, { type: "addTickets", provider: "plane", issues: [ticket(4, { title: "Fix login" })] }, 0);
+  state = reduce(reduce(state, { type: "repos", id: "HMOD-4", repo: "api" }, 0), { type: "ticketUpdates", provider: "plane", link: true }, 0);
+  Object.assign(row(state, "HMOD-4"), { status: "merging", merge: true });
+  state = reduce(state, { type: "prOpened", id: "HMOD-4", prs: { shop: { url: "https://github.com/me/shop/pull/1", number: 1 }, api: { url: "https://github.com/me/api/pull/2", number: 2 } } }, 0);
+  const pending = row(state, "HMOD-4").ticket.pending;
+  assert.equal(pending.length, 1);
+  assert.deepEqual(pending[0].links.map(link => [link.url, link.title]), [["https://github.com/me/shop/pull/1", "shop PR #1: Fix login"], ["https://github.com/me/api/pull/2", "api PR #2: Fix login"]]);
+  state = reduce(state, { type: "ticketUpdated", id: "HMOD-4", n: pending[0].n, ok: true }, 0);
+  assert.equal(row(state, "HMOD-4").ticket.update.text, "Linked 2 pull requests in Plane");
+});
+
+test("saved version 4 live pipelines key their worktrees and pull requests by repository", () => {
+  const old = { ...typed("A", "B", "C"), version: 4 };
+  delete old.repositories;
+  const workspace = { root: "/wt/a", cwd: "/wt/a", branch: "pipeline/a", base: "a".repeat(40), target: "main" };
+  Object.assign(row(old, "T-1"), { status: "review", workspace, planned: { ...workspace } });
+  Object.assign(row(old, "T-2"), { status: "pr", workspace, pr: { url: "https://github.com/me/shop/pull/3", number: 3 } });
+  Object.assign(row(old, "T-3"), { workspace: null, planned: null });
+  for (const task of old.tasks) delete task.workspaces;
+  const state = model.migrate(old, 0);
+  assert.equal(state.version, model.VERSION);
+  assert.deepEqual(state.repositories, [{ name: "shop", path: "/work/shop" }]);
+  assert.deepEqual(row(state, "T-1").workspaces, { shop: { ...workspace, source: "/work/shop" } });
+  assert.deepEqual(row(state, "T-1").planned, { shop: { ...workspace, source: "/work/shop" } });
+  assert.deepEqual([row(state, "T-2").prs, model.prNeeds(row(state, "T-2")).label], [{ shop: { url: "https://github.com/me/shop/pull/3", number: 3 } }, "PR #3 open"]);
+  assert.deepEqual([row(state, "T-3").workspaces, row(state, "T-3").prs], [null, null]);
+  assert.ok(!("workspace" in row(state, "T-1")) && !("pr" in row(state, "T-2")));
+  assert.equal(model.migrate(state, 0), state);
+  const simulation = model.migrate({ ...createPipeline(context, 0), version: 4 }, 0);
+  assert.deepEqual([simulation.version, simulation.repositories], [model.VERSION, undefined]);
 });

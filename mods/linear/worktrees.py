@@ -34,7 +34,7 @@ def workspace(base, run_id, ticket, provider="linear"):
     return {"id": ticket["id"], "key": ticket["key"], "branch": provider + "/" + leaf, "root": str(base / leaf)}
 
 
-def inspect(cwd, tickets, provider="linear", remote=False):
+def inspect(cwd, tickets, provider="linear", remote=False, run_id=None):
     root, common, relative, base = repository(cwd, provider)
     commit = git(root, "rev-parse", "--verify", "HEAD^{commit}")
     branch = git(root, "symbolic-ref", "--short", "HEAD", optional=True)
@@ -45,7 +45,8 @@ def inspect(cwd, tickets, provider="linear", remote=False):
         if git(root, "fetch", "-q", "origin", branch, optional=True) is None:
             raise ValueError("Could not fetch " + branch + " from origin. Check your connection, then retry.")
         commit = git(root, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
-    run_id = secrets.token_hex(6)
+    # A task across several repositories passes the first one's run id, so every branch has the same name.
+    run_id = run_id or secrets.token_hex(6)
     workspaces = [workspace(base, run_id, ticket, provider) for ticket in tickets]
     return {"root": str(root), "common": str(common), "relative": str(relative), "base": commit,
             "branch": branch or "detached HEAD",
@@ -79,7 +80,7 @@ def main():
     try:
         payload = json.loads(sys.argv[1])
         if payload["op"] == "inspect":
-            result = inspect(payload["cwd"], payload["tickets"], payload.get("provider", "linear"), bool(payload.get("remote")))
+            result = inspect(payload["cwd"], payload["tickets"], payload.get("provider", "linear"), bool(payload.get("remote")), payload.get("runId"))
         elif payload["op"] == "create":
             result = create(payload["cwd"], payload["plan"], payload["ticket"])
         else:

@@ -1,7 +1,7 @@
 // A deterministic simulation. This module never starts agents, changes tickets or runs Git.
 export const STORE = "pipeline.prototype.v1";
 export const LIVE = "live:";
-export const VERSION = 4;
+export const VERSION = 5;
 // A save from a newer Pipeline is left alone: another worktree may have installed an older one meanwhile.
 export const newer = state => Number(state?.version) > VERSION;
 export const SOURCES = { plane: "Plane", linear: "Linear" };
@@ -16,9 +16,9 @@ export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Wor
 export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[status];
 export const AGENT_OPTIONS = {
   claude: { models: ["fable", "opus", "sonnet", "haiku"], efforts: ["low", "medium", "high", "xhigh", "max"],
-    flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])] },
+    flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`) },
   codex: { models: [], efforts: ["low", "medium", "high", "xhigh", "max"], open: true,
-    flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])] },
+    flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`) },
 };
 const effortFits = (options, effort) => options.efforts.includes(effort) || Boolean(options.open && /^[a-z]{1,20}$/.test(effort ?? ""));
 export const tuningFor = (state, key) => {
@@ -33,7 +33,9 @@ export function codexModels(text) {
     .map(model => ({ slug: String(model.slug), name: String(model.display_name ?? model.slug),
       efforts: (model.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => /^[a-z]{1,20}$/.test(effort ?? "")) }));
 }
-export const agentRun = (state, agent) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(tuningFor(state, agent.key)) ?? [])];
+// Agents without a way to open more folders find the other worktrees in their first message.
+export const agentRun = (state, agent, extra = []) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(tuningFor(state, agent.key)) ?? []),
+  ...(extra.length ? AGENT_OPTIONS[agent.key]?.dirs(extra) ?? [] : [])];
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
@@ -78,9 +80,10 @@ export function createPipeline(context, now = Date.now()) {
     tasks: CATALOG.map((item, index) => fresh(item, index < 5 ? "queued" : "backlog", index < 5 ? "Picked" : null)) };
 }
 
+const folderName = path => String(path ?? "").replace(/\\/g, "/").split("/").filter(Boolean).pop();
 export function createLive(context, now = Date.now()) {
-  const repo = (context.cwd ?? "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "project";
-  return { version: VERSION, live: true, context, repo, running: false, parallel: 2, reviewLimit: 4, delivery: "merge", agent: null, speed: 1, quota: 100, reserve: 0,
+  const repo = folderName(context.cwd) || "project";
+  return { version: VERSION, live: true, context, repo, repositories: [{ name: repo, path: context.cwd ?? "" }], running: false, parallel: 2, reviewLimit: 4, delivery: "merge", agent: null, speed: 1, quota: 100, reserve: 0,
     watch: false, column: "Ready", lastTick: now, sequence: 0, created: 0, events: [], tasks: [], watching: {}, sourceErrors: {},
     plan: "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree." };
 }
@@ -90,17 +93,29 @@ function ticketed({ watchPlane, planeError, ...state }) {
     tasks: state.tasks.map(({ plane, ...task }) => plane ? { ...task, ticket: { provider: "plane", ...plane } } : task) };
 }
 
+function repositories(state) {
+  if (!state.live) return { ...state, version: VERSION };
+  const source = state.context?.cwd ?? "";
+  return { ...state, version: VERSION, repositories: state.repositories ?? [{ name: state.repo, path: source }],
+    tasks: state.tasks.map(({ workspace, planned, pr, ...task }) => {
+      const name = task.repos?.[0] ?? state.repo;
+      return { ...task, workspaces: workspace ? { [name]: { ...workspace, source } } : task.workspaces ?? null,
+        planned: planned ? { [name]: { ...planned, source } } : null, prs: pr ? { [name]: pr } : task.prs ?? null };
+    }) };
+}
+
 export function migrate(state, now = Date.now()) {
   if (newer(state)) return state;
   if (state?.live && state.tasks?.some(task => task.status === "merging" && task.pr && !task.merge))
     state = { ...state, tasks: state.tasks.map(task => task.status === "merging" && task.pr && !task.merge ? { ...task, status: "pr" } : task) };
   if (!state || state.version === VERSION) return state;
-  if (state.version === 3 && Array.isArray(state.tasks)) return ticketed(state);
+  if (state.version === 4 && Array.isArray(state.tasks)) return repositories(state);
+  if (state.version === 3 && Array.isArray(state.tasks)) return repositories(ticketed(state));
   if (![1, 2].includes(state.version) || !Array.isArray(state.tasks)) return createPipeline(state.context ?? {}, now);
   const questions = new Map(CATALOG.map(item => [item.id, item.question]));
-  return ticketed({ ...state, speed: state.speed ?? 1, created: state.created ?? 0, generated: state.generated ?? 0, askNext: false, lastTick: now,
+  return repositories(ticketed({ ...state, speed: state.speed ?? 1, created: state.created ?? 0, generated: state.generated ?? 0, askNext: false, lastTick: now,
     tasks: state.tasks.map(({ elapsed = 0, ...task }) => ({ ...task, since: task.since ?? now - elapsed,
-      question: task.question ?? ask(questions.get(task.id)), answer: task.answer ?? null, held: task.held ?? null })) });
+      question: task.question ?? ask(questions.get(task.id)), answer: task.answer ?? null, held: task.held ?? null })) }));
 }
 
 export const duration = (state, status) => (DURATION[status] ?? 0) / (state.speed || 1);
@@ -137,22 +152,35 @@ function reaches(state, from, id, seen = new Set()) {
 export const canWaitFor = (state, task, other) => other !== task && other.status !== "done" && !reaches(state, other, task.id);
 export const needsInput = task => task.status === "input";
 export const needsApproval = task => task.status === "review" && task.delivery !== "direct" && task.repos.some(repo => !task.approvals.includes(repo));
-export function prNeeds(task) {
-  const status = task.pr?.status, target = task.workspace?.target ?? "the base branch";
-  if (!status) return { label: `PR #${task.pr?.number} open`, tone: "wait" };
-  if (status.draft) return { label: "Draft · mark it ready", tone: "wait" };
-  if (status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") return { label: `Conflicts with ${target}`, tone: "blocked" };
-  if (status.failed) return { label: `Checks failing · ${status.failed}`, tone: "blocked" };
-  if (status.review === "CHANGES_REQUESTED") return { label: "Changes requested", tone: "blocked" };
-  if (status.pending) return { label: `Checks running · ${status.pending}`, tone: "wait" };
-  if (status.review === "REVIEW_REQUIRED") return { label: "Waiting for review", tone: "wait" };
-  if (status.mergeState === "BEHIND") return { label: `Behind ${target}`, tone: "wait" };
-  if (status.mergeState === "BLOCKED") return { label: "Blocked by branch rules", tone: "wait" };
-  if (status.mergeState === "UNKNOWN") return { label: "GitHub is checking it", tone: "wait" };
-  return { label: "Ready to merge", tone: "ready" };
+export const workspacesOf = task => task.repos.filter(name => task.workspaces?.[name]).map(name => ({ name, ...task.workspaces[name] }));
+export const targetOf = task => (workspacesOf(task)[0] ?? Object.values(task.planned ?? {})[0])?.target;
+export const prList = prs => Object.entries(prs ?? {}).map(([name, pr]) => `${name} #${pr.number}`).join(", ");
+// Ranked by how much it needs someone: the lowest rank across a task's pull requests goes on its card.
+export function prNeed(pr, target = "the base branch") {
+  const status = pr?.status;
+  if (!status) return { label: `PR #${pr?.number} open`, tone: "wait", rank: 9 };
+  if (status.draft) return { label: "Draft · mark it ready", tone: "wait", rank: 0 };
+  if (status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") return { label: `Conflicts with ${target}`, tone: "blocked", rank: 1 };
+  if (status.failed) return { label: `Checks failing · ${status.failed}`, tone: "blocked", rank: 2 };
+  if (status.review === "CHANGES_REQUESTED") return { label: "Changes requested", tone: "blocked", rank: 3 };
+  if (status.pending) return { label: `Checks running · ${status.pending}`, tone: "wait", rank: 4 };
+  if (status.review === "REVIEW_REQUIRED") return { label: "Waiting for review", tone: "wait", rank: 5 };
+  if (status.mergeState === "BEHIND") return { label: `Behind ${target}`, tone: "wait", rank: 6 };
+  if (status.mergeState === "BLOCKED") return { label: "Blocked by branch rules", tone: "wait", rank: 7 };
+  if (status.mergeState === "UNKNOWN") return { label: "GitHub is checking it", tone: "wait", rank: 8 };
+  return { label: "Ready to merge", tone: "ready", rank: 10 };
 }
-export function prChecklist(task) {
-  const status = task.pr?.status, target = task.workspace?.target ?? "the base branch";
+export function prNeeds(task) {
+  const open = Object.entries(task.prs ?? {}).filter(([, pr]) => !pr.merged)
+    .map(([name, pr]) => ({ name, ...prNeed(pr, task.workspaces?.[name]?.target) }));
+  if (!open.length) return { label: "Merged on GitHub", tone: "ready" };
+  const top = open.reduce((best, need) => need.rank < best.rank ? need : best);
+  if (task.repos.length < 2 || top.tone === "ready") return { label: top.label, tone: top.tone };
+  if (open.length > 1 && open.every(need => need.rank === 9)) return { label: `${open.length} PRs open`, tone: "wait" };
+  return { label: `${top.name} · ${top.label}`, tone: top.tone };
+}
+export function prChecklist(pr, target = "the base branch") {
+  const status = pr?.status;
   if (!status) return [];
   const failing = status.failing?.length ? `: ${status.failing.join(", ")}` : "";
   const checks = status.failed ? { value: `${status.failed} failing${failing}`, tone: "blocked" }
@@ -211,12 +239,11 @@ function enqueue(state, ids, source) {
     event(state, `${task.id} joined the queue · ${source}`, task.id);
   }
 }
+// A live task is approved for every repository at once, and merges every one or none.
 function approve(state, task, repos) {
   if (state.live) {
-    if (task?.status !== "review" || task.merge) return 0;
-    task.status = "merging"; task.merge = true; task.error = null;
-    event(state, state.delivery === "pr" ? `${task.id} · opening a pull request into ${task.workspace?.target ?? "your branch"}.`
-      : `${task.id} · merging into ${task.workspace?.target ?? "your branch"}.`, task.id);
+    if (task?.status !== "review" || task.merge || task.discard || task.repos.every(repo => task.approvals.includes(repo))) return 0;
+    task.approvals = [...task.repos]; task.error = null;
     return 1;
   }
   if (task?.status !== "review" || task.delivery === "direct") return 0;
@@ -272,7 +299,9 @@ function explain(state, picked) {
 
 // All mutations go through one reducer; multiple views share one pipeline.
 const liveTask = (state, fields, source) => ({ ...fresh({ repos: [state.repo], priority: 2, depends: [], column: "Ready", description: "", ...fields }, "queued", source),
-  workspace: null, planned: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
+  workspaces: null, planned: null, prs: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
+const started = task => Object.keys(task.workspaces ?? {}).length > 0;
+const repoNames = task => task.repos.length > 1 ? ` in ${task.repos.join(" + ")}` : "";
 const PRIORITIES = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
 export const CHECK_FIXES = 2;
 function seat(state, task) {
@@ -295,8 +324,10 @@ function ticketUpdate(state, task, kind) {
   if (!ticket || !setup) return;
   let update;
   if (kind === "link") {
-    if (!setup.link || !task.pr?.url) return;
-    update = { kind, url: task.pr.url, number: task.pr.number, title: `PR #${task.pr.number}: ${task.title}` };
+    const links = Object.entries(task.prs ?? {}).filter(([, pr]) => !pr.merged && pr.url)
+      .map(([name, pr]) => ({ url: pr.url, number: pr.number, title: `${task.repos.length > 1 ? `${name} ` : ""}PR #${pr.number}: ${task.title}` }));
+    if (!setup.link || !links.length) return;
+    update = { kind, ...links[0], ...(links.length > 1 ? { links } : {}) };
   } else {
     if (!setup[kind]?.id || (kind === "start" && ticket.moved?.includes("start"))) return;
     update = { kind, state: { id: setup[kind].id, name: setup[kind].name } };
@@ -307,6 +338,7 @@ function ticketUpdate(state, task, kind) {
 }
 export function updateText(ticket, update, changed = true) {
   const service = SOURCES[ticket?.provider] ?? "its tracker";
+  if (update.kind === "link" && update.links) return changed ? `Linked ${update.links.length} pull requests in ${service}` : `The pull requests were already linked in ${service}`;
   if (update.kind === "link") return changed ? `Linked PR #${update.number} in ${service}` : `PR #${update.number} was already linked in ${service}`;
   return changed ? `Moved to ${update.state.name} in ${service}` : `Already ${update.state.name} in ${service}`;
 }
@@ -314,7 +346,7 @@ function reviewed(state, task) {
   if (state.delivery === "pr" ? state.autoPr : state.autoMerge) approve(state, task);
 }
 
-const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
+const SIMULATED = ["add", "addAll", "generate", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
 
 export function reduce(state, action, now = Date.now()) {
   if (newer(state)) return state;
@@ -525,15 +557,15 @@ export function reduce(state, action, now = Date.now()) {
       const task = row(action.id);
       if (!next.live || task?.status !== "routing") return state;
       task.launch = action.phase;
-      if (action.planned) task.planned = action.planned;
-      if (action.workspace) task.workspace = action.workspace;
+      if (action.planned) task.planned = { ...task.planned, [action.repo]: action.planned };
+      if (action.workspace) task.workspaces = { ...task.workspaces, [action.repo]: action.workspace };
       break;
     }
     case "launched": {
       const task = row(action.id);
       if (!next.live || task?.status !== "routing") return state;
       Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, tuning: action.tuning || null, error: null });
-      event(next, `${task.id} · ${action.agent ?? "agent"} started on ${task.workspace?.branch ?? "its branch"}.`, task.id);
+      event(next, `${task.id} · ${action.agent ?? "agent"} started on ${workspacesOf(task)[0]?.branch ?? "its branch"}${repoNames(task)}.`, task.id);
       ticketUpdate(next, task, "start");
       break;
     }
@@ -561,7 +593,7 @@ export function reduce(state, action, now = Date.now()) {
       if (action.status === "review" && !["working", "input"].includes(task.status)) return state;
       const started = task.worked, checks = action.status === "review" && Boolean(next.check?.command);
       if (task.slot === null || task.slot === undefined) seat(next, task);
-      task.status = checks ? "testing" : action.status; task.reason = action.reason ?? null;
+      task.status = checks ? "testing" : action.status; task.reason = action.reason ?? null; task.approvals = [];
       if (action.status === "working") task.worked = true;
       if (checks) { task.checkRun = (task.checkRun ?? 0) + 1; task.checked = null; }
       if (task.status === "review") task.slot = null;
@@ -591,22 +623,23 @@ export function reduce(state, action, now = Date.now()) {
     case "checkFailed": {
       const task = row(action.id);
       if (!next.live || task?.status !== "testing" || task.checkRun !== action.run) return state;
-      task.checked = "failed"; task.checkOutput = action.output ?? "";
+      task.checked = "failed"; task.checkOutput = action.output ?? ""; task.checkRepos = action.repos ?? null;
+      const where = task.repos.length > 1 && action.repos?.length ? ` in ${action.repos.join(" + ")}` : "";
       if (action.fix) {
         task.fixes = (task.fixes ?? 0) + 1;
         Object.assign(task, { status: "working", worked: false, reason: null });
-        event(next, `${task.id} checks failed · sent the output back to its agent (${task.fixes} of ${CHECK_FIXES}).`, task.id);
+        event(next, `${task.id} checks failed${where} · sent the output back to its agent (${task.fixes} of ${CHECK_FIXES}).`, task.id);
       } else {
         Object.assign(task, { status: "failed", reason: "checks", slot: null });
-        event(next, `${task.id} checks failed · waiting for you.`, task.id);
+        event(next, `${task.id} checks failed${where} · waiting for you.`, task.id);
       }
       break;
     }
     case "recheck": {
       const task = row(action.id);
-      if (!next.live || !next.check?.command || !(task?.status === "review" || (task?.status === "failed" && task.reason === "checks")) || !task.workspace) return state;
+      if (!next.live || !next.check?.command || !(task?.status === "review" || (task?.status === "failed" && task.reason === "checks")) || !started(task)) return state;
       seat(next, task);
-      Object.assign(task, { status: "testing", reason: null, checked: null, checkRun: (task.checkRun ?? 0) + 1, error: null });
+      Object.assign(task, { status: "testing", reason: null, checked: null, checkRun: (task.checkRun ?? 0) + 1, error: null, approvals: [] });
       event(next, `${task.id} · running ${next.check.command} again.`, task.id);
       break;
     }
@@ -655,30 +688,48 @@ export function reduce(state, action, now = Date.now()) {
       break;
     }
     case "prOpened": {
-      const task = row(action.id);
-      if (!next.live || task?.status !== "merging") return state;
-      Object.assign(task, { status: "pr", merge: false, error: null, pr: { url: action.url, number: action.number } });
-      event(next, `${task.id} · pull request #${action.number} opened. It finishes when it's merged on GitHub.`, task.id);
+      const task = row(action.id), opened = Object.entries(action.prs ?? {});
+      if (!next.live || task?.status !== "merging" || !opened.length) return state;
+      const prs = { ...task.prs };
+      for (const [name, pr] of opened) prs[name] = { url: pr.url, number: pr.number };
+      Object.assign(task, { status: "pr", merge: false, error: null, prs });
+      event(next, task.repos.length > 1 ? `${task.id} · pull requests open: ${prList(prs)}. It finishes when every one is merged on GitHub.`
+        : `${task.id} · pull request #${opened[0][1].number} opened. It finishes when it's merged on GitHub.`, task.id);
       ticketUpdate(next, task, "link");
       break;
     }
     case "prStatus": {
-      const task = row(action.id);
-      if (!next.live || task?.status !== "pr" || task.pr?.url !== action.url || !action.status) return state;
-      if (JSON.stringify(task.pr.status ?? null) === JSON.stringify(action.status)) return state;
-      task.pr = { ...task.pr, status: action.status };
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr || pr.url !== action.url || !action.status) return state;
+      if (JSON.stringify(pr.status ?? null) === JSON.stringify(action.status)) return state;
+      task.prs = { ...task.prs, [action.repo]: { ...pr, status: action.status } };
+      break;
+    }
+    case "prMerged": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr || pr.url !== action.url || pr.merged) return state;
+      task.prs = { ...task.prs, [action.repo]: { ...pr, merged: true } };
+      const open = Object.fromEntries(Object.entries(task.prs).filter(([, other]) => !other.merged));
+      if (Object.keys(open).length) { event(next, `${task.id} · ${action.repo} #${pr.number} merged on GitHub. Waiting for ${prList(open)}.`, task.id); break; }
+      Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null });
+      event(next, Object.keys(task.prs).length > 1 ? `${task.id} merged on GitHub: ${prList(task.prs)}.`
+        : `${task.id} merged into ${task.workspaces?.[action.repo]?.target ?? "the base branch"} on GitHub (#${pr.number}).`, task.id);
+      ticketUpdate(next, task, "merge");
       break;
     }
     case "prClosed": {
-      const task = row(action.id);
-      if (!next.live || task?.status !== "pr" || !task.pr) return state;
-      Object.assign(task, { status: "review", error: `Pull request #${task.pr.number} was closed without merging.`, pr: null });
-      event(next, `${task.id} · pull request closed without merging.`, task.id);
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr || (action.url && pr.url !== action.url)) return state;
+      const prs = Object.fromEntries(Object.entries(task.prs).filter(([name]) => name !== action.repo));
+      Object.assign(task, { status: "review", approvals: [], prs: Object.keys(prs).length ? prs : null,
+        error: task.repos.length > 1 ? `${action.repo}'s pull request #${pr.number} was closed without merging. The others are left as they are; approving again opens a new one for ${action.repo}.`
+          : `Pull request #${pr.number} was closed without merging.` });
+      event(next, `${task.id} · ${task.repos.length > 1 ? `${action.repo}'s ` : ""}pull request closed without merging.`, task.id);
       break;
     }
     case "merged": {
       const task = row(action.id);
-      if (!next.live || !["merging", "pr"].includes(task?.status)) return state;
+      if (!next.live || task?.status !== "merging") return state;
       Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null });
       event(next, `${task.id} merged into ${action.target}.`, task.id);
       ticketUpdate(next, task, "merge");
@@ -687,20 +738,20 @@ export function reduce(state, action, now = Date.now()) {
     case "mergeFailed": {
       const task = row(action.id);
       if (!next.live || task?.status !== "merging") return state;
-      Object.assign(task, { status: "review", merge: false, error: action.error });
+      Object.assign(task, { status: "review", merge: false, approvals: [], error: action.error });
       event(next, `${task.id} not merged · ${action.error}`, task.id);
       break;
     }
     case "cleaned": {
       const task = row(action.id);
       if (!next.live || !task) return state;
-      Object.assign(task, { workspace: null, planned: null, terminal: null, space: null, tab: null });
+      Object.assign(task, { workspaces: null, planned: null, terminal: null, space: null, tab: null });
       break;
     }
     case "discard": {
       const task = row(action.id);
       if (!next.live || !task || task.discard || ["merging", "pr", "done"].includes(task.status)) return state;
-      if (task.status === "queued" && !task.workspace) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); unlink(next, task.id); break; }
+      if (task.status === "queued" && !started(task)) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); unlink(next, task.id); break; }
       task.discard = true;
       event(next, `${task.id} · stopping its agent and deleting its worktree and branch.`, task.id);
       break;
@@ -721,10 +772,41 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "repos": {
       const task = row(action.id);
+      if (next.live) {
+        const names = (next.repositories ?? []).map(repo => repo.name);
+        if (task?.status !== "queued" || started(task) || !names.includes(action.repo)) return state;
+        const repos = task.repos.includes(action.repo) ? task.repos.filter(repo => repo !== action.repo) : [...task.repos, action.repo];
+        if (!repos.length) return state;
+        task.repos = names.filter(name => repos.includes(name));
+        break;
+      }
       if (!task || !["queued", "backlog"].includes(task.status) || !REPOS.includes(action.repo)) return state;
       const repos = task.repos.includes(action.repo) ? task.repos.filter(repo => repo !== action.repo) : [...task.repos, action.repo];
       if (!repos.length) return state;
       task.repos = REPOS.filter(repo => repos.includes(repo));
+      break;
+    }
+    case "addRepository": {
+      const path = String(action.path ?? "").trim().replace(/(.)[\\/]+$/, "$1");
+      if (!next.live || !path) return state;
+      next.repositories ??= [{ name: next.repo, path: next.context.cwd ?? "" }];
+      if (next.repositories.some(repo => repo.path === path)) return state;
+      const base = folderName(path) || "repository";
+      let name = base;
+      for (let n = 2; next.repositories.some(repo => repo.name === name); n++) name = `${base}-${n}`;
+      next.repositories.push({ name, path });
+      event(next, `Tasks can work in ${name} too (${path}).`);
+      break;
+    }
+    case "removeRepository": {
+      const index = (next.repositories ?? []).findIndex(repo => repo.name === action.name);
+      if (!next.live || index < 1) return state;
+      next.repositories.splice(index, 1);
+      for (const task of next.tasks.filter(task => task.status === "queued" && !started(task) && task.repos.includes(action.name))) {
+        task.repos = task.repos.filter(name => name !== action.name);
+        if (!task.repos.length) task.repos = [next.repositories[0].name];
+      }
+      event(next, `${action.name} removed from the repositories. Work already started there keeps its worktree.`);
       break;
     }
     case "watch":
@@ -769,7 +851,7 @@ export function reduce(state, action, now = Date.now()) {
     case "remove": {
       const task = row(action.id);
       if (task?.status !== "queued") return state;
-      if (next.live) { if (task.workspace) return state; next.tasks = next.tasks.filter(other => other !== task); unlink(next, task.id); }
+      if (next.live) { if (started(task)) return state; next.tasks = next.tasks.filter(other => other !== task); unlink(next, task.id); }
       else { task.status = "backlog"; task.source = null; }
       break;
     }
@@ -798,11 +880,15 @@ export function reduce(state, action, now = Date.now()) {
   if (next.watch) enqueue(next, next.tasks.filter(task => task.status === "backlog" && task.column === next.column).map(task => task.id), `Watch · ${next.column}`);
   // One integration at a time per repository, including cross-repository tasks.
   const locked = new Set(next.tasks.filter(task => task.status === "merging").flatMap(task => task.repos));
-  for (const task of next.live ? [] : next.tasks) {
-    if (task.status !== "review" || !(task.delivery === "direct" || task.repos.every(repo => task.approvals.includes(repo)))) continue;
+  for (const task of next.tasks) {
+    if (task.status !== "review" || task.discard || !(task.delivery === "direct" || task.repos.every(repo => task.approvals.includes(repo)))) continue;
     if (task.repos.some(repo => locked.has(repo))) continue;
     task.status = "merging"; task.since = now; task.repos.forEach(repo => locked.add(repo));
-    event(next, `${task.id} entering the merge queue.`, task.id);
+    if (!next.live) { event(next, `${task.id} entering the merge queue.`, task.id); continue; }
+    task.merge = true; task.error = null;
+    const target = targetOf(task) ?? "your branch";
+    event(next, next.delivery === "pr" ? `${task.id} · opening ${task.repos.length > 1 ? "pull requests" : "a pull request"} into ${target}${repoNames(task)}.`
+      : `${task.id} · merging into ${target}${repoNames(task)}.`, task.id);
   }
   const picked = [];
   if (next.running) {

@@ -61,7 +61,10 @@ export async function ticketBlockers(provider, issues) {
   })]));
 }
 
-// The only writes Pipeline makes to a tracker: a ticket's state, and a link to its pull request.
-export const updateTicket = (provider, ticket, update) => readTickets(provider, update.kind === "link"
-  ? { op: "add_link", id: ticket.uuid, url: update.url, title: update.title }
-  : { op: "update_state", id: ticket.uuid, state: update.state.id });
+// The only writes Pipeline makes to a tracker: a ticket's state, and links to its pull requests (one per repository).
+export async function updateTicket(provider, ticket, update) {
+  if (update.kind !== "link") return readTickets(provider, { op: "update_state", id: ticket.uuid, state: update.state.id });
+  let changed = false;
+  for (const link of update.links ?? [update]) changed = (await readTickets(provider, { op: "add_link", id: ticket.uuid, url: link.url, title: link.title }))?.changed !== false || changed;
+  return { changed };
+}

@@ -27,7 +27,7 @@ globalThis.__pipelineView = {
   Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) },
   InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
-  knownAgents: async () => [], exec: async () => ({ code: 0, stdout: "" }), focused: () => ({ space: "sp-project" }),
+  knownAgents: async () => [], exec: async (...args) => world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
@@ -326,7 +326,7 @@ function setupLive() {
   view.agentChoices = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: true }];
   return view;
 }
-const agentTask = (view, id, patch) => Object.assign(row(view, id), { workspace: { root: `/wt/${id}`, cwd: `/wt/${id}`, branch: `pipeline/${id}`, base: "a".repeat(40), target: "main" },
+const agentTask = (view, id, patch) => Object.assign(row(view, id), { workspaces: { shop: { root: `/wt/${id}`, cwd: `/wt/${id}`, branch: `pipeline/${id}`, base: "a".repeat(40), target: "main", source: "/work/shop" } },
   terminal: "t9", space: "s9", tab: "tb9", agent: "Claude Code", slot: 0, ...patch });
 
 test("Live keeps its own pipeline beside the simulation, and typed tasks become agent tasks", () => {
@@ -560,7 +560,7 @@ test("pull request delivery changes the approve wording and links the open PR", 
   view.act({ type: "create", title: "A" }, cx);
   view.act({ type: "create", title: "B" }, cx);
   agentTask(view, "T-1", { status: "review", slot: null });
-  agentTask(view, "T-2", { status: "pr", slot: null, pr: { url: "https://github.com/me/shop/pull/12", number: 12 } });
+  agentTask(view, "T-2", { status: "pr", slot: null, prs: { shop: { url: "https://github.com/me/shop/pull/12", number: 12 } } });
   const scene = view.render(cx);
   assert.ok(find(scene, "approve-T-1").nodes.includes("Open PR"));
   assert.ok(find(scene, "approve-all").nodes.includes("Open 1 PR"));
@@ -572,7 +572,7 @@ test("pull request delivery changes the approve wording and links the open PR", 
   view.inspect("T-2", cx);
   assert.ok(find(view.render(cx), "pr-link-T-2"));
   assert.match(text(find(view.render(cx), "inspector")), /Asking GitHub what it waits for/);
-  view.act({ type: "prStatus", id: "T-2", url: "https://github.com/me/shop/pull/12",
+  view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
     status: { draft: false, mergeable: "MERGEABLE", mergeState: "BLOCKED", review: "REVIEW_REQUIRED", failed: 1, failing: ["test"], pending: 0, passed: 2 } }, cx);
   const waiting = view.render(cx);
   assert.match(text(find(waiting, "card-T-2")), /Checks failing · 1/);
@@ -736,4 +736,95 @@ test("a newer save shows an explanation instead of the scene and is not overwrit
   const view = new Pipeline(); view.init({}, cx);
   assert.equal(world.data[model.STORE].project, saved);
   assert.match(text(view.render(cx)), /saved by a newer Pipeline/);
+});
+
+test("Live settings add repositories by path on the project's machine, refuse duplicates, and remove them", async () => {
+  const view = setupLive();
+  const tops = { "~/code/api": "/home/me/code/api", "../web/src": "/work/web", "/work/shop/app": "/work/shop", "/nowhere": 3, "/tmp": 128 };
+  const asked = [];
+  world.exec = (command, args, options) => {
+    if (command !== "sh" || args[0] !== "-c") return null;
+    asked.push([args[3], options.cwd]);
+    const top = tops[args[3]];
+    return typeof top === "number" ? { code: top, stdout: "", stderr: "" } : { code: 0, stdout: `${top}\n` };
+  };
+  const add = async path => { view.repoInput.set_value(path); await settle(view, "repository-add"); };
+  try {
+    click(view, "settings");
+    let scene = view.render(cx);
+    assert.match(text(find(scene, "repository-shop")), /shop · project.*\/work\/shop/);
+    assert.equal(find(scene, "repository-remove-shop"), undefined, "the project repository can't be removed");
+    assert.equal(find(scene, "repository-add").styles.disabled[0], true, "Add needs a path");
+    await add("~/code/api");
+    await add("../web/src");
+    assert.deepEqual(view.state().repositories.map(repo => [repo.name, repo.path]), [["shop", "/work/shop"], ["api", "/home/me/code/api"], ["web", "/work/web"]]);
+    assert.deepEqual(asked.slice(0, 2), [["~/code/api", "/work/shop"], ["../web/src", "/work/shop"]], "paths are checked from the project folder");
+    assert.equal(view.repoInput.value(), "");
+    await add("/work/shop/app");
+    assert.match(view.repoError, /\/work\/shop is already one of the repositories/);
+    assert.equal(view.repoInput.value(), "/work/shop/app", "a refused path stays to be corrected");
+    await add("/nowhere");
+    assert.match(view.repoError, /There's no folder at \/nowhere on this computer/);
+    await add("/tmp");
+    assert.match(text(find(view.render(cx), "inspector")), /\/tmp isn't in a Git repository/);
+    assert.equal(view.state().repositories.length, 3);
+    click(view, "repository-remove-web");
+    assert.deepEqual(view.state().repositories.map(repo => repo.name), ["shop", "api"]);
+  } finally { world.exec = null; }
+});
+
+test("a queued task picks its repositories as chips, and cards name them only when there's more than one", () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  view.inspect("T-1", cx);
+  assert.equal(find(view.render(cx), "repo-T-1-shop"), undefined, "no chips with only the project repository");
+  assert.equal(text(find(view.render(cx), "card-T-1")).includes("shop"), false);
+  view.act({ type: "addRepository", path: "/work/api" }, cx);
+  let scene = view.render(cx);
+  assert.equal(find(scene, "repo-T-1-shop").styles.disabled[0], true, "a task keeps at least one repository");
+  click(view, "repo-T-1-api");
+  assert.deepEqual(row(view, "T-1").repos, ["shop", "api"]);
+  scene = view.render(cx);
+  assert.match(text(find(scene, "card-T-1")), /shop \+ api/);
+  click(view, "repo-T-1-shop");
+  assert.deepEqual(row(view, "T-1").repos, ["api"]);
+  click(view, "repo-T-1-shop");
+  agentTask(view, "T-1", { status: "review", slot: null, workspaces: {
+    shop: { root: "/wt/shop/T-1", cwd: "/wt/shop/T-1", branch: "pipeline/T-1", base: "a".repeat(40), target: "main", source: "/work/shop" },
+    api: { root: "/wt/api/T-1", cwd: "/wt/api/T-1", branch: "pipeline/T-1", base: "b".repeat(40), target: "main", source: "/work/api" } } });
+  view.peek = { key: `T-1:review:t9:/wt/shop/T-1,/wt/api/T-1`, screen: [], diff: [{ name: "shop", lines: [" a.js | 2 +-"] }, { name: "api", lines: [] }] };
+  scene = view.render(cx);
+  const inspector = text(find(scene, "inspector"));
+  assert.match(inspector, /Repositories: shop \+ api/);
+  assert.match(inspector, /Changes · shop .* a\.js \| 2 \+-/);
+  assert.match(inspector, /Changes · api .*No changes in api\. It is left out of the merge\./);
+  assert.match(inspector, /Branch pipeline\/T-1 in each repository .*shop · \/wt\/shop\/T-1 .*api · \/wt\/api\/T-1/);
+  assert.ok(find(scene, "merge-T-1").nodes.includes("Merge into main in all 2"));
+  assert.match(find(scene, "approve-T-1").styles.tooltip[0], /in shop, api, all or none/);
+  click(view, "merge-T-1");
+  assert.equal(row(view, "T-1").status, "merging");
+});
+
+test("a task across repositories shows a checklist per pull request and its most pressing need on the card", () => {
+  const view = setupLive();
+  click(view, "agent"); click(view, "deliver-pr");
+  view.act({ type: "addRepository", path: "/work/api" }, cx);
+  view.act({ type: "create", title: "A" }, cx);
+  view.act({ type: "repos", id: "T-1", repo: "api" }, cx);
+  const ws = name => ({ root: `/wt/${name}`, cwd: `/wt/${name}`, branch: "pipeline/T-1", base: "a".repeat(40), target: "main", source: `/work/${name}` });
+  agentTask(view, "T-1", { status: "pr", slot: null, workspaces: { shop: ws("shop"), api: ws("api") },
+    prs: { shop: { url: "https://github.com/me/shop/pull/12", number: 12, merged: true }, api: { url: "https://github.com/me/api/pull/13", number: 13 } } });
+  view.act({ type: "prStatus", id: "T-1", repo: "api", url: "https://github.com/me/api/pull/13",
+    status: { draft: false, mergeable: "CONFLICTING", mergeState: "DIRTY", review: null, failed: 0, failing: [], pending: 0, passed: 1 } }, cx);
+  let scene = view.render(cx);
+  assert.match(text(find(scene, "card-T-1")), /api · Conflicts with main/);
+  assert.ok(find(scene, "pr-T-1").nodes.includes("2 PRs"));
+  view.inspect("T-1", cx);
+  scene = view.render(cx);
+  const inspector = text(find(scene, "inspector"));
+  assert.match(inspector, /shop · Pull request #12 · Merged/);
+  assert.match(inspector, /api · Pull request #13 · Conflicts with main/);
+  assert.match(text(find(scene, "pr-merge-T-1-api")), /Conflicts with main/);
+  assert.equal(find(scene, "pr-merge-T-1-shop"), undefined, "a merged PR needs nothing");
+  assert.ok(find(scene, "pr-link-T-1-shop") && find(scene, "pr-link-T-1-api"));
 });

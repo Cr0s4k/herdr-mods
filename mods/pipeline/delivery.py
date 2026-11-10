@@ -17,9 +17,9 @@ def branch_exists(top, branch):
     return git(top, "show-ref", "--verify", "--quiet", "refs/heads/" + branch, optional=True) is not None
 
 
-def merge(payload):
-    top = git(payload["root"], "rev-parse", "--show-toplevel")
-    worktree, branch, title = Path(payload["worktree"]), payload["branch"], payload["title"]
+def prepare(repo, title):
+    top = git(repo["root"], "rev-parse", "--show-toplevel")
+    worktree, branch = Path(repo["worktree"]), repo["branch"]
     target = git(top, "symbolic-ref", "--short", "HEAD", optional=True)
     if not target:
         raise ValueError("Your project folder is on a detached HEAD. Check out a branch, then merge again.")
@@ -31,16 +31,53 @@ def merge(payload):
         git(worktree, "add", "-A")
         git(worktree, "commit", "-q", "-m", title)
     tip = git(top, "rev-parse", "refs/heads/" + branch)
-    if tip == payload.get("base"):
+    changed = tip != repo.get("base")
+    already = changed and git(top, "merge-base", "--is-ancestor", tip, "HEAD", optional=True) is not None
+    return {"name": repo.get("name"), "top": top, "worktree": worktree, "branch": branch, "target": target, "changed": changed, "already": already}
+
+
+def rebase(item):
+    if item["worktree"].is_dir() and git(item["worktree"], "rebase", "-q", item["target"], optional=True) is None:
+        git(item["worktree"], "rebase", "--abort", optional=True)
+        raise ValueError("The branch conflicts with " + item["target"] + ". Ask the agent to rebase onto " + item["target"] + " and resolve the conflicts, then merge again.")
+
+
+def land(item):
+    if git(item["top"], "merge", "-q", "--ff-only", item["branch"], optional=True) is None:
+        raise ValueError(item["target"] + " moved in a way the branch can't fast-forward onto. Ask the agent to rebase onto " + item["target"] + ", then merge again.")
+
+
+def merge(payload):
+    """Merge every repository's branch or none: all are checked and rebased before any fast-forward."""
+    repos = payload.get("repos") or [payload]
+    several = len(repos) > 1
+
+    def named(item, step):
+        try:
+            return step(item)
+        except ValueError as error:
+            raise ValueError((item.get("name") + ": " if several else "") + str(error))
+
+    items = [named(repo, lambda repo: prepare(repo, payload["title"])) for repo in repos]
+    if not any(item["changed"] for item in items):
         raise ValueError("The agent made no changes to merge. Send it feedback, or discard the task.")
-    if git(top, "merge-base", "--is-ancestor", tip, "HEAD", optional=True) is not None:
-        return {"target": target, "commit": git(top, "rev-parse", "HEAD"), "already": True}
-    if worktree.is_dir() and git(worktree, "rebase", "-q", target, optional=True) is None:
-        git(worktree, "rebase", "--abort", optional=True)
-        raise ValueError("The branch conflicts with " + target + ". Ask the agent to rebase onto " + target + " and resolve the conflicts, then merge again.")
-    if git(top, "merge", "-q", "--ff-only", branch, optional=True) is None:
-        raise ValueError(target + " moved in a way the branch can't fast-forward onto. Ask the agent to rebase onto " + target + ", then merge again.")
-    return {"target": target, "commit": git(top, "rev-parse", "HEAD"), "already": False}
+    pending = [item for item in items if item["changed"] and not item["already"]]
+    for item in pending:
+        named(item, rebase)
+    merged = [item["name"] for item in items if item["already"]]
+    failed = None
+    for item in pending:
+        try:
+            land(item)
+            merged.append(item["name"])
+        except ValueError as error:
+            if not several:
+                raise
+            failed = {"name": item["name"], "error": str(error)}
+            break
+    first = items[0]
+    return {"target": first["target"], "targets": {item["name"]: item["target"] for item in items if item["changed"]},
+            "merged": merged, "failed": failed, "commit": git(first["top"], "rev-parse", "HEAD"), "already": not pending}
 
 
 def gh(cwd, *args):
@@ -67,6 +104,8 @@ def publish(payload):
         git(worktree, "add", "-A")
         git(worktree, "commit", "-q", "-m", title)
     if git(top, "rev-parse", "refs/heads/" + branch) == payload.get("base"):
+        if payload.get("optional"):
+            return {"skipped": True}
         raise ValueError("The agent made no changes to open a pull request for. Send it feedback, or discard the task.")
     git(top, "push", "-q", "-u", "origin", branch + ":" + branch)
     where = worktree if worktree.is_dir() else top
@@ -113,6 +152,13 @@ def pr_state(payload):
     return {"state": pr.get("state", "OPEN"), "status": status}
 
 
+def pr_edit(payload):
+    edited = gh(payload["root"], "pr", "edit", payload["url"], "--body", payload["body"])
+    if edited.returncode:
+        raise ValueError(edited.stderr.strip() or "GitHub didn't update the pull request.")
+    return {"edited": True}
+
+
 def remove(payload):
     top = git(payload["root"], "rev-parse", "--show-toplevel")
     worktree, branch, force = Path(payload["worktree"]), payload["branch"], bool(payload.get("force"))
@@ -132,7 +178,7 @@ def remove(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "remove": remove, "publish": publish, "pr_state": pr_state}
+        operations = {"merge": merge, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))

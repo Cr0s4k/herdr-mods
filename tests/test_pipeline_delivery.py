@@ -206,6 +206,83 @@ class DeliveryTest(unittest.TestCase):
         status = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["status"]
         self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "failed": 0, "failing": [], "pending": 0, "passed": 0})
 
+    def second_repository(self):
+        repo = self.home / "web"
+        repo.mkdir()
+        self.git(repo, "init", "-q", "-b", "main")
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"), ("commit.gpgsign", "false")):
+            self.git(repo, "config", key, value)
+        (repo / "page.txt").write_text("page\n")
+        self.git(repo, "add", ".")
+        self.git(repo, "commit", "-qm", "Web base")
+        run = self.workspace["branch"].rsplit("-", 1)[1]
+        plan = worktrees.inspect(repo, [{"id": "T-1", "key": "T-1-add-notes"}], "pipeline", run_id=run)
+        workspace = worktrees.create(repo, plan, {"id": "T-1", "key": "T-1-add-notes"})
+        self.assertEqual(workspace["branch"], self.workspace["branch"], "every repository gets the same branch name")
+        return {"name": "web", "root": str(repo), "worktree": workspace["root"], "branch": workspace["branch"], "base": plan["base"]}
+
+    def both(self, web):
+        project = {"name": "project", "root": str(self.repo), "worktree": str(self.tree), "branch": self.workspace["branch"], "base": self.base}
+        return {"op": "merge", "title": "T-1 Add notes", "repos": [project, web]}
+
+    def test_merging_several_repositories_lands_each_changed_one(self):
+        web = self.second_repository()
+        self.agent_commits()
+        (Path(web["worktree"]) / "page.txt").write_text("agent page\n")
+        result = delivery.merge(self.both(web))
+        self.assertEqual([result["merged"], result["failed"], result["targets"]], [["project", "web"], None, {"project": "main", "web": "main"}])
+        self.assertEqual((self.repo / "notes.txt").read_text(), "notes\n")
+        self.assertEqual((Path(web["root"]) / "page.txt").read_text(), "agent page\n")
+
+    def test_a_repository_the_agent_left_alone_is_skipped(self):
+        web = self.second_repository()
+        self.agent_commits()
+        result = delivery.merge(self.both(web))
+        self.assertEqual(result["merged"], ["project"])
+        with self.assertRaisesRegex(ValueError, "no changes"):
+            delivery.merge({**self.both(web), "repos": [self.both(web)["repos"][1]]})
+
+    def test_a_conflict_in_one_repository_lands_none(self):
+        web = self.second_repository()
+        self.agent_commits()
+        (Path(web["worktree"]) / "page.txt").write_text("agent\n")
+        self.git(web["worktree"], "commit", "-qam", "Agent page")
+        (Path(web["root"]) / "page.txt").write_text("main\n")
+        self.git(web["root"], "commit", "-qam", "Conflicting")
+        head = self.git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "^web: The branch conflicts with main"):
+            delivery.merge(self.both(web))
+        self.assertEqual(self.git(self.repo, "rev-parse", "HEAD"), head, "the project repository did not merge either")
+        with self.assertRaisesRegex(ValueError, "^web: Your project folder has uncommitted changes"):
+            (Path(web["root"]) / "page.txt").write_text("dirty\n")
+            delivery.merge(self.both(web))
+
+    def test_a_fast_forward_that_fails_after_others_landed_says_which_merged(self):
+        web = self.second_repository()
+        self.agent_commits()
+        (Path(web["worktree"]) / "page.txt").write_text("agent page\n")
+        real = delivery.land
+
+        def land(item):
+            if item["name"] == "web":
+                raise ValueError("main moved in a way the branch can't fast-forward onto.")
+            real(item)
+        with patch.object(delivery, "land", land):
+            result = delivery.merge(self.both(web))
+        self.assertEqual([result["merged"], result["failed"]["name"]], [["project"], "web"])
+        self.assertEqual((self.repo / "notes.txt").read_text(), "notes\n")
+        again = delivery.merge(self.both(web))
+        self.assertEqual([again["merged"], again["failed"]], [["project", "web"], None], "merging again finishes the rest without merging twice")
+
+    def test_publish_skips_an_unchanged_repository_when_asked(self):
+        self.with_origin()
+        self.assertEqual(delivery.publish(self.payload("publish", target="main", optional=True)), {"skipped": True})
+
+    def test_pull_request_bodies_are_edited_with_gh(self):
+        log = self.stub_gh("exit 0\n")
+        delivery.pr_edit({"root": str(self.repo), "url": "https://github.com/me/project/pull/12", "body": "Also web #3"})
+        self.assertIn("pr edit https://github.com/me/project/pull/12 --body Also web #3", log.read_text())
+
     def test_command_line_reports_errors_as_json(self):
         run = subprocess.run([sys.executable, str(ROOT / "mods/pipeline/delivery.py"), json.dumps(self.payload("merge"))], capture_output=True, text=True)
         self.assertEqual(run.returncode, 1)

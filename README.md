@@ -245,6 +245,32 @@ task, so parallel agents never touch each other or your checkout.
    **Open pull requests automatically** to skip the approval: work that finishes with passing
    checks (or with no check set) is pushed straight away, and you review it on GitHub.
 
+A task can change several repositories. Add them under **Repositories** in Settings: type a
+path on the project's machine (`~/code/api`, or relative to the project folder) and **Add**;
+Pipeline checks it's a Git repository and refuses one already listed. The project's own
+repository always comes first. A queued task's inspector then shows the repositories as
+chips; new tasks, typed or from tickets, start with the project's only. Cards and the
+inspector name a task's repositories when it has more than one ("shop + api").
+
+- Such a task gets a worktree in each repository, all on the same branch name. Its agent
+  starts in the first one and can open the others (Claude Code and Codex get `--add-dir`
+  for each), and its first message lists every worktree with its branch and start commit.
+- The check command runs in every worktree and passes only if all pass; a failure names the
+  repository, and goes back to the one agent as usual.
+- The inspector shows the changes per repository. **Merge** merges every repository or none:
+  each branch is rebased first, and only when all rebased cleanly are they fast-forwarded. A
+  repository the agent left alone is skipped. If a fast-forward still fails after others
+  landed, the task stays in review and says which merged; merging again finishes the rest.
+- With pull requests, each changed repository gets its own PR, and once all are open each
+  description links the others. The card shows the most pressing need across them
+  ("api · Checks failing · 1") and the inspector a checklist per PR. The task finishes when
+  every PR is merged; one closed without merging sends it back to review with the others
+  left open, and approving again opens a new one only where it's needed.
+- Two tasks never merge into the same repository at once: an approved task waits
+  (**Approved · merging next**) until the one ahead of it is done. **Branches waiting for
+  review** counts repositories, so a task across two holds two. **Discard** removes every
+  worktree and branch.
+
 Agents run in herdr-core, so they keep going when the Pipeline tab or Herdr is closed; the
 tab-bar tracker catches up when Herdr opens. A start that Herdr can't confirm after a
 restart is never repeated: the task stops with a note to check before retrying. Live needs

@@ -96,6 +96,13 @@ class WorktreeTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             helper.inspect(self.repo, self.tickets, "../../escape")
 
+    def test_a_given_run_id_names_the_branch_so_several_repositories_share_it(self):
+        first = helper.inspect(self.repo, self.tickets[:1], "pipeline")
+        again = helper.inspect(self.repo, self.tickets[:1], "pipeline", run_id=first["runId"])
+        self.assertEqual([again["runId"], again["workspaces"][0]["branch"]], [first["runId"], first["workspaces"][0]["branch"]])
+        with self.assertRaisesRegex(ValueError, "Invalid ticket or launch"):
+            helper.inspect(self.repo, self.tickets[:1], "pipeline", run_id="../x")
+
 
     def test_remote_base_fetches_the_branch_from_origin_instead_of_the_local_head(self):
         origin = self.home / "origin.git"
