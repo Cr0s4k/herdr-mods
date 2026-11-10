@@ -52,7 +52,7 @@ export class LiveRunner {
       try {
         const { state: github } = await this.host.delivery(state.context, { op: "pr_state", root: state.context.cwd, url: task.pr.url });
         const now = this.task(id, task.id);
-        if (now?.status !== "merging" || now.pr?.url !== task.pr.url) return;
+        if (now?.status !== "pr" || now.pr?.url !== task.pr.url) return;
         if (github === "MERGED") {
           this.apply(id, { type: "merged", id: task.id, target: `${task.workspace?.target ?? "the base branch"} on GitHub (#${task.pr.number})` });
           try { await this.clean(state.context, now, true); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
@@ -108,7 +108,7 @@ export class LiveRunner {
     }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
-      if (task.status === "merging" && task.pr && !task.merge && !task.discard) this.watchPullRequest(id, state, task, cx);
+      if (task.status === "pr" && task.pr && !task.discard) this.watchPullRequest(id, state, task, cx);
     }
     if (this.busy) return;
     for (const [id, state] of this.pipelines()) {

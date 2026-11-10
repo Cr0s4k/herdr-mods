@@ -8,7 +8,7 @@ export const DURATION = { routing: 2200, working: 9500, testing: 5500, merging: 
 export const SPEEDS = [1, 2, 4];
 export const REPOS = ["api", "web", "contracts", "docs"];
 export const LABELS = { backlog: "Backlog", queued: "Queued", routing: "Entering pipeline", working: "Implementing", input: "Needs your input", testing: "Running checks", review: "Awaiting approval", merging: "Merging", done: "Done", failed: "Checks failed" };
-export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Working", input: "Needs you in its terminal", testing: "Running checks", review: "Ready for review", merging: "Merging", done: "Merged", failed: "Stopped" };
+export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Working", input: "Needs you in its terminal", testing: "Running checks", review: "Ready for review", merging: "Merging", pr: "PR open", done: "Merged", failed: "Stopped" };
 export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[status];
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
@@ -61,6 +61,8 @@ export function createLive(context, now = Date.now()) {
 }
 
 export function migrate(state, now = Date.now()) {
+  if (state?.live && state.tasks?.some(task => task.status === "merging" && task.pr && !task.merge))
+    return { ...state, tasks: state.tasks.map(task => task.status === "merging" && task.pr && !task.merge ? { ...task, status: "pr" } : task) };
   if (!state || state.version === VERSION) return state;
   if (![1, 2].includes(state.version) || !Array.isArray(state.tasks)) return createPipeline(state.context ?? {}, now);
   const questions = new Map(CATALOG.map(item => [item.id, item.question]));
@@ -77,7 +79,7 @@ function event(state, message, task = null) {
   state.events = [{ id: ++state.sequence, message, task }, ...state.events].slice(0, 40);
 }
 export const activeTasks = state => state.tasks.filter(task => ACTIVE.includes(task.status));
-export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "review", "merging"].includes(task.status));
+export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
 export const outstandingCount = state => outstanding(state).reduce((count, task) => count + task.repos.length, 0);
 export const dependencies = (state, task) => task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done");
 export const needsInput = task => task.status === "input";
@@ -169,6 +171,9 @@ export const CHECK_FIXES = 2;
 function seat(state, task) {
   const used = new Set(state.tasks.filter(other => other !== task && ACTIVE.includes(other.status)).map(other => other.slot));
   task.slot = 0; while (used.has(task.slot)) task.slot++;
+}
+function reviewed(state, task) {
+  if (state.delivery === "pr" && state.autoPr) approve(state, task);
 }
 
 const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
@@ -303,6 +308,7 @@ export function reduce(state, action, now = Date.now()) {
       event(next, action.reason === "trust" ? `${task.id} · its agent asks whether to trust the new worktree.` : action.status === "input" ? `${task.id} needs you in its terminal.`
         : checks ? `${task.id} finished · running ${next.check.command}.` : action.status === "review" ? `${task.id} finished · ready for your review.`
         : started ? `${task.id} back to work.` : `${task.id} is working.`, task.id);
+      if (task.status === "review") reviewed(next, task);
       break;
     }
     case "check": {
@@ -319,6 +325,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "testing" || task.checkRun !== action.run) return state;
       Object.assign(task, { status: "review", slot: null, checked: "passed", checkOutput: action.output ?? "", reason: null });
       event(next, `${task.id} checks passed · ready for your review.`, task.id);
+      reviewed(next, task);
       break;
     }
     case "checkFailed": {
@@ -373,23 +380,30 @@ export function reduce(state, action, now = Date.now()) {
       event(next, value === "pr" ? "Finished work opens a pull request." : "Finished work merges locally.");
       break;
     }
+    case "autoPr": {
+      const value = action.value ?? !next.autoPr;
+      if (!next.live || Boolean(next.autoPr) === Boolean(value)) return state;
+      next.autoPr = Boolean(value);
+      event(next, next.autoPr ? "Pull requests open as soon as work is ready for review." : "Pull requests wait for you to open them.");
+      break;
+    }
     case "prOpened": {
       const task = row(action.id);
       if (!next.live || task?.status !== "merging") return state;
-      Object.assign(task, { merge: false, error: null, pr: { url: action.url, number: action.number } });
+      Object.assign(task, { status: "pr", merge: false, error: null, pr: { url: action.url, number: action.number } });
       event(next, `${task.id} · pull request #${action.number} opened. It finishes when it's merged on GitHub.`, task.id);
       break;
     }
     case "prClosed": {
       const task = row(action.id);
-      if (!next.live || task?.status !== "merging" || !task.pr) return state;
+      if (!next.live || task?.status !== "pr" || !task.pr) return state;
       Object.assign(task, { status: "review", error: `Pull request #${task.pr.number} was closed without merging.`, pr: null });
       event(next, `${task.id} · pull request closed without merging.`, task.id);
       break;
     }
     case "merged": {
       const task = row(action.id);
-      if (!next.live || task?.status !== "merging") return state;
+      if (!next.live || !["merging", "pr"].includes(task?.status)) return state;
       Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null });
       event(next, `${task.id} merged into ${action.target}.`, task.id);
       break;
@@ -409,7 +423,7 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "discard": {
       const task = row(action.id);
-      if (!next.live || !task || task.discard || ["merging", "done"].includes(task.status)) return state;
+      if (!next.live || !task || task.discard || ["merging", "pr", "done"].includes(task.status)) return state;
       if (task.status === "queued" && !task.workspace) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); break; }
       task.discard = true;
       event(next, `${task.id} · stopping its agent and deleting its worktree and branch.`, task.id);

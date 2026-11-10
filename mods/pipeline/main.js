@@ -21,12 +21,12 @@ const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).fl
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.blocked : task.status === "done" ? t.ansi2
-  : ["review", "merging"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
+  : ["review", "merging", "pr"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
 function cardStatus(state, task) {
   if (task.discard) return "Discarding…";
   if (state.live && task.status === "review") return task.error ? "Not merged · see why" : task.checked === "passed" ? "Checks passed" : task.checked === "failed" ? "Checks failing" : "Ready for review";
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
-  if (state.live && task.status === "merging" && task.pr) return `PR #${task.pr.number} open`;
+  if (state.live && task.status === "pr") return `PR #${task.pr?.number} open`;
   if (state.live && task.status === "merging" && state.delivery === "pr") return "Opening PR";
   if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
   if (task.status === "queued") {
@@ -182,14 +182,14 @@ export default class Pipeline extends View {
     const { on } = this.context;
     cx.spawn(async cx => {
       const peek = { key, screen: [], diff: [] };
-      if (task.terminal && ["input", "working", "review"].includes(task.status)) {
+      if (task.terminal && ["input", "working", "review", "pr"].includes(task.status)) {
         const screen = await hc(["read", task.terminal, "--lines", "60"]).catch(() => null);
         const lines = screen?.code === 0 ? screen.stdout.split("\n").map(line => line.trimEnd()) : [];
         while (lines.length && !lines.at(-1)) lines.pop();
         peek.screen = lines.slice(-14);
         while (peek.screen.length && !peek.screen[0]) peek.screen.shift();
       }
-      if (task.workspace && ["review", "merging"].includes(task.status)) {
+      if (task.workspace && ["review", "merging", "pr"].includes(task.status)) {
         const diff = await exec("git", ["-C", task.workspace.root, "diff", "--stat", task.workspace.base], { on }).catch(() => null);
         const status = await exec("git", ["-C", task.workspace.root, "status", "--porcelain"], { on }).catch(() => null);
         const fresh = (status?.stdout ?? "").split("\n").filter(line => line.startsWith("??")).length;
@@ -631,7 +631,7 @@ export default class Pipeline extends View {
     else if (this.drawer === "review") {
       const approvals = state.tasks.filter(needsApproval).length;
       if (approvals) body.child(this.button("drawer-approve-all", `Approve ${count(approvals, "task")}`, cx => this.act({ type: "approveAll" }, cx), t, { icon: "check", primary: true }));
-      rows(state.tasks.filter(task => ["review", "merging", "failed"].includes(task.status)), "Nothing to review. Checked changes arrive here.");
+      rows(state.tasks.filter(task => ["review", "merging", "pr", "failed"].includes(task.status)), "Nothing to review. Checked changes arrive here.");
     }
     else if (this.drawer === "done") rows(state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0)), "No completed tasks yet.");
     else if (this.drawer === "activity") {
@@ -789,8 +789,10 @@ export default class Pipeline extends View {
     body.child(h_flex().gap(6).flex_wrap()
       .child(this.button("deliver-merge", "Merge locally", cx => this.act({ type: "deliver", value: "merge" }, cx), t, { small: true, selected: state.delivery !== "pr" }))
       .child(this.button("deliver-pr", "Open a pull request", cx => this.act({ type: "deliver", value: "pr" }, cx), t, { small: true, selected: state.delivery === "pr" })));
+    if (state.delivery === "pr") body.child(this.button("auto-pr", state.autoPr ? "Opening pull requests automatically" : "Open pull requests automatically", cx => this.act({ type: "autoPr" }, cx), t,
+      { icon: state.autoPr ? "check" : null, selected: Boolean(state.autoPr), hint: state.autoPr ? "Click to wait for you before pushing" : "Push and open the PR as soon as the agent finishes and checks pass, so you review on GitHub" }).w_full().justify_start());
     body.child(this.label(state.delivery === "pr"
-      ? `Approving commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
+      ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
       : `Merge commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its tab closes and the worktree and branch are removed.`, t));
     body.child(div().h(1).bg(t.border));
     body.child(this.button("motion-setting", this.motion ? "Turn animation off" : "Turn animation on", cx => this.toggleMotion(cx), t));
@@ -849,13 +851,13 @@ export default class Pipeline extends View {
           { icon: "check", primary: true, hint: "Commits anything left, rebases onto it and fast-forwards. Your project folder must have no uncommitted changes." }));
       if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));
     }
-    if (task.status === "merging" && task.pr) body.child(this.label(`Pull request #${task.pr.number} is open. Pipeline finishes the task when it's merged on GitHub, and returns it to review if it's closed.`, t))
+    if (task.status === "pr" && task.pr) body.child(this.label(`Pull request #${task.pr.number} is open. Pipeline finishes the task when it's merged on GitHub, and returns it to review if it's closed.`, t))
       .child(this.button(`pr-link-${task.id}`, `Open pull request #${task.pr.number}`, () => this.openLink(task.pr.url), t, { icon: "eye", primary: true, hint: task.pr.url }));
     else if (task.status === "merging") body.child(this.label(state.delivery === "pr" ? "Pushing the branch and opening a pull request…" : `Merging into ${target}…`, t));
     if (task.status === "done" && task.pr) body.child(this.button(`pr-link-${task.id}`, `Pull request #${task.pr.number}`, () => this.openLink(task.pr.url), t, { icon: "eye", hint: task.pr.url }));
     if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, task.workspace ? "Retry in the same worktree" : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
     if (task.status === "queued" && !task.workspace) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
-    else if (!["merging", "done"].includes(task.status) && !task.discard) {
+    else if (!["merging", "pr", "done"].includes(task.status) && !task.discard) {
       const sure = this.confirm === task.id;
       body.child(this.button(`discard-${task.id}`, sure ? "Delete its branch and worktree" : "Discard", cx => {
         if (sure) { this.confirm = null; this.act({ type: "discard", id: task.id }, cx); } else { this.confirm = task.id; cx.notify(); }

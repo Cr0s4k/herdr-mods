@@ -32,7 +32,7 @@ export function layoutScene(state, width, height) {
   const orbits = slotCount > 3 ? [inner, outer] : [inner];
 
   const queue = state.tasks.filter(task => task.status === "queued");
-  const review = state.tasks.filter(task => ["review", "merging", "failed"].includes(task.status));
+  const review = state.tasks.filter(task => ["review", "merging", "pr", "failed"].includes(task.status));
   const done = state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0));
   const queueFits = Math.max(2, Math.floor((h - 176) / 76) + 1);
   const reviewFits = Math.max(2, Math.floor((h - 241) / 88) + 1);

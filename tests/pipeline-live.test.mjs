@@ -433,7 +433,7 @@ test("with pull request delivery, approving pushes the branch and opens a PR int
   assert.deepEqual([publish.op, publish.target, publish.title, publish.branch], ["publish", "main", "Add a dark mode toggle", "pipeline/T-1-add-a-dark-mode-toggle-abc"]);
   assert.match(publish.body, /^Add a dark mode toggle\n\nOpened by Herdr Pipeline from pipeline\//);
   const task = row(world.state(), "T-1");
-  assert.deepEqual([task.status, task.merge, task.pr], ["merging", false, { url: "https://github.com/me/shop/pull/12", number: 12 }]);
+  assert.deepEqual([task.status, task.merge, task.pr], ["pr", false, { url: "https://github.com/me/shop/pull/12", number: 12 }]);
   assert.ok(task.workspace && task.terminal, "nothing is cleaned up while the PR is open");
 });
 
@@ -446,7 +446,7 @@ test("a merged PR finishes the task and cleans up; a closed one returns it to re
   await step(runner);
   world.scripts = [];
   world.clock(1000); await settle(runner);
-  assert.equal(row(world.state(), "T-1").status, "merging");
+  assert.equal(row(world.state(), "T-1").status, "pr");
   world.clock(30000); await settle(runner);
   assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_state").length, 1, "asked once a minute");
   github = { state: "MERGED" };
@@ -489,4 +489,31 @@ test("Plane tasks title their PR with the ticket key and link the ticket", async
   assert.equal(world.scripts[0][1].title, "HMOD-4: Fix login");
   assert.match(world.scripts[0][1].body, /^Details\.\n\nPlane: https:\/\/plane\.test\/HMOD-4\//);
   assert.equal(reduce(world.state(), { type: "deliver", value: "pr" }, 0), world.state());
+});
+
+test("with pull requests opening automatically, finished work pushes without waiting for approval", async () => {
+  const world = prHost();
+  world.store = { [id]: reduce(world.state(), { type: "autoPr" }, 0) };
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  assert.equal(row(world.state(), "T-1").status, "pr");
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "publish").length, 1);
+  assert.ok(world.state().events.some(event => /opening a pull request into main/.test(event.message)));
+
+  let state = reduce(reduce(reduce(typed("A"), { type: "deliver", value: "pr" }, 0), { type: "autoPr" }, 0), { type: "check", command: "npm test", fix: false }, 0);
+  state = reduce(state, { type: "run" }, 0);
+  const task = row(state, "T-1");
+  Object.assign(task, { status: "testing", checkRun: 1, workspace: { root: "/wt/T-1", branch: "b", base: "a", target: "main" } });
+  assert.equal(row(reduce(state, { type: "checkPassed", id: "T-1", run: 1 }, 0), "T-1").status, "merging");
+  const failed = reduce(state, { type: "checkFailed", id: "T-1", run: 1, fix: false }, 0);
+  assert.equal(row(reduce(failed, { type: "reviewAnyway", id: "T-1" }, 0), "T-1").status, "review", "failing checks still wait for you");
+  assert.equal(reduce(createLive(context, 0), { type: "autoPr", value: false }, 0).autoPr, undefined);
+});
+
+test("a PR opened before the pr status existed is read as open", () => {
+  const state = typed("A");
+  Object.assign(row(state, "T-1"), { status: "merging", merge: false, pr: { url: "https://github.com/me/shop/pull/3", number: 3 } });
+  assert.equal(row(model.migrate(state), "T-1").status, "pr");
+  const settled = model.migrate(state);
+  assert.equal(model.migrate(settled), settled);
 });

@@ -475,7 +475,7 @@ test("pull request delivery changes the approve wording and links the open PR", 
   view.act({ type: "create", title: "A" }, cx);
   view.act({ type: "create", title: "B" }, cx);
   agentTask(view, "T-1", { status: "review", slot: null });
-  agentTask(view, "T-2", { status: "merging", slot: null, pr: { url: "https://github.com/me/shop/pull/12", number: 12 } });
+  agentTask(view, "T-2", { status: "pr", slot: null, pr: { url: "https://github.com/me/shop/pull/12", number: 12 } });
   const scene = view.render(cx);
   assert.ok(find(scene, "approve-T-1").nodes.includes("Open PR"));
   assert.ok(find(scene, "approve-all").nodes.includes("Open 1 PR"));
@@ -484,6 +484,12 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.match(text(find(scene, "status")), /Opens pull requests into main/);
   view.inspect("T-2", cx);
   assert.ok(find(view.render(cx), "pr-link-T-2"));
+  assert.equal(find(view.render(cx), "discard-T-2"), undefined, "an open PR is closed on GitHub, not discarded");
   click(view, "approve-T-1");
   assert.match(text(find(view.render(cx), "card-T-1")), /Opening PR/);
+  view.open("settings", cx);
+  click(view, "auto-pr");
+  assert.equal(view.state().autoPr, true);
+  click(view, "deliver-merge");
+  assert.equal(find(view.render(cx), "auto-pr"), undefined, "only pull requests open on their own");
 });
