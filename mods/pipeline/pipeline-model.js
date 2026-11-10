@@ -227,7 +227,7 @@ function seat(state, task) {
   task.slot = 0; while (used.has(task.slot)) task.slot++;
 }
 function reviewed(state, task) {
-  if (state.delivery === "pr" && state.autoPr) approve(state, task);
+  if (state.delivery === "pr" ? state.autoPr : state.autoMerge) approve(state, task);
 }
 
 const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
@@ -485,6 +485,13 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || Boolean(next.autoPr) === Boolean(value)) return state;
       next.autoPr = Boolean(value);
       event(next, next.autoPr ? "Pull requests open as soon as work is ready for review." : "Pull requests wait for you to open them.");
+      break;
+    }
+    case "autoMerge": {
+      const value = action.value ?? !next.autoMerge;
+      if (!next.live || Boolean(next.autoMerge) === Boolean(value)) return state;
+      next.autoMerge = Boolean(value);
+      event(next, next.autoMerge ? "Finished work merges as soon as it is ready for review." : "Finished work waits for you to merge it.");
       break;
     }
     case "prOpened": {

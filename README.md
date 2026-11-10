@@ -205,6 +205,10 @@ task, so parallel agents never touch each other or your checkout.
    worktree and branch are removed. **Discard** (asked twice) stops the agent and deletes the
    worktree and branch.
 
+   Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
+   finishes with passing checks (or with no check set) merges straight away. Work you sent
+   on with **Review anyway**, and a merge that was refused, still wait for you.
+
    To review on GitHub instead, set **Delivery** to **Open a pull request** in Settings. The
    approve action becomes **Open PR**: Pipeline commits anything the agent left, pushes the
    branch to `origin` and runs `gh pr create` into the branch the worktree started from, with
@@ -266,7 +270,8 @@ the sidebar on their own; this only simulates that moment.
 Keys, with the scene focused: Space start/pause, N new task, A examples (in Live: P for
 Plane, L for Linear), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
 S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
-**PR approval** in the status strip switches to **Auto-merge** (merge after checks).
+**PR approval** in the status strip switches to **Auto-merge** (merge after checks); in Live,
+that is **Merge automatically** in Settings.
 Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,
 the animation toggle and **Reset example pipeline**. **Quota** simulates exhaustion and
 replenishment with a configurable reserve. System Reduce Motion is respected, and motion

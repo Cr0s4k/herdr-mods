@@ -972,9 +972,11 @@ export default class Pipeline extends View {
       .child(this.button("deliver-pr", "Open a pull request", cx => this.act({ type: "deliver", value: "pr" }, cx), t, { small: true, selected: state.delivery === "pr" })));
     if (state.delivery === "pr") body.child(this.button("auto-pr", state.autoPr ? "Opening pull requests automatically" : "Open pull requests automatically", cx => this.act({ type: "autoPr" }, cx), t,
       { icon: state.autoPr ? "check" : null, selected: Boolean(state.autoPr), hint: state.autoPr ? "Click to wait for you before pushing" : "Push and open the PR as soon as the agent finishes and checks pass, so you review on GitHub" }).w_full().justify_start());
+    else body.child(this.button("auto-merge", state.autoMerge ? "Merging automatically" : "Merge automatically", cx => this.act({ type: "autoMerge" }, cx), t,
+      { icon: state.autoMerge ? "check" : null, selected: Boolean(state.autoMerge), hint: state.autoMerge ? "Click to wait for you before merging" : "Merge as soon as the agent finishes and checks pass, without waiting for you" }).w_full().justify_start());
     body.child(this.label(state.delivery === "pr"
       ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
-      : `Merge commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its tab closes and the worktree and branch are removed.`, t));
+      : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its tab closes and the worktree and branch are removed.`, t));
     body.child(div().h(1).bg(t.border));
     body.child(this.motionSwitch(t));
     body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));

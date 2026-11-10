@@ -532,6 +532,25 @@ test("with pull requests opening automatically, finished work pushes without wai
   assert.equal(reduce(createLive(context, 0), { type: "autoPr", value: false }, 0).autoPr, undefined);
 });
 
+test("with merging automatic, finished work merges without waiting for approval", async () => {
+  const world = host(reduce(reduce(typed("A"), { type: "autoMerge" }, 0), { type: "run" }, 0));
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  assert.equal(row(world.state(), "T-1").status, "done");
+  assert.deepEqual(world.scripts.filter(([kind]) => kind === "delivery").map(([, payload]) => payload.op), ["merge", "remove"]);
+
+  let state = reduce(reduce(typed("A"), { type: "autoMerge" }, 0), { type: "check", command: "npm test", fix: false }, 0);
+  state = reduce(state, { type: "run" }, 0);
+  Object.assign(row(state, "T-1"), { status: "testing", checkRun: 1, workspace: { root: "/wt/T-1", branch: "b", base: "a", target: "main" } });
+  assert.equal(row(reduce(state, { type: "checkPassed", id: "T-1", run: 1 }, 0), "T-1").status, "merging");
+  const failed = reduce(state, { type: "checkFailed", id: "T-1", run: 1, fix: false }, 0);
+  assert.equal(row(reduce(failed, { type: "reviewAnyway", id: "T-1" }, 0), "T-1").status, "review", "failing checks still wait for you");
+  Object.assign(row(state, "T-1"), { status: "merging", merge: true });
+  assert.equal(row(reduce(state, { type: "mergeFailed", id: "T-1", error: "dirty" }, 0), "T-1").status, "review", "a refused merge waits for you");
+  assert.equal(reduce(createLive(context, 0), { type: "autoMerge", value: false }, 0).autoMerge, undefined);
+  assert.equal(reduce(createPipeline(context, 0), { type: "autoMerge" }, 0).autoMerge, undefined);
+});
+
 test("a PR opened before the pr status existed is read as open", () => {
   const state = typed("A");
   Object.assign(row(state, "T-1"), { status: "merging", merge: false, pr: { url: "https://github.com/me/shop/pull/3", number: 3 } });

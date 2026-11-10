@@ -540,6 +540,9 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.equal(view.state().autoPr, true);
   click(view, "deliver-merge");
   assert.equal(find(view.render(cx), "auto-pr"), undefined, "only pull requests open on their own");
+  click(view, "auto-merge");
+  assert.equal(view.state().autoMerge, true);
+  assert.match(text(find(view.render(cx), "auto-merge")), /Merging automatically/);
 });
 
 test("the Schedule drawer saves, rejects and clears daily times", () => {
