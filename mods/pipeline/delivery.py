@@ -1,5 +1,6 @@
-"""Deliver a finished Pipeline task branch (merge it locally, or push it and open a pull request), and clean up after it."""
+"""Deliver a finished Pipeline task branch (merge it locally and maybe push, or push it and open a pull request), and clean up after it."""
 import json
+import os
 import re
 from pathlib import Path
 import subprocess
@@ -78,6 +79,46 @@ def merge(payload):
     first = items[0]
     return {"target": first["target"], "targets": {item["name"]: item["target"] for item in items if item["changed"]},
             "merged": merged, "failed": failed, "commit": git(first["top"], "rev-parse", "HEAD"), "already": not pending}
+
+
+def push_error(stderr, remote, branch):
+    text = stderr.lower()
+    if "non-fast-forward" in text or "fetch first" in text or "[rejected]" in text:
+        return remote + " has commits " + branch + " doesn't have. Pull them into " + branch + ", then push again."
+    if any(word in text for word in ("authentication failed", "permission denied", "403", "could not read username", "access denied", "not authorized")):
+        return remote + " refused the push. Check that you're signed in and allowed to push to it."
+    if any(word in text for word in ("could not resolve", "unable to access", "could not read from remote", "connection", "timed out", "network", "does not appear to be a git repository")):
+        return "Could not reach " + remote + "."
+    return stderr.strip().splitlines()[-1] if stderr.strip() else "Git could not push " + branch + " to " + remote + "."
+
+
+def push(payload):
+    """Push the branch a merge landed on to its upstream, or to origin under the same name. Never forces, never pulls."""
+    top = git(payload["root"], "rev-parse", "--show-toplevel")
+    branch = payload.get("branch") or git(top, "symbolic-ref", "--short", "HEAD", optional=True)
+    if not branch or not branch_exists(top, branch):
+        return {"pushed": False, "remote": None, "branch": branch, "error": "There is no branch " + (branch or "checked out") + " to push."}
+    remote = git(top, "config", "branch." + branch + ".remote", optional=True)
+    ref = git(top, "config", "branch." + branch + ".merge", optional=True) if remote else None
+    if remote == "." or not ref:
+        remote, ref = None, None
+    remote = remote or "origin"
+    ref = ref or "refs/heads/" + branch
+    result = {"pushed": False, "remote": remote, "branch": branch, "error": None}
+    if git(top, "remote", "get-url", remote, optional=True) is None:
+        result["error"] = "This repository has no origin remote." if remote == "origin" else branch + "'s upstream remote " + remote + " no longer exists."
+        return result
+    try:
+        pushed = subprocess.run(["git", "-C", top, "push", "--porcelain", remote, "refs/heads/" + branch + ":" + ref],
+                                capture_output=True, text=True, timeout=90, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except subprocess.TimeoutExpired:
+        result["error"] = "Could not reach " + remote + "."
+        return result
+    if pushed.returncode:
+        result["error"] = push_error(pushed.stderr + pushed.stdout, remote, branch)
+    else:
+        result["pushed"] = True
+    return result
 
 
 def gh(cwd, *args):
@@ -178,7 +219,7 @@ def remove(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit}
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))

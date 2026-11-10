@@ -182,6 +182,75 @@ class DeliveryTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "GitHub CLI"):
                 delivery.publish(self.payload("publish", target="main"))
 
+    def merged(self):
+        self.agent_commits()
+        return delivery.merge(self.payload("merge"))
+
+    def test_push_after_a_merge_lands_the_branch_on_origin(self):
+        remote = self.with_origin()
+        result = self.merged()
+        pushed = delivery.push({"root": str(self.repo), "branch": result["target"]})
+        self.assertEqual(pushed, {"pushed": True, "remote": "origin", "branch": "main", "error": None})
+        self.assertEqual(self.git(remote, "rev-parse", "main"), self.git(self.repo, "rev-parse", "main"))
+
+    def test_push_goes_to_the_branch_upstream(self):
+        remote = self.with_origin()
+        self.git(self.repo, "remote", "add", "fork", str(remote))
+        self.git(self.repo, "branch", "--set-upstream-to", "origin/main")
+        self.git(self.repo, "config", "branch.main.remote", "fork")
+        self.git(self.repo, "config", "branch.main.merge", "refs/heads/trunk")
+        self.merged()
+        self.assertEqual(delivery.push({"root": str(self.repo), "branch": "main"})["remote"], "fork")
+        self.assertEqual(self.git(remote, "rev-parse", "trunk"), self.git(self.repo, "rev-parse", "main"))
+
+    def test_push_never_forces_past_commits_on_origin_and_keeps_the_merge(self):
+        remote = self.with_origin()
+        other = self.home / "other"
+        subprocess.run(["git", "clone", "-q", str(remote), str(other)], check=True)
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"), ("commit.gpgsign", "false")):
+            self.git(other, "config", key, value)
+        (other / "theirs.txt").write_text("theirs\n")
+        self.git(other, "add", ".")
+        self.git(other, "commit", "-qm", "Theirs")
+        self.git(other, "push", "-q", "origin", "main")
+        theirs = self.git(remote, "rev-parse", "main")
+        self.merged()
+        head = self.git(self.repo, "rev-parse", "HEAD")
+        pushed = delivery.push({"root": str(self.repo), "branch": "main"})
+        self.assertFalse(pushed["pushed"])
+        self.assertIn("origin has commits main doesn't have", pushed["error"])
+        self.assertEqual(self.git(remote, "rev-parse", "main"), theirs, "origin is left as it was")
+        self.assertEqual(self.git(self.repo, "rev-parse", "HEAD"), head, "the local merge stays")
+        self.assertEqual((self.repo / "notes.txt").read_text(), "notes\n")
+
+    def test_push_explains_a_missing_origin_or_upstream_remote(self):
+        self.merged()
+        head = self.git(self.repo, "rev-parse", "HEAD")
+        pushed = delivery.push({"root": str(self.repo), "branch": "main"})
+        self.assertEqual(pushed, {"pushed": False, "remote": "origin", "branch": "main", "error": "This repository has no origin remote."})
+        self.git(self.repo, "config", "branch.main.remote", "gone")
+        self.git(self.repo, "config", "branch.main.merge", "refs/heads/main")
+        self.assertEqual(delivery.push({"root": str(self.repo), "branch": "main"})["error"], "main's upstream remote gone no longer exists.")
+        self.assertEqual(self.git(self.repo, "rev-parse", "HEAD"), head)
+
+    def test_push_says_when_origin_cannot_be_reached(self):
+        self.git(self.repo, "remote", "add", "origin", str(self.home / "missing.git"))
+        self.merged()
+        pushed = delivery.push({"root": str(self.repo), "branch": "main"})
+        self.assertEqual([pushed["pushed"], pushed["error"]], [False, "Could not reach origin."])
+
+    def test_pushing_again_after_a_failure_sends_everything_merged_since(self):
+        remote = self.home / "origin.git"
+        self.git(self.repo, "remote", "add", "origin", str(remote))
+        self.merged()
+        self.assertFalse(delivery.push({"root": str(self.repo), "branch": "main"})["pushed"])
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        (self.repo / "later.txt").write_text("later\n")
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-qm", "Later")
+        self.assertTrue(delivery.push({"root": str(self.repo), "branch": "main"})["pushed"])
+        self.assertEqual(self.git(remote, "log", "--format=%s", "main").splitlines(), ["Later", "Agent work", "Base"])
+
     def test_pull_request_state_comes_from_gh(self):
         self.stub_gh('echo \'{"state":"MERGED"}\'\n')
         self.assertEqual(delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["state"], "MERGED")

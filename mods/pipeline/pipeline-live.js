@@ -175,15 +175,17 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) this.updateTickets(id, state, cx);
     if (this.busy) return;
     for (const [id, state] of this.pipelines()) {
-      const task = state.tasks.find(task => task.discard) ?? state.tasks.find(task => task.status === "merging" && task.merge)
-        ?? state.tasks.find(task => task.status === "routing" && !task.launch);
-      if (!task) continue;
+      const task = state.tasks.find(task => task.discard) ?? state.tasks.find(task => task.status === "merging" && task.merge);
+      const retry = !task && state.unpushed?.some(entry => entry.retry);
+      const launch = !task && !retry && state.tasks.find(task => task.status === "routing" && !task.launch);
+      if (!task && !retry && !launch) continue;
       this.busy = true;
       cx.spawn(async cx => {
         try {
-          if (task.discard) await this.discard(id, task);
-          else if (task.status === "merging") await this.merge(id, task);
-          else await this.launch(id, task, cx);
+          if (retry) await this.pushAgain(id);
+          else if (launch) await this.launch(id, launch, cx);
+          else if (task.discard) await this.discard(id, task);
+          else await this.merge(id, task);
         } finally { this.busy = false; }
       });
       return;
@@ -292,13 +294,33 @@ export class LiveRunner {
       const targets = result.targets ?? {}, names = Object.keys(targets);
       const target = workspaces.length < 2 ? result.target : new Set(Object.values(targets)).size === 1 ? `${Object.values(targets)[0]} in ${names.join(" + ")}`
         : names.map(name => `${targets[name]} in ${name}`).join(" and ");
-      this.apply(id, { type: "merged", id: task.id, target });
+      const pushes = [];
+      if (state.pushAfterMerge) for (const ws of workspaces.filter(ws => (result.merged ?? [ws.name]).includes(ws.name)))
+        pushes.push(await this.push(context, { name: ws.name, root: ws.source ?? context.cwd, branch: targets[ws.name] ?? result.target }));
+      this.apply(id, { type: "merged", id: task.id, target, ...(state.pushAfterMerge ? { pushes } : {}) });
     } catch (error) {
       this.apply(id, { type: "mergeFailed", id: task.id, error: error?.message || String(error) });
       return;
     }
     try { await this.clean(context, task, false); } catch { /* The merge landed; a leftover worktree is harmless. */ }
     this.apply(id, { type: "cleaned", id: task.id });
+  }
+
+  // A push never throws: a refused or unreachable origin is recorded and leaves the merge where it landed.
+  async push(context, repo) {
+    try {
+      const result = await this.host.delivery({ cwd: repo.root, on: context.on }, { op: "push", root: repo.root, branch: repo.branch });
+      return { repo: repo.name, root: repo.root, branch: result?.branch ?? repo.branch, remote: result?.remote ?? null, pushed: Boolean(result?.pushed), error: result?.error ?? null };
+    } catch (error) {
+      return { repo: repo.name, root: repo.root, branch: repo.branch, remote: null, pushed: false, error: error?.message || String(error) };
+    }
+  }
+
+  async pushAgain(id) {
+    const state = this.host.shared(STORE)[id], results = [];
+    for (const entry of state.unpushed.filter(entry => entry.retry))
+      results.push(await this.push(state.context, { name: entry.repo, root: entry.root ?? state.context.cwd, branch: entry.branch }));
+    this.apply(id, { type: "pushed", results });
   }
 
   async publish(state, task, workspaces) {

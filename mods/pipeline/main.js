@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, workspacesOf, targetOf, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -34,6 +34,8 @@ function cardStatus(state, task) {
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
   if (state.live && task.status === "pr") return prNeeds(task).label;
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
+  const pushed = state.live && task.status === "done" && pushNote(task);
+  if (pushed) return `Merged${task.repos.length < 2 && task.target ? ` into ${task.target}` : ""} · ${pushed.text}`;
   if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
   if (task.status === "queued") {
     const waits = dependencies(state, task);
@@ -580,9 +582,19 @@ export default class Pipeline extends View {
           : `Merge every finished branch into ${this.repo?.branch ?? "your branch"}, one at a time (Y)` })))
       .when(info.failed > 0, el => el.child(this.button("retry-all", `Retry ${info.failed} failed`, cx => this.act({ type: "retry" }, cx), t,
         { icon: "reset", small: true, hint: "Return failed tasks to the queue (R)" })))
-      .when(Boolean(state.live), el => el.child(div().flex_none().child(this.repo?.error ?? `${state.delivery === "pr" ? "Opens pull requests into" : "Merges into"} ${this.repo?.branch ?? "your branch"}`)))
+      .when(Boolean(state.live), el => el.child(div().flex_none().child(this.repo?.error ?? `${state.delivery === "pr" ? "Opens pull requests into" : "Merges into"} ${this.repo?.branch ?? "your branch"}${state.delivery !== "pr" && state.pushAfterMerge ? " · pushes to origin" : ""}`)))
+      .when(Boolean(state.live && state.unpushed?.length), el => el.child(this.unpushed(state, t)))
       .when(!state.live, el => el.child(this.button("delivery", state.delivery === "pr" ? "PR approval" : "Auto-merge", cx => this.act({ type: "delivery", value: state.delivery === "pr" ? "direct" : "pr" }, cx), t,
         { small: true, selected: state.delivery === "direct", hint: state.delivery === "pr" ? "New changes wait for your approval. Click to merge after checks pass." : "New changes merge after checks pass. Click to require approval." })));
+  }
+
+  unpushed(state, t) {
+    const entries = state.unpushed, pushing = entries.every(entry => entry.retry), several = entries.length > 1;
+    const remotes = [...new Set(entries.map(entry => entry.remote))].join(" + ");
+    return h_flex().id("pipeline-unpushed").gap(8).items_center().flex_none()
+      .child(div().flex_none().text_color(t.blocked).child(`${unpushedLabel(state)} ${several ? "are" : "is"} ahead of ${remotes}`))
+      .child(this.button("push-now", pushing ? "Pushing…" : "Push now", cx => this.act({ type: "pushNow" }, cx), t,
+        { icon: "reset", small: true, disabled: pushing, hint: `Last push failed: ${entries.map(entry => `${several ? `${entry.branch} in ${entry.repo}: ` : ""}${entry.error}`).join(" ")} Click to push again. Pipeline never forces or pulls.` }));
   }
 
   footer(state, t) {
@@ -1038,9 +1050,11 @@ export default class Pipeline extends View {
       { icon: state.autoPr ? "check" : null, selected: Boolean(state.autoPr), hint: state.autoPr ? "Click to wait for you before pushing" : "Push and open the PR as soon as the agent finishes and checks pass, so you review on GitHub" }).w_full().justify_start());
     else body.child(this.button("auto-merge", state.autoMerge ? "Merging automatically" : "Merge automatically", cx => this.act({ type: "autoMerge" }, cx), t,
       { icon: state.autoMerge ? "check" : null, selected: Boolean(state.autoMerge), hint: state.autoMerge ? "Click to wait for you before merging" : "Merge as soon as the agent finishes and checks pass, without waiting for you" }).w_full().justify_start());
+    if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
+      Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
     body.child(this.label(state.delivery === "pr"
       ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
-      : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its tab closes and the worktree and branch are removed.`, t));
+      : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
     this.ticketUpdates(body, state, t);
     body.child(div().h(1).bg(t.border));
     body.child(this.motionSwitch(t));
@@ -1225,7 +1239,13 @@ export default class Pipeline extends View {
       body.child(this.label(several ? "Pipeline asks GitHub about each one once a minute. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
         : "Pipeline asks GitHub once a minute. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
     }
-    else if (task.status === "merging") body.child(this.label(state.delivery === "pr" ? `Pushing ${several ? "the branches and opening pull requests" : "the branch and opening a pull request"}…` : `Merging into ${target}${several ? ` in ${task.repos.join(" + ")}` : ""}…`, t));
+    else if (task.status === "merging") body.child(this.label(state.delivery === "pr" ? `Pushing ${several ? "the branches and opening pull requests" : "the branch and opening a pull request"}…` : `Merging into ${target}${several ? ` in ${task.repos.join(" + ")}` : ""}${state.pushAfterMerge ? " and pushing to origin" : ""}…`, t));
+    const pushed = task.status === "done" && pushNote(task);
+    if (pushed && !pushed.ok) {
+      body.child(div().id(`pipeline-push-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Merged, not pushed. ${pushed.error}`));
+      if (state.unpushed?.length) body.child(this.button(`push-now-${task.id}`, state.unpushed.every(entry => entry.retry) ? "Pushing…" : "Push now", cx => this.act({ type: "pushNow" }, cx), t,
+        { icon: "reset", disabled: state.unpushed.every(entry => entry.retry), hint: "Push again. Each push carries everything merged since, and never forces." }));
+    }
     if (task.status === "done" && task.prs) for (const [name, pr] of Object.entries(task.prs)) body.child(this.button(`pr-link-${task.id}${several ? `-${name}` : ""}`, `${several ? `${name} · ` : ""}Pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", hint: pr.url }));
     if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, trees.length ? `Retry in the same worktree${trees.length > 1 ? "s" : ""}` : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
     if (task.status === "queued" && !trees.length) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));

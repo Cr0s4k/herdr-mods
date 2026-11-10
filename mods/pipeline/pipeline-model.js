@@ -342,6 +342,34 @@ export function updateText(ticket, update, changed = true) {
   if (update.kind === "link") return changed ? `Linked PR #${update.number} in ${service}` : `PR #${update.number} was already linked in ${service}`;
   return changed ? `Moved to ${update.state.name} in ${service}` : `Already ${update.state.name} in ${service}`;
 }
+// A branch whose last push failed stays listed until a push of it succeeds; every push carries all merges before it.
+function recordPushes(state, task, results) {
+  for (const result of results ?? []) {
+    if (!result?.repo || !result.branch) continue;
+    const push = { pushed: Boolean(result.pushed), remote: String(result.remote || "origin"), branch: String(result.branch),
+      error: result.pushed ? null : String(result.error || "Git could not push.").slice(0, 300) };
+    if (task) task.pushes = { ...task.pushes, [result.repo]: push };
+    const others = (state.unpushed ?? []).filter(entry => entry.repo !== result.repo || entry.branch !== push.branch);
+    if (push.pushed) {
+      for (const other of state.tasks) {
+        const before = other.pushes?.[result.repo];
+        if (other !== task && before && !before.pushed && before.branch === push.branch) other.pushes = { ...other.pushes, [result.repo]: { ...push, later: true } };
+      }
+      state.unpushed = others;
+    } else state.unpushed = [...others, { repo: result.repo, root: result.root ?? null, branch: push.branch, remote: push.remote, error: push.error, retry: false }];
+  }
+}
+export function pushNote(task) {
+  const rows = Object.entries(task?.pushes ?? {});
+  if (!rows.length) return null;
+  const failed = rows.filter(([, push]) => !push.pushed), several = rows.length > 1;
+  if (!failed.length) return { ok: true, text: `pushed to ${[...new Set(rows.map(([, push]) => push.remote))].join(" + ")}` };
+  return { ok: false, text: `${several ? `${failed.map(([name]) => name).join(" + ")} ` : ""}not pushed`,
+    error: failed.map(([name, push]) => `${several ? `${name}: ` : ""}${push.error}`).join(" ") };
+}
+const pushEvent = note => note ? ` · ${note.text}${note.ok ? "" : ` · ${note.error}`}` : "";
+export const unpushedLabel = state => (state.unpushed ?? []).map(entry => (state.repositories?.length ?? 1) > 1 ? `${entry.branch} in ${entry.repo}` : entry.branch).join(", ");
+
 function reviewed(state, task) {
   if (state.delivery === "pr" ? state.autoPr : state.autoMerge) approve(state, task);
 }
@@ -687,6 +715,27 @@ export function reduce(state, action, now = Date.now()) {
       event(next, next.autoMerge ? "Finished work merges as soon as it is ready for review." : "Finished work waits for you to merge it.");
       break;
     }
+    case "pushAfterMerge": {
+      const value = action.value ?? !next.pushAfterMerge;
+      if (!next.live || Boolean(next.pushAfterMerge) === Boolean(value)) return state;
+      next.pushAfterMerge = Boolean(value);
+      event(next, next.pushAfterMerge ? "Merged work is pushed to origin after each merge." : "Merged work stays local until you push it.");
+      break;
+    }
+    case "pushNow": {
+      const waiting = (next.unpushed ?? []).filter(entry => !entry.retry);
+      if (!next.live || !waiting.length) return state;
+      for (const entry of waiting) entry.retry = true;
+      event(next, `Pushing ${unpushedLabel({ ...next, unpushed: waiting })} to ${[...new Set(waiting.map(entry => entry.remote))].join(" + ")} again.`);
+      break;
+    }
+    case "pushed": {
+      if (!next.live || !action.results?.length) return state;
+      recordPushes(next, null, action.results);
+      for (const result of action.results) event(next, result.pushed ? `Pushed ${result.branch} to ${result.remote || "origin"}.`
+        : `${result.branch} not pushed · ${String(result.error || "Git could not push.").slice(0, 300)}`);
+      break;
+    }
     case "prOpened": {
       const task = row(action.id), opened = Object.entries(action.prs ?? {});
       if (!next.live || task?.status !== "merging" || !opened.length) return state;
@@ -730,8 +779,9 @@ export function reduce(state, action, now = Date.now()) {
     case "merged": {
       const task = row(action.id);
       if (!next.live || task?.status !== "merging") return state;
-      Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null });
-      event(next, `${task.id} merged into ${action.target}.`, task.id);
+      Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null, target: action.target ?? null });
+      recordPushes(next, task, action.pushes);
+      event(next, `${task.id} merged into ${action.target}${pushEvent(action.pushes?.length ? pushNote(task) : null)}`.replace(/\.*$/, "."), task.id);
       ticketUpdate(next, task, "merge");
       break;
     }
