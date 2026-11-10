@@ -63,6 +63,11 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
   in Changes as **Before** (`HEAD`) and **After** (working copy) side by side, like GitHub. SVGs
   stay text. Local folders only; the copies Herdr needs to load them live in
   `~/.config/herdr-app/data/image-preview/` and are deleted after a day.
+- The bottom of **Changes** shows the branch and, like VS Code, how many commits are waiting:
+  **↑N Push** for local commits not yet pushed, **↓N Pull** for commits on the remote you don't
+  have. It fetches when the folder changes and every 3 minutes (**↻** fetches now). A branch
+  with no upstream shows **Publish** (`git push -u origin HEAD`). Pull runs plain `git pull`, so
+  your `pull.rebase` setting applies; failures show in red above the bar.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
@@ -385,6 +390,7 @@ The switch icon in the tab bar, after GitHub, opens **Features**: on/off switche
 of the mods. Everything is on until you switch it off, and changes apply at once.
 
 - **Commit message box**: the message field and Commit button at the bottom of Changes.
+- **Push and pull**: the branch bar with ahead/behind counts and Push/Pull in Changes.
 - **Loops**: the Loops button in the tab bar and its side panel.
 - **Skills**: the Skills button in the tab bar and its side panel.
 - **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
