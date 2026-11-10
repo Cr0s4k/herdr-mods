@@ -241,6 +241,17 @@ own answer, and the task resumes where it stopped and the next question opens. S
 has **Simulate a question** to make the next working task ask. Real agents will appear in
 the sidebar on their own; this only simulates that moment.
 
+### Schedule
+
+**Schedule** in the toolbar sets a daily **Start at** and **Pause intake at** time (22:00, 7:30
+or 9pm), in Live and Simulation. When a time comes round, Pipeline does what the Start or
+Pause button does: a pause stops new work entering, and agents already working keep going.
+Either time can be left empty. Starting or pausing by hand still works; the schedule acts
+again at its next time. A time that already passed when you save it waits until tomorrow.
+The toolbar button shows the next time that changes anything (Starts 22:00, Pauses 07:00).
+Times are the computer's local time and need Herdr open; if Herdr was closed, the latest
+missed time applies when it opens.
+
 Keys, with the scene focused: Space start/pause, N new task, A examples (in Live: P for
 Plane), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
 S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.

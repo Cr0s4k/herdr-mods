@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readPlane, openIssue } from "./plane-source.js";
@@ -16,7 +16,7 @@ const CHECK_HINTS = [
   "if [ -f go.mod ]; then echo 'go test ./...'; fi",
   "if [ -f pytest.ini ] || grep -qs pytest pyproject.toml; then echo 'python3 -m pytest'; fi",
 ].join("\n");
-const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota", "plane"];
+const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota", "plane", "schedule"];
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -70,6 +70,14 @@ export default class Pipeline extends View {
     this.checkInput.on("blur", (_e, cx) => this.saveCheck(cx));
     this.checkInput.on("change", (_e, cx) => cx.notify());
     this.checkSuggestions = [];
+    this.times = {};
+    for (const [kind, placeholder] of [["start", "Not scheduled. For example: 22:00"], ["pause", "Not scheduled. For example: 7:00"]]) {
+      const input = this.times[kind] = InputState.new({ placeholder });
+      input.on("submit", (_e, cx) => this.saveTime(kind, cx));
+      input.on("blur", (_e, cx) => this.saveTime(kind, cx));
+      input.on("change", (_e, cx) => cx.notify());
+    }
+    this.timeError = null;
     this.details = TextareaState.new({ placeholder: "Context, constraints, how to check it…", rows: 4 });
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
@@ -104,7 +112,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.planeSearch.release(); this.checkInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.planeSearch.release(); this.checkInput.release(); this.times.start.release(); this.times.pause.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -203,6 +211,16 @@ export default class Pipeline extends View {
     if (!state?.live || this.checkInput.value().trim() === (state.check?.command ?? "")) return;
     this.act({ type: "check", command: this.checkInput.value() }, cx);
   }
+  saveTime(kind, cx) {
+    const state = this.state(), text = this.times[kind].value().trim();
+    if (!state || text === (state.schedule?.[kind] ?? "")) return;
+    const time = text ? parseTime(text) : null;
+    this.timeError = text && !time ? { kind, text: "Use a time like 22:00, 7:30 or 9pm." }
+      : time && time === state.schedule?.[kind === "start" ? "pause" : "start"] ? { kind, text: "Start and pause need different times." } : null;
+    if (this.timeError) { cx.notify(); return; }
+    this.times[kind].set_value(time ?? "");
+    this.act({ type: "schedule", [kind]: time, space: focused()?.space ?? null }, cx);
+  }
   fix(task, cx) {
     const state = this.state();
     if (!task?.terminal || !state?.check?.command) return;
@@ -214,6 +232,7 @@ export default class Pipeline extends View {
   open(drawer, cx) {
     if (drawer === "settings" && this.state()?.live) this.checkInput.set_value(this.state().check?.command ?? "");
     if (drawer === "plane" && !this.state()?.live) return;
+    if (drawer === "schedule") { this.timeError = null; for (const kind of ["start", "pause"]) this.times[kind].set_value(this.state()?.schedule?.[kind] ?? ""); }
     if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
     if (drawer !== this.drawer && drawer === "plane") this.planeSearch.set_value("");
     this.drawer = drawer;
@@ -393,6 +412,8 @@ export default class Pipeline extends View {
           { icon: "plane", selected: this.drawer === "plane" || Boolean(state.watchPlane), hint: state.planeError ?? "Queue tickets from the Plane project linked to this repository (P)" })))
       .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
         .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch })))
+      .child(this.button("schedule", this.scheduleLabel(state), cx => this.open(this.drawer === "schedule" ? null : "schedule", cx), t,
+        { icon: "clock", selected: this.drawer === "schedule" || Boolean(state.schedule), hint: "Start and pause the pipeline at set times every day" }))
       .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }))
       .when(!state.live, el => el.child(this.button("quota", `Quota ${state.quota}%`, cx => this.open(this.drawer === "quota" ? null : "quota", cx), t, { icon: "gauge", hint: "Example quota and reserve controls" })));
   }
@@ -615,7 +636,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.plane.project ? `Plane · ${this.plane.project}` : "Plane", picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", task: this.selected ?? "Task" };
+    const titles = { plane: this.plane.project ? `Plane · ${this.plane.project}` : "Plane", picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -645,6 +666,7 @@ export default class Pipeline extends View {
     else if (this.drawer === "settings") state.live ? this.liveSettings(body, state, t) : this.settings(body, state, t);
     else if (this.drawer === "quota") this.quota(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
+    else if (this.drawer === "schedule") this.schedule(body, state, t);
     else if (this.drawer === "task") this.detail(body, state, t, cx);
     return panel.child(body);
   }
@@ -712,6 +734,35 @@ export default class Pipeline extends View {
     body.child(this.label(state.watch ? `Watching ${state.column}. New tasks join even while intake is paused.` : "Turn on watch to pick up matching tasks automatically.", t));
     body.child(this.button("arrival", `Move example task to ${state.column}`, cx => this.act({ type: "arrival" }, cx), t, { icon: "plus", disabled: !state.tasks.some(task => task.status === "backlog") }));
     body.child(this.label("This button simulates someone moving a task on the board. No external task service is changed.", t));
+  }
+  // The time that would change something: a running pipeline's pause, a paused one's start.
+  upcoming(state) {
+    const kind = state.running ? "pause" : "start", time = state.schedule?.[kind];
+    return time ? { kind, time, at: nextScheduled({ schedule: { [kind]: time } }).at } : null;
+  }
+  scheduleLabel(state) {
+    const next = this.upcoming(state);
+    return next ? `${next.kind === "start" ? "Starts" : "Pauses"} ${next.time}` : state.schedule ? "Scheduled" : "Schedule";
+  }
+  schedule(body, state, t) {
+    body.child(this.label(state.live ? "Every day at these times Pipeline starts the pipeline or pauses its intake for you, as the Start and Pause buttons do. Agents already working keep going after a pause."
+      : "Every day at these times the pipeline starts or pauses its intake for you, as the Start and Pause buttons do. Active work finishes after a pause.", t));
+    for (const [kind, title, hint] of [["start", "Start at", state.live ? "Agents start for queued tasks, up to the parallel limit." : "The planner starts dispatching queued work."],
+      ["pause", "Pause intake at", state.live ? "No new agents start until the next start." : "No new work enters until the next start."]]) {
+      const input = this.times[kind], saved = state.schedule?.[kind] ?? "";
+      body.child(v_flex().gap(7).child(this.heading(title)).child(this.label(hint, t))
+        .child(h_flex().gap(6).items_center()
+          .child(Input.new(input).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(this.timeError?.kind === kind ? t.blocked : t.border).rounded(6).text_size(12).accessibility_label(title))
+          .child(this.button(`schedule-${kind}-save`, "Save", cx => this.saveTime(kind, cx), t, { small: true, disabled: input.value().trim() === saved }))
+          .when(Boolean(saved), el => el.child(this.button(`schedule-${kind}-clear`, `Clear ${title.toLowerCase()}`, cx => { input.set_value(""); this.saveTime(kind, cx); }, t,
+            { small: true, icon: "x", iconOnly: true, hint: `Stop ${kind === "start" ? "starting" : "pausing"} at ${saved}` }))))
+        .when(this.timeError?.kind === kind, el => el.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(this.timeError.text))));
+    }
+    const next = this.upcoming(state);
+    const day = next && new Date(next.at).toDateString() === new Date().toDateString() ? "today" : "tomorrow";
+    body.child(this.label(next ? `Next: ${next.kind === "start" ? "starts" : "pauses intake"} ${day} at ${next.time}.`
+      : state.schedule ? `${state.running ? "Running" : "Paused"} now, with no scheduled ${state.running ? "pause" : "start"}.` : "Nothing scheduled.", t));
+    body.child(this.label("Times are this computer's local time and repeat daily. Start or pause by hand whenever you like; the schedule acts again at its next time. If Herdr is closed when a time comes round, the latest missed time applies when it opens.", t));
   }
   planeDrawer(body, state, t) {
     const plane = this.plane, unavailable = plane.needsProject || plane.kind === "auth";

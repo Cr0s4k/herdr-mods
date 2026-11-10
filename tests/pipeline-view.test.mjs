@@ -493,3 +493,25 @@ test("pull request delivery changes the approve wording and links the open PR", 
   click(view, "deliver-merge");
   assert.equal(find(view.render(cx), "auto-pr"), undefined, "only pull requests open on their own");
 });
+
+test("the Schedule drawer saves, rejects and clears daily times", () => {
+  const view = setup();
+  click(view, "schedule");
+  assert.equal(view.drawer, "schedule");
+  view.times.start.set_value("10pm"); view.times.start.emit("submit", cx);
+  assert.deepEqual(view.state().schedule, { start: "22:00", pause: null });
+  assert.equal(view.times.start.value(), "22:00");
+  assert.ok(find(view.render(cx), "schedule").nodes.includes("Starts 22:00"));
+  view.times.pause.set_value("whenever"); view.times.pause.emit("blur", cx);
+  assert.match(text(find(view.render(cx), "inspector")), /Use a time like/);
+  view.times.pause.set_value("22:00"); view.times.pause.emit("submit", cx);
+  assert.match(text(find(view.render(cx), "inspector")), /need different times/);
+  view.times.pause.set_value("6:30"); view.times.pause.emit("submit", cx);
+  assert.deepEqual(view.state().schedule, { start: "22:00", pause: "06:30" });
+  assert.match(text(find(view.render(cx), "inspector")), /Next: starts (today|tomorrow) at 22:00/);
+  click(view, "schedule-start-clear");
+  assert.deepEqual(view.state().schedule, { start: null, pause: "06:30" });
+  click(view, "schedule-pause-clear");
+  assert.equal(view.state().schedule, null);
+  assert.ok(find(view.render(cx), "schedule").nodes.includes("Schedule"));
+});

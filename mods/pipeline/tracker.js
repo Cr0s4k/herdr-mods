@@ -79,6 +79,7 @@ export class PipelineTracker {
           const pause = away > 2500 ? Math.max(0, Math.min(away, now - state.lastTick) - 1000) : 0;
           value = reduce(state, { type: "tick", pause }, now);
         }
+        if (value?.schedule) value = reduce(value, { type: "scheduleTick" }, now);
         if (value !== saved) { next[id] = value; changed = true; this.announce(saved, value); }
       }
       if (changed) setShared(STORE, next);

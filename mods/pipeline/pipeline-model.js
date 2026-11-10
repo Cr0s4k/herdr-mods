@@ -94,6 +94,27 @@ export function waitingReason(state, task) {
   if (activeTasks(state).length >= state.parallel) return "Waiting for a work slot";
   return "Ready for the planner";
 }
+export function parseTime(text) {
+  const match = String(text ?? "").trim().toLowerCase().match(/^(\d{1,2})(?:[:.]?(\d{2}))?\s*(am|pm)?$/);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] ?? 0);
+  if (match[3]) { if (hours < 1 || hours > 12) return null; hours = hours % 12 + (match[3] === "pm" ? 12 : 0); }
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+// Schedule times are local wall-clock times that come round every day.
+function occurrence(time, now, step) {
+  const [hours, minutes] = time.split(":").map(Number), at = new Date(now);
+  at.setHours(hours, minutes, 0, 0);
+  if (step < 0 ? at.getTime() > now : at.getTime() <= now) at.setDate(at.getDate() + step);
+  return at.getTime();
+}
+const turn = (state, now, step) => ["start", "pause"].filter(kind => state.schedule?.[kind])
+  .map(kind => ({ kind, time: state.schedule[kind], at: occurrence(state.schedule[kind], now, step) }))
+  .sort((a, b) => step * (a.at - b.at))[0] ?? null;
+export const lastScheduled = (state, now = Date.now()) => turn(state, now, -1);
+export const nextScheduled = (state, now = Date.now()) => turn(state, now, 1);
 export function guessRepos(title, index = 0) {
   const repos = HINTS.filter(([, pattern]) => pattern.test(title)).map(([repo]) => repo);
   return repos.length ? repos : [REPOS[index % 2]];
@@ -154,7 +175,8 @@ function explain(state, picked) {
   if (asking.length) return state.live ? `${asking.join(", ")} ${asking.length === 1 ? "is" : "are"} waiting for you in ${asking.length === 1 ? "its terminal" : "their terminals"}.`
     : `${asking.join(", ")} ${asking.length === 1 ? "is paused until you answer. Its slot stays" : "are paused until you answer. Their slots stay"} reserved.`;
   if (state.live && !state.running && !state.tasks.length) return "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree.";
-  if (!state.running) return outstanding(state).length ? "Intake paused. Active work and approved merges can finish." : "Ready. Start the pipeline and the planner picks independent work first.";
+  const starts = state.schedule?.start ? ` Starts by itself at ${state.schedule.start}.` : "";
+  if (!state.running) return outstanding(state).length ? `Intake paused. Active work and approved merges can finish.${starts}` : starts ? `Ready.${starts}` : "Ready. Start the pipeline and the planner picks independent work first.";
   if (ready.length && quotaHeld(state)) return `Holding new work to protect your quota reserve. Reset the example quota to resume.${holding}`;
   if (ready.length) return `${ready[0].id}: ${waitingReason(state, ready[0])}.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} awaiting your approval.` : ""}${holding}`;
   if (held.length) return holding.trim();
@@ -188,6 +210,35 @@ export function reduce(state, action, now = Date.now()) {
       if (next.live && action.space) next.space = action.space;
       event(next, next.running ? "Planner started. Looking for independent work." : "Intake paused. Active work will finish.");
       break;
+    case "schedule": {
+      const value = { ...(next.schedule ?? { start: null, pause: null }) };
+      for (const kind of ["start", "pause"]) {
+        if (action[kind] === undefined) continue;
+        const time = String(action[kind] ?? "").trim() ? parseTime(action[kind]) : null;
+        if (time === null && String(action[kind] ?? "").trim()) return state;
+        value[kind] = time;
+      }
+      if (value.start && value.start === value.pause) return state;
+      const schedule = value.start || value.pause ? value : null;
+      if (JSON.stringify(schedule) === JSON.stringify(next.schedule ?? null)) return state;
+      next.schedule = schedule;
+      // Times that already passed today wait for tomorrow instead of firing the moment they're saved.
+      next.scheduled = lastScheduled(next, now)?.at ?? null;
+      if (next.live && action.space) next.space = action.space;
+      const parts = [value.start && `starts at ${value.start}`, value.pause && `pauses intake at ${value.pause}`].filter(Boolean);
+      event(next, parts.length ? `Every day the pipeline ${parts.join(" and ")}.` : "Schedule cleared.");
+      break;
+    }
+    case "scheduleTick": {
+      const due = lastScheduled(next, now);
+      if (!due || due.at <= (next.scheduled ?? -Infinity)) return state;
+      next.scheduled = due.at;
+      const running = due.kind === "start";
+      if (next.running === running) break;
+      next.running = running;
+      event(next, running ? `Scheduled start at ${due.time} · planner started.` : `Scheduled pause at ${due.time} · intake paused. Active work will finish.`);
+      break;
+    }
     case "add": enqueue(next, action.ids ?? [], "Picked"); break;
     case "addAll": enqueue(next, next.tasks.filter(task => task.status === "backlog").map(task => task.id), "Picked"); break;
     case "create": {

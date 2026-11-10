@@ -349,3 +349,60 @@ test("the tracker raises one toast per new question, unless a Pipeline view has 
     assert.equal(quiet.get("pipeline.prototype.v1").project.tasks.find(needsInput).id, "DEMO-104");
   } finally { Date.now = original; }
 });
+
+test("schedule times parse in 24-hour and am/pm forms", () => {
+  const { parseTime } = model;
+  assert.deepEqual(["22:00", "7", "7:30", "0730", "9pm", "12am", "12:15 pm", "23.59"].map(parseTime), ["22:00", "07:00", "07:30", "07:30", "21:00", "00:00", "12:15", "23:59"]);
+  assert.deepEqual(["24:00", "7:60", "13pm", "noon", ""].map(parseTime), [null, null, null, null, null]);
+});
+
+test("a daily schedule starts and pauses intake once per time, leaving manual toggles alone", () => {
+  const at = (day, hours, minutes = 0) => new Date(2026, 10, day, hours, minutes).getTime();
+  let state = reduce(fresh(), { type: "schedule", start: "22:00", pause: "7am" }, at(10, 12));
+  assert.deepEqual(state.schedule, { start: "22:00", pause: "07:00" });
+  assert.equal(state.running, false);
+  assert.match(state.plan, /Starts by itself at 22:00/);
+  assert.equal(reduce(state, { type: "scheduleTick" }, at(10, 21, 59)), state, "the morning pause already passed when it was saved");
+  state = reduce(state, { type: "scheduleTick" }, at(10, 22));
+  assert.equal(state.running, true);
+  assert.equal(activeTasks(state).length, 3);
+  assert.ok(state.events.some(item => /Scheduled start at 22:00 · planner started/.test(item.message)));
+  state = reduce(state, { type: "run" }, at(10, 23));
+  assert.equal(reduce(state, { type: "scheduleTick" }, at(10, 23, 30)), state, "a manual pause holds until the next time");
+  state = reduce(state, { type: "run" }, at(11, 1));
+  state = reduce(state, { type: "scheduleTick" }, at(11, 7, 0));
+  assert.equal(state.running, false);
+  assert.match(state.events[0].message, /Scheduled pause at 07:00/);
+  assert.equal(reduce(state, { type: "scheduleTick" }, at(11, 7, 1)), state);
+});
+
+test("a schedule missed while Herdr was closed applies only its latest time", () => {
+  const at = (day, hours) => new Date(2026, 10, day, hours).getTime();
+  let state = reduce(fresh(), { type: "schedule", start: "22:00", pause: "07:00" }, at(10, 12));
+  state = reduce(state, { type: "scheduleTick" }, at(12, 23));
+  assert.equal(state.running, true);
+  assert.equal(state.scheduled, at(12, 22));
+});
+
+test("invalid or clashing schedule times change nothing; clearing both removes the schedule", () => {
+  const state = reduce(fresh(), { type: "schedule", start: "22:00" }, 0);
+  assert.equal(reduce(state, { type: "schedule", pause: "later" }, 0), state);
+  assert.equal(reduce(state, { type: "schedule", pause: "10pm" }, 0), state);
+  const cleared = reduce(state, { type: "schedule", start: null }, 0);
+  assert.equal(cleared.schedule, null);
+  assert.match(cleared.events[0].message, /Schedule cleared/);
+});
+
+test("the background tracker starts a scheduled pipeline whose view is closed", async () => {
+  const day = new Date(2026, 10, 10, 12).getTime(), start = new Date(2026, 10, 10, 22).getTime();
+  const values = new Map([["pipeline.prototype.v1", { project: reduce(fresh(), { type: "schedule", start: "22:00" }, day) }]]);
+  const callbacks = await tracker(values);
+  const original = Date.now;
+  try {
+    Date.now = () => start - 1000; callbacks[0](); callbacks[1]();
+    assert.equal(values.writes ?? 0, 0);
+    Date.now = () => start; callbacks[0](); callbacks[1]();
+    assert.equal(values.get("pipeline.prototype.v1").project.running, true);
+    assert.equal(values.writes, 1, "a second tracker sees the start already applied");
+  } finally { Date.now = original; }
+});
