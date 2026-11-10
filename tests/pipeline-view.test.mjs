@@ -935,3 +935,21 @@ test("a stalled agent, its tokens and its own history show on the card and in th
   assert.match(inspector, /Claude Code used 3\.4k tokens written · 120k read · 2\.0M from cache, over 1 reply\./);
   assert.match(inspector, /Task history T-1 is working\. T-1 joined the queue\./);
 });
+
+test("a wide Pipeline has one bar of controls and one status bar; a narrower one gives the controls their own row", () => {
+  const view = setup();
+  view.size = { width: 1500, height: 800 };
+  let scene = view.render(cx);
+  assert.equal(find(scene, "controls"), undefined);
+  assert.ok(find(scene, "add") && find(scene, "run"), "the intake controls sit in the top bar");
+  assert.equal(find(scene, "scene").styles.h[0], 800 - 50 - 36);
+  assert.match(text(find(scene, "status")), /Paused .*5 queued .*Start the pipeline to watch your first tasks enter/);
+  click(view, "activity");
+  assert.equal(view.drawer, "activity");
+  click(view, "settings");
+  assert.match(text(find(view.render(cx), "inspector")), /Keys Space start or pause/);
+  view.size = { width: 1200, height: 800 };
+  scene = view.render(cx);
+  assert.ok(find(find(scene, "controls"), "add"));
+  assert.equal(find(scene, "scene").styles.h[0], 800 - 50 - 46 - 36);
+});

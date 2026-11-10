@@ -6,7 +6,9 @@ import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js"
 import { trustKeys, fixRequest, rebaseRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
-const CHROME = 50 + 46 + 36 + 32;
+const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
+const KEYS = { live: "Space start or pause · N new task · arrows or J K walk the tasks · D read the diff · P Plane · L Linear · Q next agent that needs you · Y merge all · R retry failed · Esc close",
+  simulation: "Space start or pause · N new task · arrows or J K walk the tasks · A examples · Q answer · Y approve all · R retry failed · S speed · Esc close" };
 const COMET = ["●", "•", "·", "", "", ""];
 const CHECK_HINTS = [
   "if [ -f package.json ] && grep -q '\"test\"' package.json; then",
@@ -494,7 +496,7 @@ export default class Pipeline extends View {
       : held ? "Waiting for quota" : info.active ? (state.live ? "Agents working" : "Pipeline running")
       : info.approvals ? (state.live ? "Waiting for your review" : "Waiting for your approval") : info.queued ? "Waiting" : "Watching for work";
     info.color = held || info.failed || info.questions || unusable ? t.blocked : state.running ? t.accent : t.muted;
-    const narrow = this.size.width < 820, compact = this.size.width < 640;
+    const narrow = this.size.width < 820, compact = this.size.width < 640, wide = this.size.width >= ONE_ROW;
     const root = v_flex().id("pipeline-root").size_full().min_w(0).min_h(0).bg(t.canvas).text_color(t.foreground).text_size(13)
       .track_focus(this.handle)
       .on_size_change((bounds, cx) => {
@@ -504,9 +506,8 @@ export default class Pipeline extends View {
         if (Math.abs(size.width - this.size.width) > 1 || Math.abs(size.height - this.size.height) > 1) { this.size = size; cx.notify(); }
       })
       .on_key_down((e, cx) => this.key(e, cx))
-      .child(this.header(state, t, narrow, compact))
-      .child(this.commands(state, t))
-      .child(this.status(state, t, info, motion))
+      .child(this.header(state, t, narrow, compact, wide))
+      .when(!wide, el => el.child(this.commands(state, t)))
       .child(h_flex().relative().flex_1().min_h(0).min_w(0)
         .child(div().id("pipeline-viewport").flex_1().min_w(0).h_full().overflow_scrollbar()
           .child(this.scene(state, t, info, motion, now, cx)))
@@ -514,7 +515,7 @@ export default class Pipeline extends View {
           .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))
           .when(this.size.width > 1180, node => node.relative())
           .when(this.size.width <= 1180, node => node.absolute().right(0).top(0).bottom(0)))))
-      .child(this.footer(state, t));
+      .child(this.status(state, t, info, motion));
     for (const key of [...this.bars.keys()]) if (!this.seen.has(key)) this.bars.delete(key);
     return root;
   }
@@ -545,7 +546,7 @@ export default class Pipeline extends View {
     if (action) { action(); cx.stop_propagation(); }
   }
 
-  header(state, t, narrow, compact) {
+  header(state, t, narrow, compact, wide) {
     return h_flex().h(50).px(20).gap(10).items_center().flex_none()
       .child(icon("pipeline", 20).text_color(t.accent))
       .when(!compact, el => el.child(div().text_size(16).font_semibold().flex_none().child("Pipeline")))
@@ -553,9 +554,10 @@ export default class Pipeline extends View {
         .child(this.button("mode-simulation", "Simulation", cx => this.setMode("simulation", cx), t, { small: true, selected: !state.live, hint: "Example tasks and simulated agents" }))
         .child(this.button("mode-live", "Live", cx => this.setMode("live", cx), t, { small: true, selected: Boolean(state.live), disabled: !this.context.cwd,
           hint: this.context.cwd ? "Real agents, each in its own Git worktree" : "Open Pipeline from a project to run real agents" })))
-      .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
+      .when(wide, el => el.children(this.controls(state, t)).child(div().flex_1()))
+      .when(!wide, el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
         ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}${(state.repositories?.length ?? 1) > 1 ? ` + ${state.repositories.length - 1} more ${state.repositories.length === 2 ? "repository" : "repositories"}` : ""} · ${this.agentLabel(state)} in its own worktree per task`
-        : `${state.context.name} · example repositories: ${REPOS.join(", ")}`))
+        : `${state.context.name} · example repositories: ${REPOS.join(", ")}`)))
       .when(!state.live && !compact, el => el.child(this.button("speed", `${state.speed}×`, cx => this.speed(cx), t, { icon: "bolt", selected: state.speed > 1, hint: `Simulation speed ${state.speed}× (S)` })))
       .when(!narrow, el => el.child(this.button("motion", "Motion", cx => this.toggleMotion(cx), t,
         { icon: "motion", iconOnly: true, selected: this.motion && !this.reducedMotion, hint: this.reducedMotion ? "System Reduce Motion is enabled" : `${this.motion ? "Turn off" : "Turn on"} animation` })))
@@ -576,19 +578,22 @@ export default class Pipeline extends View {
   }
 
   commands(state, t) {
+    return h_flex().id("pipeline-controls").h(CONTROLS).px(20).pb(10).gap(8).items_center().flex_none().overflow_x_scrollbar().children(this.controls(state, t));
+  }
+  controls(state, t) {
     const typed = this.title.value().trim();
-    return h_flex().id("pipeline-controls").h(46).px(20).pb(10).gap(8).items_center().flex_none().overflow_x_scrollbar()
-      .child(h_flex().flex_1().min_w(240).max_w(480).h(32).pl(10).pr(4).gap(8).items_center().rounded(6).border_1().border_color(t.border).bg(t.input)
+    const toggle = drawer => cx => this.open(this.drawer === drawer ? null : drawer, cx);
+    return [h_flex().flex_1().min_w(200).max_w(480).h(32).pl(10).pr(4).gap(8).items_center().rounded(6).border_1().border_color(t.border).bg(t.input)
         .child(icon("plus", 13).text_color(t.muted))
         .child(div().flex_1().min_w(0).child(Input.new(this.title).w_full().text_size(12).accessibility_label("New task title")))
-        .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true, hint: "Add to the queue (Enter)" }))))
-      .when(state.live, el => el.child(this.button("agent", this.agentLabel(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent, model and effort each task starts with" }))
-        .child(this.sourceButton("plane", state, t, "Queue tickets from the Plane project linked to this repository (P)"))
-        .child(this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")))
-      .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
-        .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch })))
-      .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }))
-      .when(!state.live, el => el.child(this.button("quota", `Quota ${state.quota}%`, cx => this.open(this.drawer === "quota" ? null : "quota", cx), t, { icon: "gauge", hint: "Example quota and reserve controls" })));
+        .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true, hint: "Add to the queue (Enter)" }))),
+      ...(state.live ? [this.button("agent", this.agentLabel(state), toggle("settings"), t, { icon: "terminal", hint: `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}: the agent, model and effort each task starts with, in its own worktree` }),
+        this.sourceButton("plane", state, t, "Queue tickets from the Plane project linked to this repository (P)"),
+        this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")]
+        : [this.button("add", "Examples", toggle("picker"), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }),
+          this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", toggle("watch"), t, { icon: "eye", selected: state.watch })]),
+      this.button("parallel", `${state.parallel} parallel`, toggle("settings"), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }),
+      ...(state.live ? [] : [this.button("quota", `Quota ${state.quota}%`, toggle("quota"), t, { icon: "gauge", hint: "Example quota and reserve controls" })])];
   }
 
   sourceButton(provider, state, t, hint) {
@@ -598,13 +603,18 @@ export default class Pipeline extends View {
   }
 
   status(state, t, info, motion) {
-    return h_flex().id("pipeline-status").h(36).px(20).gap(10).items_center().flex_none().border_y(1).border_color(t.border).text_size(11).text_color(t.muted).overflow_x_scrollbar()
+    const latest = state.events[0];
+    return h_flex().id("pipeline-status").h(STATUS).px(20).gap(10).items_center().flex_none().border_t(1).border_color(t.border).text_size(11).text_color(t.muted).overflow_x_scrollbar()
       .child(dot(info.color, 7).id("pipeline-status-dot").when(motion && state.running, el => el.loop("opacity", { from: 0.35, to: 1, period: 1600 })))
       .child(div().font_medium().text_color(t.foreground).flex_none().child(info.status))
       .child(div().flex_none().child(`${info.active}/${state.parallel} active`))
       .child(div().flex_none().child(`${info.queued} queued`))
       .child(div().flex_none().child(`${info.done} done`))
-      .child(div().flex_1())
+      .child(Button.new("pipeline-activity").flex_1().min_w(60).h(24).pl(10).gap(8).flex().items_center().justify_start().border_l(1).border_color(t.border).text_size(11).text_color(t.muted).tab_index(0)
+        .accessibility_label("Open activity").tooltip("Open the activity log")
+        .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
+        .on_click((_e, cx) => this.open(this.drawer === "activity" ? null : "activity", cx))
+        .child(div().min_w(0).truncate().child(latest?.message ?? "Start the pipeline to watch your first tasks enter.")))
       .when(info.questions > 0, el => el.child(this.button("answer-next", state.live ? `${info.questions} need${info.questions === 1 ? "s" : ""} you` : `Answer ${count(info.questions, "question")}`, cx => this.nextQuestion(cx), t,
         { icon: "question", primary: true, small: true, hint: state.live ? "Show the next agent waiting for you (Q)" : "Open the next question waiting for you (Q)" })))
       .when(info.approvals > 0, el => el.child(this.button("approve-all", !state.live ? `Approve ${count(info.approvals, "task")}` : state.delivery === "pr" ? `Open ${count(info.approvals, "PR")}` : `Merge ${count(info.approvals, "task")}`, cx => this.act({ type: "approveAll" }, cx), t,
@@ -627,19 +637,6 @@ export default class Pipeline extends View {
         { icon: "reset", small: true, disabled: pushing, hint: `Last push failed: ${entries.map(entry => `${several ? `${entry.branch} in ${entry.repo}: ` : ""}${entry.error}`).join(" ")} Click to push again. Pipeline never forces or pulls.` }));
   }
 
-  footer(state, t) {
-    const latest = state.events[0];
-    return h_flex().h(32).px(20).gap(10).items_center().border_t(1).border_color(t.border).flex_none().text_size(11)
-      .child(dot(latest ? t.accent : t.muted, 4))
-      .child(Button.new("pipeline-activity").flex_1().min_w(0).h(24).flex().items_center().justify_start().text_size(11).text_color(t.muted).tab_index(0)
-        .accessibility_label("Open activity").tooltip("Open the activity log")
-        .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
-        .on_click((_e, cx) => this.open(this.drawer === "activity" ? null : "activity", cx))
-        .child(div().min_w(0).truncate().child(latest?.message ?? "Start the pipeline to watch your first tasks enter.")))
-      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child(state.live ? "Space start · N new · ↑↓ tasks · D diff · Q needs you · Y merge · R retry"
-        : "Space start · N new · ↑↓ tasks · A examples · Q answer · Y approve · R retry")));
-  }
-
   bar(task, state, width, color, motion, now, cx) {
     const key = `${task.id}-${task.status}-${Math.round(task.since)}`;
     const reached = Math.round(width * progress(state, task, now));
@@ -659,7 +656,7 @@ export default class Pipeline extends View {
   scene(state, t, info, motion, now, cx) {
     const drawerWidth = this.drawer && this.size.width > 1180 ? 330 : 0;
     const cw = this.cardW = cardWidth(this.size.width);
-    const g = layoutScene(state, this.size.width - drawerWidth, this.size.height - CHROME, cw);
+    const g = layoutScene(state, this.size.width - drawerWidth, this.size.height - BAR - STATUS - (this.size.width >= ONE_ROW ? 0 : CONTROLS), cw);
     const c = g.center;
     const canvas = div().id("pipeline-scene").relative().w(g.w).h(g.h).flex_none().overflow_hidden();
     const alive = motion && (state.running || state.tasks.some(task => MOVING.includes(task.status)));
@@ -778,7 +775,7 @@ export default class Pipeline extends View {
 
     for (const node of g.nodes) canvas.child(this.node(node, state, t, motion, now, cx, node.task === g.doneShown[0]));
     canvas.child(this.button("history", `${count(info.done, "task")} completed`, cx => this.open("done", cx), t, { icon: "check", small: true }).absolute().right(24).bottom(12));
-    canvas.child(div().absolute().left(30).bottom(17).text_size(11).text_color(t.muted).child("Click a task, or use the arrow keys, to inspect it."));
+    canvas.child(div().absolute().left(30).bottom(17).text_size(11).text_color(t.muted).child("Click a task, or use the arrow keys, to inspect it. Keys are listed in Settings."));
     return canvas;
   }
 
@@ -937,6 +934,7 @@ export default class Pipeline extends View {
     body.child(this.motionSwitch(t));
     body.child(this.button("reset", "Reset example pipeline", cx => { this.act({ type: "reset" }, cx); this.picked.clear(); this.selected = null; }, t, { icon: "reset" }));
     body.child(this.label("Runs while Herdr is open. You can close this tab; the pipeline keeps going.", t));
+    body.child(this.heading("Keys")).child(this.label(KEYS.simulation, t));
   }
   quota(body, state, t) {
     body.child(div().text_size(29).font_semibold().child(`${state.quota}%`)).child(this.label("Example quota remaining", t));
@@ -1112,6 +1110,7 @@ export default class Pipeline extends View {
       !state.quiet, cx => this.act({ type: "quiet" }, cx), t));
     body.child(this.motionSwitch(t));
     body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
+    body.child(this.heading("Keys")).child(this.label(KEYS.live, t));
   }
   repositories(body, state, t) {
     const repos = state.repositories ?? [{ name: state.repo, path: this.context.cwd }];

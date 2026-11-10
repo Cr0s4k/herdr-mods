@@ -127,7 +127,7 @@ The named spacing primitives describe observed gaps and gutters, not a requireme
 
 ### Pipeline geometry
 
-Pipeline has a header (50 high: title, speed, motion, settings and the run action), a horizontally scrollable command row (46: the New task field and intake controls), a horizontally scrollable status strip (36: state, counts and the actions that need you), a flexible scene viewport and an activity footer (32). The scene receives the remaining height after these fixed regions (164 total). All dimensions here are logical units.
+Pipeline has two bars around the scene. The top bar (50 high) holds the title, the Simulation / Live switch, the New task field and intake controls, speed, motion, settings and the run action. Below width 1340 the field and intake controls move to their own horizontally scrollable row (46) under it, and the freed space in the top bar names the project. The bottom status bar (36, horizontally scrollable) holds state, counts, the latest activity line (which opens the activity log) and the actions that need you. The scene receives the remaining height (86 less than the view, 132 below width 1340). All dimensions here are logical units.
 
 The canvas is a stable coordinate field with both-axis scrolling. Its minimum height is 420. Its minimum width is 940 for up to three visible slots and 1180 for more than three. Larger available dimensions expand the field. Lowering the parallel limit preserves occupied higher-numbered slots: the visible slot count is the greater of the current limit and the highest active slot plus one. That count also determines the canvas minimum width.
 
@@ -142,7 +142,7 @@ Connection paths and clickable task nodes share these coordinates. Preserve that
 
 ### Narrow panes and zoom
 
-Below width 820, the header hides its standalone Motion action; motion remains available in Settings. Controls and the status strip scroll horizontally. The footer's keyboard hint appears only above width 900.
+Below width 820, the header hides its standalone Motion action; motion remains available in Settings. The controls row and the status bar scroll horizontally. Keyboard hints live in Settings.
 
 The inspector is 330 wide, capped at the pane width minus 16. Above width 1180 it sits beside the scene and its width is subtracted from the available canvas width. At or below that threshold it overlays the scene's right edge. Its body owns vertical scrolling; task rows must retain their content height so every queue entry stays reachable.
 

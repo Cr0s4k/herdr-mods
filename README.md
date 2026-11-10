@@ -341,16 +341,21 @@ Some example tasks stop halfway through implementing to ask you a question, the 
 agent waits for input: the card shows **Needs you** and keeps its slot, the toolbar's
 **Pipeline** button shows **Needs you N**, and a toast appears unless Pipeline already has
 focus (click it to open Pipeline). **Answer** on the card, **Answer N questions** in the
-status strip, or Q opens the question; pick an option (or press its number) or type your
+status bar, or Q opens the question; pick an option (or press its number) or type your
 own answer, and the task resumes where it stopped and the next question opens. Settings
 has **Simulate a question** to make the next working task ask. Real agents will appear in
 the sidebar on their own; this only simulates that moment.
+
+Pipeline keeps two bars around the scene: controls on top (the New task field and intake
+buttons sit beside the title in a wide window, and on their own row in a narrow one) and one
+status bar at the bottom with the state, counts, the latest activity (click it for the log)
+and the actions that wait for you. Settings lists the keys.
 
 Keys, with the scene focused: Space start/pause, N new task, the arrow keys (or J and K)
 to walk the tasks in the order the scene shows them, A examples (in Live: P for
 Plane, L for Linear, D to read the selected task's changes), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
 S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
-**PR approval** in the status strip switches to **Auto-merge** (merge after checks); in Live,
+**PR approval** in the status bar switches to **Auto-merge** (merge after checks); in Live,
 that is **Merge automatically** in Settings.
 Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,
 the animation toggle and **Reset example pipeline**. **Quota** simulates exhaustion and
