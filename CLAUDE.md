@@ -22,8 +22,10 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
   `herdr-app status` shows no errors. `herdr-app shot out.png` screenshots the window.
 - In a Git worktree (Pipeline tasks run in `~/.herdr/worktrees/…`), never run `./install.sh`:
   it replaces the mods every session is running with your unmerged branch, and the last install
-  wins. Run the tests and `herdr-app check mods/<mod>` instead, and say in your report that the
-  change still needs an install from the main checkout after merging.
+  wins. Run the tests and `herdr-app check` instead, on a copy made the way install makes it
+  (`rsync -a --copy-links mods/<mod>/ <scratch>/<mod>/`; a mod with symlinked modules fails the
+  check in place), and say in your report that the change still needs an install from the main
+  checkout after merging.
 - Mods sharing state use `shared(key)` / `setShared(key, value)`; there is no command to set it
   from outside. To test, drop a throwaway mod that calls it in `init` and open it with
   `herdr-app do tab.new '{"name":"t","mod":"<mod>"}'`, then remove both.
