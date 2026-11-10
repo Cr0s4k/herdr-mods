@@ -56,6 +56,7 @@ class LinearTest(unittest.TestCase):
             self.assertEqual([issue["id"] for issue in data["issues"]][:2], ["A-1", "B-0"])
             self.assertEqual(call.call_count, 10)
             self.assertEqual({c.args[1] for c in call.call_args_list}, {"get_issue"})
+            self.assertTrue(all(c.args[2]["includeRelations"] for c in call.call_args_list), "blockers come with the details")
         pages = {"started": [{"id": "A-1", "uuid": "1"}], "unstarted": [{"id": "A-2", "uuid": "2"}, {"id": "A-1", "uuid": "1"}], "backlog": []}
         with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, _n, args: {"issues": pages[args["state"]]}) as call:
             data = reader.request("/app", {"scope": "mine", "open": True, "state": "ignored"})["data"]

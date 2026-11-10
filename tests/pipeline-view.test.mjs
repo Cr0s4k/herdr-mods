@@ -366,6 +366,27 @@ test("queued live task details are saved when the field loses focus", () => {
   assert.equal(row(view, "T-1").description, "Follow the system preference first.");
 });
 
+test("a queued live task lists its ticket blockers, picks tasks to wait for, and can start anyway", () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "Schema" }, cx);
+  view.act({ type: "addTickets", provider: "linear", issues: [{ uuid: "u-5", identifier: "PRO-5", title: "Endpoint", status: "Todo",
+    blockers: [{ key: "PRO-9", title: "Auth tokens for every service in the platform", closed: false, url: "https://linear.test/PRO-9" }] }] }, cx);
+  view.inspect("PRO-5", cx);
+  let scene = view.render(cx);
+  assert.match(text(find(scene, "blocker-PRO-5-0")), /PRO-9 · Open in Linear · Auth tokens for every service in …/);
+  assert.match(text(scene), /Waiting for PRO-9 to close in Linear/);
+  click(view, "wait-PRO-5-T-1");
+  assert.deepEqual(row(view, "PRO-5").depends, ["T-1"]);
+  view.inspect("T-1", cx);
+  assert.equal(find(view.render(cx), "wait-T-1-PRO-5").styles.disabled[0], true, "waiting for each other is refused");
+  view.inspect("PRO-5", cx);
+  click(view, "unblock-PRO-5");
+  assert.equal(row(view, "PRO-5").unblocked, true);
+  click(view, "reblock-PRO-5");
+  assert.equal(row(view, "PRO-5").unblocked, false);
+  assert.match(text(view.render(cx)), /Waiting for T-1 to merge and PRO-9 to close in Linear/);
+});
+
 test("a finished agent merges from its card; failures retry and discards ask twice", () => {
   const view = setupLive();
   for (const title of ["A", "B", "C"]) view.act({ type: "create", title }, cx);

@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
 const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, CHECK_FIXES, agentRun, tuningFor, tuningLabel } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
+const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, tuningFor, tuningLabel } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { STORE, LIVE, createLive, createPipeline, reduce, activeTasks } = model;
 const context = { id: "project", name: "shop", cwd: "/work/shop", on: null };
 const id = `${LIVE}project`;
@@ -656,4 +656,85 @@ test("a save from a newer Pipeline is never reset, changed or run", async () => 
   runner.step({ spawn: () => assert.fail("nothing runs for a newer save") });
   assert.equal(world.state(), future);
   assert.deepEqual(world.started, []);
+});
+
+const blocked = (key, ...blockers) => ({ uuid: `u-${key}`, identifier: key, title: `Ticket ${key}`, status: "Todo", blockers });
+
+test("a ticket blocked by another ticket in the pipeline starts once that task merges", () => {
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", issues: [
+    blocked("PRO-2", { key: "PRO-1", title: "Base", closed: false }), blocked("PRO-1")] }, 0);
+  state = reduce(state, { type: "run" }, 0);
+  assert.deepEqual(activeTasks(state).map(task => task.id), ["PRO-1"]);
+  assert.equal(model.waitingReason(state, row(state, "PRO-2")), "Waiting for PRO-1 to merge");
+  assert.match(state.plan, /Holding PRO-2 until what it waits for is done/);
+  Object.assign(row(state, "PRO-1"), { status: "merging", slot: null });
+  state = reduce(state, { type: "merged", id: "PRO-1", target: "main" }, 0);
+  assert.equal(row(state, "PRO-2").status, "routing");
+});
+
+test("a blocker outside the pipeline holds its task until the tracker says it closed", () => {
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", issues: [
+    blocked("PRO-5", { key: "PRO-9", title: "Elsewhere", closed: false, url: "https://linear.test/PRO-9" }, { key: "PRO-8", closed: true }, { key: null, closed: null })] }, 0);
+  state = reduce(state, { type: "run" }, 0);
+  assert.equal(row(state, "PRO-5").status, "queued");
+  assert.equal(model.waitingReason(state, row(state, "PRO-5")), "Waiting for PRO-9, a ticket Pipeline can't read to close in Linear");
+  state = reduce(state, { type: "blockers", id: "PRO-5", blockers: [{ key: "PRO-9", title: "Elsewhere", closed: true }] }, 0);
+  assert.equal(row(state, "PRO-5").status, "routing");
+  assert.ok(state.events.some(item => item.message === "PRO-5 · PRO-9 closed in Linear."));
+  assert.equal(reduce(state, { type: "blockers", id: "PRO-5", blockers: [] }, 0), state, "only queued tasks take new blockers");
+});
+
+test("typed tasks can wait for each other, never in a circle, and a removed one frees its dependents", () => {
+  let state = typed("Schema", "Endpoint");
+  state = reduce(state, { type: "link", id: "T-2", on: "T-1" }, 0);
+  assert.deepEqual(row(state, "T-2").depends, ["T-1"]);
+  assert.equal(reduce(state, { type: "link", id: "T-1", on: "T-2" }, 0), state, "a circle is refused");
+  assert.equal(model.canWaitFor(state, row(state, "T-1"), row(state, "T-2")), false);
+  state = reduce(state, { type: "run" }, 0);
+  assert.deepEqual(activeTasks(state).map(task => task.id), ["T-1"]);
+  state = typed("Schema", "Endpoint");
+  state = reduce(reduce(state, { type: "link", id: "T-2", on: "T-1" }, 0), { type: "remove", id: "T-1" }, 0);
+  assert.deepEqual(row(state, "T-2").depends, []);
+  assert.match(state.events[0].message, /T-2 no longer waits for T-1, which was removed/);
+});
+
+test("Start anyway lets a waiting task go, and Wait again holds it once more", () => {
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", issues: [blocked("PRO-5", { key: "PRO-9", closed: false })] }, 0);
+  assert.equal(reduce(typed("A"), { type: "unblock", id: "T-1", value: true }, 0).tasks[0].unblocked, undefined, "nothing to skip");
+  state = reduce(state, { type: "unblock", id: "PRO-5", value: true }, 0);
+  assert.deepEqual(model.dependencies(state, row(state, "PRO-5")), []);
+  state = reduce(state, { type: "unblock", id: "PRO-5", value: false }, 0);
+  assert.deepEqual(model.dependencies(state, row(state, "PRO-5")), ["PRO-9"]);
+  state = reduce(reduce(state, { type: "unblock", id: "PRO-5", value: true }, 0), { type: "run" }, 0);
+  assert.equal(row(state, "PRO-5").status, "routing");
+});
+
+test("the runner asks the tracker about outside blockers once a minute, only for tasks waiting on them", async () => {
+  let now = 0;
+  const asked = [];
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", issues: [
+    blocked("PRO-5", { key: "PRO-9", closed: false }), blocked("PRO-6", { key: "PRO-5", closed: false }), blocked("PRO-7")] }, 0);
+  const world = host(state, { now: () => now, blockers: async (provider, issues) => {
+    asked.push([provider, issues.map(issue => issue.uuid)]);
+    return new Map([["u-PRO-5", [{ key: "PRO-9", closed: asked.length > 1 }]]]);
+  } });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async () => { const spawned = []; runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) }); await Promise.all(spawned); };
+  await tick(); now = 30000; await tick();
+  assert.deepEqual(asked, [["linear", ["u-PRO-5"]]]);
+  now = 61000; await tick();
+  assert.equal(asked.length, 2);
+  assert.equal(row(world.state(), "PRO-5").blockers[0].closed, true);
+});
+
+test("with pull requests, a task that waited starts from origin so it has its blocker's merge", async () => {
+  let state = reduce(typed("Schema", "Endpoint"), { type: "deliver", value: "pr" }, 0);
+  state = reduce(state, { type: "link", id: "T-2", on: "T-1" }, 0);
+  Object.assign(row(state, "T-1"), { status: "done" });
+  let world = host(reduce(state, { type: "run" }, 0));
+  await step(new live.LiveRunner(world.host));
+  assert.equal(world.scripts[0][1].remote, true);
+  world = host(reduce(reduce(typed("Solo"), { type: "deliver", value: "pr" }, 0), { type: "run" }, 0));
+  await step(new live.LiveRunner(world.host));
+  assert.equal(world.scripts[0][1].remote, undefined, "work that waited for nothing starts from the project folder");
 });

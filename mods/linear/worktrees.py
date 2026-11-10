@@ -34,13 +34,21 @@ def workspace(base, run_id, ticket, provider="linear"):
     return {"id": ticket["id"], "key": ticket["key"], "branch": provider + "/" + leaf, "root": str(base / leaf)}
 
 
-def inspect(cwd, tickets, provider="linear"):
+def inspect(cwd, tickets, provider="linear", remote=False):
     root, common, relative, base = repository(cwd, provider)
     commit = git(root, "rev-parse", "--verify", "HEAD^{commit}")
+    branch = git(root, "symbolic-ref", "--short", "HEAD", optional=True)
+    # Work that waited for a pull request needs it, and GitHub merged it into origin, not this checkout.
+    if remote:
+        if not branch:
+            raise ValueError("Your project folder is on a detached HEAD. Check out the branch pull requests go into, then retry.")
+        if git(root, "fetch", "-q", "origin", branch, optional=True) is None:
+            raise ValueError("Could not fetch " + branch + " from origin. Check your connection, then retry.")
+        commit = git(root, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
     run_id = secrets.token_hex(6)
     workspaces = [workspace(base, run_id, ticket, provider) for ticket in tickets]
     return {"root": str(root), "common": str(common), "relative": str(relative), "base": commit,
-            "branch": git(root, "symbolic-ref", "--short", "HEAD", optional=True) or "detached HEAD",
+            "branch": branch or "detached HEAD",
             "dirty": bool(git(root, "status", "--porcelain")), "runId": run_id,
             "workspaces": workspaces, "provider": provider}
 
@@ -71,7 +79,7 @@ def main():
     try:
         payload = json.loads(sys.argv[1])
         if payload["op"] == "inspect":
-            result = inspect(payload["cwd"], payload["tickets"], payload.get("provider", "linear"))
+            result = inspect(payload["cwd"], payload["tickets"], payload.get("provider", "linear"), bool(payload.get("remote")))
         elif payload["op"] == "create":
             result = create(payload["cwd"], payload["plan"], payload["ticket"])
         else:

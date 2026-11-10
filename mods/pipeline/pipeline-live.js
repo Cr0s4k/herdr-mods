@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, CHECK_FIXES, agentRun, tuningFor, tuningLabel } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, tuningFor, tuningLabel } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -109,8 +109,31 @@ export class LiveRunner {
     });
   }
 
+  // Tasks blocked by tickets outside the pipeline ask their tracker once a minute whether those closed.
+  watchBlockers(id, state, cx) {
+    if (!this.host.blockers) return;
+    const lane = `blockers/${id}`, now = this.host.now();
+    if (this.polling.has(lane) || now - (this.polled.get(lane) ?? -Infinity) < 60000) return;
+    const waiting = state.tasks.filter(task => task.status === "queued" && task.ticket && waitsFor(state, task).some(wait => wait.kind === "ticket"));
+    if (!waiting.length) return;
+    this.polled.set(lane, now); this.polling.add(lane);
+    cx.spawn(async () => {
+      try {
+        for (const provider of Object.keys(SOURCES)) {
+          const tasks = waiting.filter(task => task.ticket.provider === provider);
+          if (!tasks.length) continue;
+          const found = await this.host.blockers(provider, tasks.map(task => ({ uuid: task.ticket.uuid })));
+          for (const task of tasks) if (found.has(task.ticket.uuid)) this.apply(id, { type: "blockers", id: task.id, blockers: found.get(task.ticket.uuid) });
+        }
+      } catch { /* Try again next minute. */ } finally { this.polling.delete(lane); }
+    });
+  }
+
   step(cx) {
-    for (const [id, state] of this.pipelines()) for (const provider of Object.keys(SOURCES)) this.watchTickets(id, state, provider, cx);
+    for (const [id, state] of this.pipelines()) {
+      for (const provider of Object.keys(SOURCES)) this.watchTickets(id, state, provider, cx);
+      this.watchBlockers(id, state, cx);
+    }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       const change = observe(task, this.host);
       if (change) this.apply(id, { type: "observe", id: task.id, ...change });
@@ -182,7 +205,8 @@ export class LiveRunner {
       if (!workspace) {
         this.apply(id, { type: "launch", id: task.id, phase: "creating" });
         const ticket = { id: task.id, key: branchKey(task) };
-        const plan = await host.worktree(context, { op: "inspect", tickets: [ticket], provider: "pipeline" });
+        const remote = host.shared(STORE)[id].delivery === "pr" && Boolean(task.depends.length || task.blockers?.length);
+        const plan = await host.worktree(context, { op: "inspect", tickets: [ticket], provider: "pipeline", ...(remote ? { remote } : {}) });
         const planned = { root: plan.workspaces[0].root, branch: plan.workspaces[0].branch, base: plan.base, target: plan.branch };
         this.apply(id, { type: "launch", id: task.id, phase: "creating", planned });
         if (!still()) return;

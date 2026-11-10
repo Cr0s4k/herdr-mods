@@ -178,5 +178,31 @@ class PlaneTest(unittest.TestCase):
         self.assertEqual((self.home / "plane/credentials.json").read_text(), before)
 
 
+    def test_blockers_name_each_blocking_work_item_and_whether_it_closed(self):
+        other_project = {"id": "44444444-4444-4444-8444-444444444444", "name": "Platform", "identifier": "PLAT"}
+        open_id, done_id, gone_id, elsewhere_id = ("55555555-5555-4555-8555-55555555555" + str(n) for n in range(4))
+        items = {open_id: item(id=open_id, name="Schema", sequence_id=3, state={"name": "Todo", "group": "unstarted"}),
+                 done_id: item(id=done_id, name="Old", sequence_id=4, state={"name": "Done", "group": "completed"}),
+                 elsewhere_id: item(id=elsewhere_id, name="Auth", sequence_id=9, state={"name": "Cancelled", "group": "cancelled"})}
+        def call(_config, path, params=None, **_kwargs):
+            if path.endswith(ITEM_ID + "/relations/"):
+                return {"blocked_by": [open_id, {"id": done_id}, gone_id, {"id": elsewhere_id, "project_id": other_project["id"]}, "junk"], "blocking": [open_id]}
+            if "/relations/" in path:
+                raise plane.PlaneError("Plane could not find this workspace, project or task.", "missing")
+            if "/work-items/" in path:
+                found = items.get(path.rstrip("/").split("/")[-1])
+                if not found:
+                    raise plane.PlaneError("Plane could not find this workspace, project or task.", "missing")
+                return found
+            return other_project if other_project["id"] in path else PROJECT
+        old = "66666666-6666-4666-8666-666666666666"
+        with patch.object(plane, "call", side_effect=call):
+            found = plane.request(self.home, {"op": "blockers", "ids": [f"plane:{PROJECT['id']}:{ITEM_ID}", f"plane:{PROJECT['id']}:{old}"]})["blockers"]
+        rows = found[f"plane:{PROJECT['id']}:{ITEM_ID}"]
+        self.assertEqual([(row["key"], row["closed"]) for row in rows], [("HMOD-3", False), ("HMOD-4", True), (None, None), ("PLAT-9", True)])
+        self.assertEqual(rows[0]["uuid"], f"plane:{PROJECT['id']}:{open_id}")
+        self.assertEqual(found[f"plane:{PROJECT['id']}:{old}"], [], "an instance without relations has no blockers")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -113,7 +113,28 @@ function event(state, message, task = null) {
 export const activeTasks = state => state.tasks.filter(task => ACTIVE.includes(task.status));
 export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
 export const outstandingCount = state => outstanding(state).reduce((count, task) => count + task.repos.length, 0);
-export const dependencies = (state, task) => task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done");
+const ticketRows = (state, task, blocker) => blocker.key ? state.tasks.filter(row => row !== task && row.ticket?.provider === task.ticket?.provider && row.ticket?.key === blocker.key) : [];
+// A blocker that is also in the pipeline waits for its task to merge; one outside it waits for its ticket to close.
+export function waitsFor(state, task) {
+  if (task.unblocked) return [];
+  const waits = task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done").map(id => ({ id, kind: "task" }));
+  for (const blocker of task.blockers ?? []) {
+    const rows = ticketRows(state, task, blocker);
+    if (rows.some(row => row.status === "done")) continue;
+    if (rows.length) { if (!waits.some(wait => wait.id === rows[0].id)) waits.push({ id: rows[0].id, kind: "task" }); }
+    else if (blocker.closed !== true) waits.push({ id: blocker.key ?? "a ticket Pipeline can't read", kind: "ticket" });
+  }
+  return waits;
+}
+export const dependencies = (state, task) => waitsFor(state, task).map(wait => wait.id);
+const after = (state, task) => [...task.depends, ...(task.blockers ?? []).flatMap(blocker => ticketRows(state, task, blocker).map(row => row.id))];
+function reaches(state, from, id, seen = new Set()) {
+  if (from.id === id) return true;
+  if (seen.has(from.id)) return false;
+  seen.add(from.id);
+  return after(state, from).some(next => { const row = state.tasks.find(task => task.id === next); return row && row.status !== "done" && reaches(state, row, id, seen); });
+}
+export const canWaitFor = (state, task, other) => other !== task && other.status !== "done" && !reaches(state, other, task.id);
 export const needsInput = task => task.status === "input";
 export const needsApproval = task => task.status === "review" && task.delivery !== "direct" && task.repos.some(repo => !task.approvals.includes(repo));
 export function prNeeds(task) {
@@ -148,8 +169,9 @@ export function prChecklist(task) {
 }
 export const quotaHeld = state => !state.live && state.quota - 8 < state.reserve;
 export function waitingReason(state, task) {
-  const waits = dependencies(state, task);
-  if (waits.length) return `Waiting for ${waits.join(", ")} to merge`;
+  const waits = waitsFor(state, task), tasks = waits.filter(wait => wait.kind === "task"), tickets = waits.filter(wait => wait.kind === "ticket");
+  if (waits.length) return `Waiting for ${[tasks.length && `${tasks.map(wait => wait.id).join(", ")} to merge`,
+    tickets.length && `${tickets.map(wait => wait.id).join(", ")} to close in ${SOURCES[task.ticket?.provider] ?? "its tracker"}`].filter(Boolean).join(" and ")}`;
   if (!state.running) return "Intake paused";
   if (quotaHeld(state)) return "Waiting for quota above the reserve";
   if (outstandingCount(state) + task.repos.length > state.reviewLimit) return state.live ? "Too many branches waiting for your review" : "Outstanding PR limit reached";
@@ -231,8 +253,9 @@ function explain(state, picked) {
   const ready = queued.filter(task => !dependencies(state, task).length);
   const reviews = state.tasks.filter(needsApproval).length;
   const asking = state.tasks.filter(needsInput).map(task => task.id);
-  const holding = held.length ? ` Holding ${held.map(task => task.id).join(", ")} until ${held.length === 1 ? "its dependency merges" : "their dependencies merge"}.` : "";
-  if (picked.length) return state.live ? `Starting ${picked.length === 1 ? "an agent" : "agents"} for ${picked.join(" + ")}, each in its own worktree.`
+  const holding = !held.length ? "" : state.live ? ` Holding ${held.map(task => task.id).join(", ")} until what ${held.length === 1 ? "it waits" : "they wait"} for is done.`
+    : ` Holding ${held.map(task => task.id).join(", ")} until ${held.length === 1 ? "its dependency merges" : "their dependencies merge"}.`;
+  if (picked.length) return state.live ? `Starting ${picked.length === 1 ? "an agent" : "agents"} for ${picked.join(" + ")}, each in its own worktree.${holding}`
     : `Launched ${picked.join(" + ")} by priority.${holding || " They can proceed independently."}`;
   if (asking.length) return state.live ? `${asking.join(", ")} ${asking.length === 1 ? "is" : "are"} waiting for you in ${asking.length === 1 ? "its terminal" : "their terminals"}.`
     : `${asking.join(", ")} ${asking.length === 1 ? "is paused until you answer. Its slot stays" : "are paused until you answer. Their slots stay"} reserved.`;
@@ -255,6 +278,15 @@ export const CHECK_FIXES = 2;
 function seat(state, task) {
   const used = new Set(state.tasks.filter(other => other !== task && ACTIVE.includes(other.status)).map(other => other.slot));
   task.slot = 0; while (used.has(task.slot)) task.slot++;
+}
+const cleanBlockers = blockers => (Array.isArray(blockers) ? blockers : []).filter(blocker => blocker && typeof blocker === "object").slice(0, 20)
+  .map(blocker => ({ key: blocker.key ? String(blocker.key).slice(0, 40) : null, uuid: blocker.uuid ? String(blocker.uuid) : null, title: String(blocker.title ?? "").slice(0, 200),
+    url: /^https?:\/\//.test(blocker.url ?? "") ? blocker.url : null, closed: typeof blocker.closed === "boolean" ? blocker.closed : null }));
+function unlink(state, id) {
+  for (const task of state.tasks.filter(task => task.depends.includes(id))) {
+    task.depends = task.depends.filter(other => other !== id);
+    event(state, `${task.id} no longer waits for ${id}, which was removed.`, task.id);
+  }
 }
 function reviewed(state, task) {
   if (state.delivery === "pr" ? state.autoPr : state.autoMerge) approve(state, task);
@@ -345,7 +377,8 @@ export function reduce(state, action, now = Date.now()) {
         let id = String(issue.identifier || `T-${++next.created}`);
         if (next.tasks.some(task => task.id === id)) { let n = 2; while (next.tasks.some(task => task.id === `${id}-${n}`)) n++; id = `${id}-${n}`; }
         next.tasks.push(liveTask(next, { id, title: String(issue.title).slice(0, 200), description: String(issue.description ?? "").slice(0, 8000),
-          priority: PRIORITIES[issue.priority?.name] ?? 1, ticket: { provider, uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status } }, action.source ?? name));
+          priority: PRIORITIES[issue.priority?.name] ?? 1, ticket: { provider, uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status },
+          blockers: cleanBlockers(issue.blockers) }, action.source ?? name));
         next.claimed = [...next.claimed.filter(uuid => uuid !== issue.uuid), issue.uuid].slice(-500);
         event(next, `${id} joined the queue · ${action.source ?? name}`, id);
         added++;
@@ -368,6 +401,36 @@ export function reduce(state, action, now = Date.now()) {
       const provider = action.provider;
       if (!next.live || !SOURCES[provider] || (next.sourceErrors?.[provider] ?? null) === (action.error ?? null)) return state;
       next.sourceErrors = { ...next.sourceErrors, [provider]: action.error ?? null };
+      break;
+    }
+    case "blockers": {
+      const task = row(action.id), service = SOURCES[task?.ticket?.provider];
+      if (!next.live || task?.status !== "queued" || !service || !Array.isArray(action.blockers)) return state;
+      const value = cleanBlockers(action.blockers), before = task.blockers ?? [];
+      if (JSON.stringify(value) === JSON.stringify(before)) return state;
+      for (const blocker of value.filter(blocker => blocker.closed && before.some(old => old.key === blocker.key && !old.closed)))
+        event(next, `${task.id} · ${blocker.key} closed in ${service}.`, task.id);
+      task.blockers = value;
+      break;
+    }
+    case "link": {
+      const task = row(action.id), other = row(action.on);
+      if (!next.live || task?.status !== "queued" || !other || other === task) return state;
+      if (task.depends.includes(other.id)) {
+        task.depends = task.depends.filter(id => id !== other.id);
+        event(next, `${task.id} no longer waits for ${other.id}.`, task.id);
+      } else {
+        if (!canWaitFor(next, task, other)) return state;
+        task.depends.push(other.id); task.unblocked = false;
+        event(next, `${task.id} waits for ${other.id} to merge.`, task.id);
+      }
+      break;
+    }
+    case "unblock": {
+      const task = row(action.id), value = Boolean(action.value ?? !task?.unblocked);
+      if (!next.live || task?.status !== "queued" || Boolean(task.unblocked) === value || (value && !dependencies(next, task).length)) return state;
+      task.unblocked = value;
+      event(next, value ? `${task.id} starts without waiting.` : `${task.id} waits for what it depends on again.`, task.id);
       break;
     }
     case "describe": {
@@ -568,7 +631,7 @@ export function reduce(state, action, now = Date.now()) {
     case "discard": {
       const task = row(action.id);
       if (!next.live || !task || task.discard || ["merging", "pr", "done"].includes(task.status)) return state;
-      if (task.status === "queued" && !task.workspace) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); break; }
+      if (task.status === "queued" && !task.workspace) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); unlink(next, task.id); break; }
       task.discard = true;
       event(next, `${task.id} · stopping its agent and deleting its worktree and branch.`, task.id);
       break;
@@ -577,6 +640,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || !row(action.id)) return state;
       next.tasks = next.tasks.filter(task => task.id !== action.id);
       event(next, `${action.id} discarded.`);
+      unlink(next, action.id);
       break;
     }
     case "discardFailed": {
@@ -636,7 +700,7 @@ export function reduce(state, action, now = Date.now()) {
     case "remove": {
       const task = row(action.id);
       if (task?.status !== "queued") return state;
-      if (next.live) { if (task.workspace) return state; next.tasks = next.tasks.filter(other => other !== task); }
+      if (next.live) { if (task.workspace) return state; next.tasks = next.tasks.filter(other => other !== task); unlink(next, task.id); }
       else { task.status = "backlog"; task.source = null; }
       break;
     }

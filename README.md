@@ -175,6 +175,16 @@ task, so parallel agents never touch each other or your checkout.
    tickets, and a watch needs My tickets or a project, so a workspace-wide state can't flood
    the queue. Linear's list shortens descriptions, so Pipeline reads each ticket in full
    before it is queued.
+
+   Tasks can wait for each other. A ticket brings its **blocked by** links from Plane or
+   Linear: a blocker that is also in the pipeline holds the task until that task merges, and
+   one outside it holds the task until its ticket is completed or cancelled (Pipeline asks
+   once a minute). To make any queued task wait for another, pick that task under **Waits
+   for** in the inspector; a circle is refused. **Start anyway** lets a waiting task go, and
+   removing or discarding a task frees the ones waiting for it. With pull requests, a task
+   that waited starts from its branch freshly fetched from `origin`, so it has its blocker's
+   merge; with local merges it starts from your project folder, so pull first if a blocker
+   landed somewhere else.
 2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it

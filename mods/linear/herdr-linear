@@ -148,7 +148,7 @@ def request(app_home, payload):
         issues = []
         for issue_id in [str(issue_id) for issue_id in payload.get("ids", []) if issue_id][:10]:
             try:
-                issue = call(token, "get_issue", {"id": issue_id})
+                issue = call(token, "get_issue", {"id": issue_id, "includeRelations": True})
             except LinearError as error:
                 if error.kind != "request":
                     raise

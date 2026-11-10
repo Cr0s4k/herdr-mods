@@ -86,7 +86,7 @@ def call(config, path, params=None, method="GET", body=None):
         if error.code == 429:
             raise PlaneError("Plane is limiting requests. Wait a minute, then refresh.", "rate_limit")
         if error.code == 404:
-            raise PlaneError("Plane could not find this workspace, project or task. Check your connection and project.")
+            raise PlaneError("Plane could not find this workspace, project or task. Check your connection and project.", "missing")
         if method != "GET" and error.code >= 500:
             raise PlaneError("Plane could not confirm the save. Check the task in Plane before trying again.", "uncertain")
         if error.code in (400, 422):
@@ -303,6 +303,43 @@ def normalized(item, project, config):
             "project": project["name"], "startDate": item.get("start_date"), "dueDate": item.get("target_date")}
 
 
+def blockers(config, prefix, ticket):
+    """Work items this one is blocked by, each with whether it is closed. None when Pipeline can't read it."""
+    parts = str(ticket).split(":")
+    if len(parts) != 3 or parts[0] != "plane":
+        raise PlaneError("Invalid Plane task. Refresh the task list.")
+    project_id, item_id = valid_id(parts[1]), valid_id(parts[2])
+    try:
+        relations = call(config, prefix + "projects/" + project_id + "/work-items/" + item_id + "/relations/")
+    except PlaneError as error:
+        if error.kind == "missing":
+            return []
+        raise
+    found, projects = [], {}
+    for entry in ((relations or {}).get("blocked_by") if isinstance(relations, dict) else None) or []:
+        blocker = entry.get("id") if isinstance(entry, dict) else entry
+        home = (entry.get("project_id") or entry.get("project")) if isinstance(entry, dict) else None
+        try:
+            blocker, home = valid_id(blocker), valid_id(home or project_id)
+        except PlaneError:
+            continue
+        try:
+            if home not in projects:
+                projects[home] = project_info(call(config, prefix + "projects/" + home + "/"))
+            item = call(config, prefix + "projects/" + home + "/work-items/" + blocker + "/", {"expand": "state"})
+        except PlaneError as error:
+            if error.kind != "missing":
+                raise
+            found.append({"key": None, "uuid": f"plane:{home}:{blocker}", "title": "A work item Pipeline can't read", "url": None, "closed": None})
+            continue
+        ticket = normalized(item, projects[home], config)
+        found.append({"key": ticket["identifier"], "uuid": ticket["uuid"], "title": ticket["title"], "url": ticket["url"],
+                      "closed": ticket["statusType"] in ("completed", "canceled")})
+        if len(found) >= 10:
+            break
+    return found
+
+
 def mapping_key(payload):
     context = payload.get("context") or {}
     cwd, machine = context.get("cwd"), context.get("on") or "local"
@@ -331,6 +368,8 @@ def request(home, payload):
         query = str(payload.get("query", "")).casefold()
         items, cursor, more = scan(config, prefix + "projects/", payload.get("cursor"), lambda p: query in p["name"].casefold())
         return {"projects": [project_info(p) for p in items], "cursor": cursor, "hasNextPage": more}
+    if op == "blockers":
+        return {"blockers": {str(ticket): blockers(config, prefix, ticket) for ticket in payload.get("ids", [])[:10] if ticket}}
     maps_path = Path(home) / "plane/projects.json"
     mappings = load_json(maps_path, {})
     key = mapping_key(payload)

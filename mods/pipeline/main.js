@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, prNeeds, prChecklist, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeeds, prChecklist, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -1020,6 +1020,31 @@ export default class Pipeline extends View {
       .child(v_flex().w_full().p(10).rounded(6).bg(t.background).border_1().border_color(t.border).font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
         .children(lines.map(line => div().min_h(15).truncate().child(line || " "))));
   }
+  waitsDetail(body, state, task, t) {
+    const service = SOURCES[task.ticket?.provider], others = state.tasks.filter(other => other !== task && other.status !== "done");
+    if (!task.blockers?.length && !others.length) return;
+    body.child(this.heading("Waits for"));
+    (task.blockers ?? []).forEach((blocker, i) => {
+      const inside = blocker.key && state.tasks.find(row => row !== task && row.ticket?.provider === task.ticket?.provider && row.ticket?.key === blocker.key);
+      const status = inside ? labelFor(state, inside.status) : blocker.closed === true ? `Closed in ${service}` : blocker.closed === false ? `Open in ${service}` : "Can't be read";
+      const title = blocker.title.length > 34 ? `${blocker.title.slice(0, 33)}…` : blocker.title;
+      body.child(this.button(`blocker-${task.id}-${i}`, [blocker.key ?? "Ticket", status, title].filter(Boolean).join(" · "), cx => inside ? this.inspect(inside.id, cx) : this.openLink(blocker.url), t,
+        { small: true, disabled: !inside && !blocker.url, hint: blocker.title || blocker.key || "A ticket Pipeline can't read" }).w_full().justify_start());
+    });
+    if (task.blockers?.length) body.child(this.label(`Blockers come from ${service}. One in the pipeline waits until it merges, any other until its ticket closes.`, t));
+    if (others.length) {
+      body.child(h_flex().gap(6).flex_wrap().children(others.map(other => {
+        const linked = task.depends.includes(other.id), allowed = linked || canWaitFor(state, task, other);
+        return this.button(`wait-${task.id}-${other.id}`, other.id, cx => this.act({ type: "link", id: task.id, on: other.id }, cx), t,
+          { small: true, selected: linked, icon: linked ? "check" : null, disabled: !allowed, hint: !allowed ? `${other.id} already waits for this task` : `${linked ? "Stop waiting for" : "Wait for"} ${other.id}: ${other.title}` });
+      })));
+      body.child(this.label("Pick tasks this one should start after. It starts once they merge.", t));
+    }
+    if (waitsFor(state, task).length) body.child(this.button(`unblock-${task.id}`, "Start anyway", cx => this.act({ type: "unblock", id: task.id, value: true }, cx), t,
+      { icon: "play", hint: "Let the planner start it without waiting" }));
+    else if (task.unblocked) body.child(this.label("Starts without waiting for what it depends on.", t))
+      .child(this.button(`reblock-${task.id}`, "Wait again", cx => this.act({ type: "unblock", id: task.id, value: false }, cx), t, { icon: "pause" }));
+  }
   liveDetail(body, state, task, t, cx) {
     this.peekAt(task, cx);
     const ws = task.workspace ?? task.planned, target = ws?.target ?? this.repo?.branch ?? "your branch";
@@ -1035,6 +1060,7 @@ export default class Pipeline extends View {
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
       body.child(this.label("The title and these details are the agent's first message. Saved when you leave the field.", t));
       body.child(this.label(waitingReason(state, task), t));
+      this.waitsDetail(body, state, task, t);
     } else if (task.description) body.child(div().text_size(12).line_height(1.5).text_color(t.muted).child(task.description));
     if (task.terminal && task.status !== "done" && !task.discard) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))

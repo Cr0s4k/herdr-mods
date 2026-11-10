@@ -97,5 +97,30 @@ class WorktreeTest(unittest.TestCase):
             helper.inspect(self.repo, self.tickets, "../../escape")
 
 
+    def test_remote_base_fetches_the_branch_from_origin_instead_of_the_local_head(self):
+        origin = self.home / "origin.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(self.repo), str(origin)], check=True)
+        self.git("remote", "add", "origin", str(origin))
+        branch = self.git("branch", "--show-current")
+        other = self.home / "other"
+        subprocess.run(["git", "clone", "-q", str(origin), str(other)], check=True)
+        for args in (["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"], ["config", "commit.gpgsign", "false"]):
+            subprocess.run(["git", "-C", str(other), *args], check=True)
+        (other / "file.txt").write_text("merged on GitHub\n")
+        subprocess.run(["git", "-C", str(other), "commit", "-qam", "Merged PR"], check=True)
+        subprocess.run(["git", "-C", str(other), "push", "-q", "origin", branch], check=True)
+        local = self.git("rev-parse", "HEAD")
+        self.assertEqual(helper.inspect(self.repo, self.tickets)["base"], local)
+        plan = helper.inspect(self.repo, self.tickets, "pipeline", remote=True)
+        self.assertEqual(plan["base"], subprocess.run(["git", "-C", str(other), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip())
+        self.assertEqual(plan["branch"], branch)
+        workspace = helper.create(self.repo, plan, self.tickets[0])
+        self.assertEqual((Path(workspace["root"]) / "file.txt").read_text(), "merged on GitHub\n")
+        self.assertEqual(self.git("rev-parse", "HEAD"), local, "the project folder is left where it was")
+        self.git("remote", "set-url", "origin", str(self.home / "gone.git"))
+        with self.assertRaisesRegex(ValueError, "Could not fetch"):
+            helper.inspect(self.repo, self.tickets, "pipeline", remote=True)
+
+
 if __name__ == "__main__":
     unittest.main()
