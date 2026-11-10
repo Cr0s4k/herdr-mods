@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -90,7 +90,7 @@ export default class Pipeline extends View {
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
-    this.repo = null; this.agentChoices = [];
+    this.repo = null; this.agentChoices = []; this.codexModels = [];
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
     this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
     this.linearFilter = { scope: "mine", project: null };
@@ -163,6 +163,10 @@ export default class Pipeline extends View {
           : { error: "This folder isn't in a Git repository, so Live can't give agents their own worktrees." };
       } catch { this.repo = { error: "Git couldn't be run for this folder." }; }
       try { this.agentChoices = (await knownAgents({ on })).filter(agent => agent.installed); } catch { this.agentChoices = []; }
+      if (this.agentChoices.some(agent => agent.key === "codex")) {
+        const cache = await exec("sh", ["-c", 'cat "${CODEX_HOME:-$HOME/.codex}/models_cache.json"'], { on }).catch(() => null);
+        this.codexModels = cache?.code === 0 ? codexModels(cache.stdout) : [];
+      }
       if (this.repo?.root) {
         const found = await exec("sh", ["-c", CHECK_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.checkSuggestions = (found?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
@@ -961,10 +965,15 @@ export default class Pipeline extends View {
     if (!this.agentChoices.length) return;
     if (!options) { body.child(this.label(`Pipeline starts ${this.agentName(state)} with its own default model and effort.`, t)); return; }
     const tune = tuningFor(state, key), chip = (id, text, selected, action, hint) => this.button(id, text, cx => this.act({ type: "tune", key, ...action }, cx), t, { small: true, selected, hint });
+    const models = key === "codex" ? this.codexModels : options.models.map(slug => ({ slug, name: `The latest ${slug} model`, efforts: options.efforts }));
+    const known = models.find(model => model.slug === tune.model);
+    const efforts = known?.efforts.length ? known.efforts : key === "codex" && this.codexModels.length
+      ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : options.efforts;
+    const pick = model => ({ model: model.slug, ...(tune.effort && model.efforts.length && !model.efforts.includes(tune.effort) ? { effort: null } : {}) });
     body.child(this.heading("Model"));
     body.child(h_flex().gap(6).flex_wrap()
       .child(chip("model-default", "Default", !tune.model, { model: null }, `Whatever ${this.agentName(state)} uses when started on its own`))
-      .children(options.models.map(model => chip(`model-${model}`, model, tune.model === model, { model }, `The latest ${model} model`))));
+      .children(models.map(model => chip(`model-${model.slug}`, model.slug, tune.model === model.slug, pick(model), model.name))));
     body.child(h_flex().gap(6).items_center()
       .child(Input.new(this.modelInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
         .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Model name"))
@@ -972,7 +981,7 @@ export default class Pipeline extends View {
     body.child(this.heading("Effort"));
     body.child(h_flex().gap(6).flex_wrap()
       .child(chip("effort-default", "Default", !tune.effort, { effort: null }, `Whatever ${this.agentName(state)} uses when started on its own`))
-      .children(options.efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
+      .children(efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
     body.child(this.label(`New tasks start with ${tuningLabel(tune) || "the agent's own default model and effort"}. Running agents keep theirs.`, t));
   }
   screen(lines, t, caption) {

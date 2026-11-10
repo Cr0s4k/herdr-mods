@@ -460,8 +460,13 @@ test("Live settings choose a model and effort per agent, and the agent button sh
   click(view, "agent");
   click(view, "model-opus"); click(view, "effort-high");
   assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · opus · high effort");
+  view.codexModels = [{ slug: "gpt-sol", name: "GPT-Sol", efforts: ["low", "high", "ultra"] }, { slug: "gpt-luna", name: "GPT-Luna", efforts: ["low", "max"] }];
   click(view, "agent-codex");
-  assert.ok(find(view.render(cx), "effort-minimal") && !find(view.render(cx), "model-opus"));
+  assert.ok(find(view.render(cx), "model-gpt-luna") && find(view.render(cx), "effort-ultra") && !find(view.render(cx), "model-opus"));
+  click(view, "model-gpt-sol"); click(view, "effort-ultra");
+  assert.ok(!find(view.render(cx), "effort-max"), "a picked Codex model shows only its own levels");
+  click(view, "model-gpt-luna");
+  assert.deepEqual(view.state().tuning.codex, { model: "gpt-luna", effort: null }, "an effort the new model lacks resets to default");
   view.modelInput.set_value("gpt-5");
   view.modelInput.emit("submit", cx);
   assert.deepEqual(view.state().tuning, { claude: { model: "opus", effort: "high" }, codex: { model: "gpt-5", effort: null } });

@@ -17,13 +17,22 @@ export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[s
 export const AGENT_OPTIONS = {
   claude: { models: ["fable", "opus", "sonnet", "haiku"], efforts: ["low", "medium", "high", "xhigh", "max"],
     flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])] },
-  codex: { models: [], efforts: ["minimal", "low", "medium", "high", "xhigh"],
+  codex: { models: [], efforts: ["low", "medium", "high", "xhigh", "max"], open: true,
     flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])] },
 };
+const effortFits = (options, effort) => options.efforts.includes(effort) || Boolean(options.open && /^[a-z]{1,20}$/.test(effort ?? ""));
 export const tuningFor = (state, key) => {
   const tune = state?.tuning?.[key] ?? {}, options = AGENT_OPTIONS[key];
-  return options ? { model: tune.model ?? null, effort: options.efforts.includes(tune.effort) ? tune.effort : null } : { model: null, effort: null };
+  return options ? { model: tune.model ?? null, effort: effortFits(options, tune.effort) ? tune.effort : null } : { model: null, effort: null };
 };
+export function codexModels(text) {
+  let models;
+  try { models = JSON.parse(text)?.models; } catch { return []; }
+  return (Array.isArray(models) ? models : []).filter(model => model?.slug && model.visibility !== "hide")
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+    .map(model => ({ slug: String(model.slug), name: String(model.display_name ?? model.slug),
+      efforts: (model.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => /^[a-z]{1,20}$/.test(effort ?? "")) }));
+}
 export const agentRun = (state, agent) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(tuningFor(state, agent.key)) ?? [])];
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
@@ -347,7 +356,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || !options) return state;
       const now = tuningFor(next, action.key), tune = { ...now };
       if ("model" in action) tune.model = String(action.model ?? "").trim().slice(0, 100) || null;
-      if ("effort" in action) tune.effort = options.efforts.includes(action.effort) ? action.effort : null;
+      if ("effort" in action) tune.effort = effortFits(options, action.effort) ? action.effort : null;
       if (tune.model === now.model && tune.effort === now.effort) return state;
       next.tuning = { ...next.tuning, [action.key]: tune };
       event(next, `New tasks start with ${tuningLabel(tune) || "the agent's default model and effort"}.`);

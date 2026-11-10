@@ -86,8 +86,8 @@ test("a chosen agent wins over the first installed one, and a missing agent fail
 
 test("a model and effort chosen for an agent are passed as its flags and noted on the task", async () => {
   let state = reduce(typed("A"), { type: "tune", key: "claude", model: " opus ", effort: "high" }, 0);
-  state = reduce(state, { type: "tune", key: "codex", effort: "max" }, 0);
-  assert.equal(model.tuningFor(state, "codex").effort, null, "an effort the agent lacks is dropped");
+  assert.equal(model.tuningFor(reduce(state, { type: "tune", key: "claude", effort: "ultra" }, 0), "claude").effort, null, "an effort Claude Code lacks is dropped");
+  assert.equal(model.tuningFor(reduce(state, { type: "tune", key: "codex", effort: "ultra" }, 0), "codex").effort, "ultra", "Codex levels come from its own model list");
   const world = host(reduce(state, { type: "run" }, 0), { start: (_c, _t, _w, agent) => { world.run = agent.run; return "space"; } });
   await step(new live.LiveRunner(world.host));
   assert.deepEqual(world.run, ["claude", "--model", "opus", "--effort", "high"]);
@@ -95,6 +95,15 @@ test("a model and effort chosen for an agent are passed as its flags and noted o
   assert.deepEqual(model.agentRun(reduce(state, { type: "tune", key: "codex", model: "gpt-5", effort: "xhigh" }, 0), { key: "codex", run: ["codex"] }),
     ["codex", "-m", "gpt-5", "-c", 'model_reasoning_effort="xhigh"']);
   assert.deepEqual(model.agentRun(state, { key: "aider", run: ["aider"] }), ["aider"], "unknown agents start as they are");
+});
+
+test("Codex models are read from its own cache, hidden ones left out, in its order", () => {
+  const cache = JSON.stringify({ models: [
+    { slug: "gpt-b", display_name: "GPT-B", visibility: "list", priority: 2, supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }] },
+    { slug: "internal", visibility: "hide", priority: 0 },
+    { slug: "gpt-a", display_name: "GPT-A", visibility: "list", priority: 1, supported_reasoning_levels: [{ effort: "ultra" }, { effort: "bad level" }] }] });
+  assert.deepEqual(model.codexModels(cache), [{ slug: "gpt-a", name: "GPT-A", efforts: ["ultra"] }, { slug: "gpt-b", name: "GPT-B", efforts: ["low", "high"] }]);
+  assert.deepEqual(model.codexModels("not json"), []);
 });
 
 test("an unconfirmed start is never replayed after a restart", async () => {

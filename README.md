@@ -180,9 +180,10 @@ task, so parallel agents never touch each other or your checkout.
    and opens the agent as a tab named after the task in the space you started from, so it
    appears under that space in the sidebar. The agent is the first installed one Herdr knows
    (Claude Code, Codex…); pick another with the agent button. For Claude Code and Codex,
-   Settings also sets the **Model** (an alias such as opus, or any full model name) and
-   **Effort**, passed as launch flags; **Default** leaves the agent's own setting. The agent
-   button and each task's inspector show what it started with.
+   Settings also sets the **Model** (Claude's aliases such as opus, the models Codex lists in
+   its `models_cache.json`, or any model name typed in) and **Effort**, passed as launch
+   flags; **Default** leaves the agent's own setting. The agent button and each task's
+   inspector show what it started with.
 3. The card follows the agent: **Working**, **Needs you** when it waits for you (click
    **Answer** to jump to its terminal, or message it from the task's inspector), and **Ready
    for review** when it finishes. A new worktree first asks whether to trust the folder:
