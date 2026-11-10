@@ -23,6 +23,8 @@ function toggleSidebar() {
   run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
 }
 
+const brighter = (t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(t.muted.slice(i, i + 2), 16) * 0.65 + parseInt(t.foreground.slice(i, i + 2), 16) * 0.35).toString(16).padStart(2, "0")).join("");
+
 export default class WorkspaceChrome extends View {
   button(id, label, action) {
     const t = theme();
@@ -35,7 +37,7 @@ export default class WorkspaceChrome extends View {
     if (props()?.footer) {
       const row = (id, icon, label, dim, action) => h_flex().id(id).h(28).px(8).gap(9).items_center().rounded(8)
         .when(collapsed, el => el.relative().w(32).px(0).justify_center().tooltip(label))
-        .text_color(dim ? t.dim : t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
+        .text_color(dim ? t.dim : brighter(t)).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
         .on_click(action).child(svg(`mods/workspace-chrome-minimal/${icon}.svg`).size(14))
         .when(!collapsed, el => el.child(label));
       const ready = div().size(6).rounded_full().bg(t.accent);

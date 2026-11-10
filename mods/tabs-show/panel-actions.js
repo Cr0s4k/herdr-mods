@@ -64,7 +64,7 @@ export function moveToPaneButton(kind, state, t) {
   const existing = panes().some(p => p.tab === tab && p.mod === panel.mod);
   const label = existing ? `Move to the existing ${panel.name} pane` : "Move to pane";
   return div().id(`move-${kind}-to-pane`).size(26).flex_none().flex().items_center().justify_center().rounded(6)
-    .text_color(t.dim).opacity(tab && !busy ? 1 : 0.4)
+    .text_color(t.muted).opacity(tab && !busy ? 1 : 0.4)
     .tooltip(busy ? `Opening ${panel.name} pane…` : label).accessibility_label(`Move ${panel.name} to pane`)
     .when(Boolean(tab && !busy), el => el.cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground)))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())

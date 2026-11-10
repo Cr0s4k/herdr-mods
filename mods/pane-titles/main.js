@@ -33,7 +33,7 @@ export default class Pane extends View {
       .id(id)
       .p(3)
       .rounded(4)
-      .text_color(t.dim)
+      .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => {
         cx.stop_propagation();
@@ -48,7 +48,7 @@ export default class Pane extends View {
     if (!p) return div();
     const name = PANEL_TITLES[p.mod] ?? (((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell");
     const summary = p.mod === "review-pane" ? shared(`review-pane.summary.${p.tab}`) : null;
-    const pic = icon(p.program, 14, t.dim);
+    const pic = icon(p.program, 14, t.muted);
     const st = p.status;
     const pane = p.pane;
     return h_flex()

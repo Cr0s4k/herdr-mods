@@ -164,14 +164,14 @@ export default class Changes extends View {
     const status = this.syncing ? `${this.syncing === "Push" ? "Pushing" : this.syncing === "Pull" ? "Pulling" : "Publishing"}…`
       : !s.upstream ? "Not published" : s.gone ? "Upstream gone" : !s.ahead && !s.behind ? (this.fetching ? "Checking…" : "Up to date") : "";
     return h_flex().flex_none().h(36).px(12).gap(6).items_center().border_t(1).border_color(t.border).text_size(11)
-      .child(div().text_color(t.dim).child("⎇"))
+      .child(div().text_color(t.muted).child("⎇"))
       .child(div().min_w(0).truncate().text_color(t.muted).child(s.branch))
       .child(div().flex_1())
       .when(Boolean(status), (e) => e.child(div().flex_none().text_color(t.muted).child(status)))
       .when(!this.syncing && s.behind > 0, (e) => e.child(action("sync-pull", `↓${s.behind} Pull`, ["pull"], "Pull")))
       .when(!this.syncing && s.ahead > 0 && !s.gone, (e) => e.child(action("sync-push", `↑${s.ahead} Push`, ["push"], "Push")))
       .when(!this.syncing && (!s.upstream || s.gone), (e) => e.child(action("sync-publish", "Publish", ["push", "-u", "origin", "HEAD"], "Publish")))
-      .when(!this.syncing && Boolean(s.upstream) && !s.gone, (e) => e.child(div().id("sync-fetch").size(22).flex().items_center().justify_center().rounded(6).text_color(t.dim)
+      .when(!this.syncing && Boolean(s.upstream) && !s.gone, (e) => e.child(div().id("sync-fetch").size(22).flex().items_center().justify_center().rounded(6).text_color(t.muted)
         .when(!this.fetching, (e) => e.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => { this.fetch(cx); cx.notify(); }))
         .child("↻")));
   }

@@ -230,7 +230,7 @@ export default class Show extends View {
     const W = Math.max(120, this.size.width - 28);
     const stop = (_e, cx) => cx.stop_propagation();
     const iconButton = (id, icon, tip, action) => div().id(id).size(22).flex().items_center().justify_center().rounded(5)
-      .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().on_mouse_down("left", stop)
+      .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().on_mouse_down("left", stop)
       .on_click((_e, cx) => action(cx)).child(typeof icon === "string" && icon.endsWith(".svg") ? svg(icon).size(13) : icon);
     const pill = (id, label, primary, action) => h_flex().id(id).h(26).px(10).items_center().rounded(7).text_size(11.5).font_medium()
       .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground).border_1().border_color(primary ? t.solid : t.border)

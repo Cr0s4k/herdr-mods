@@ -150,7 +150,7 @@ export class AgentTree {
         .on_click((_e, cx) => { cx.stop_propagation(); this.toggle(a.address, cx); })
         .child(String(kids.length)).child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(10))))
       .when(!compact && !sub && (a.pinned || this.hovered === a.address), el => el.child(div().id(`${prefix}agent-pin-${a.address}`).p(2).flex_none().rounded(4)
-        .text_color(t.dim).hover(s => s.text_color(t.foreground)).tooltip(a.pinned ? "Unpin agent" : "Pin agent in this space")
+        .text_color(t.muted).hover(s => s.text_color(t.foreground)).tooltip(a.pinned ? "Unpin agent" : "Pin agent in this space")
         .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); this.hovered = null; cx.notify(); })
         .child(svg(`mods/workspace-chrome/${a.pinned ? "pin-off" : "pin"}.svg`).size(12))))
       .child(this.indicator(t, state, true));
