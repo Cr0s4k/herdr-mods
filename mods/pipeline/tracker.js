@@ -1,7 +1,7 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
 import { STORE, MOVING, reduce, migrate } from "./pipeline-model.js";
 import { LiveRunner, prompt } from "./pipeline-live.js";
-import { readPlane } from "./plane-source.js";
+import { readTickets, fullTickets } from "./ticket-source.js";
 
 const scripts = {};
 async function python(file, context, payload) {
@@ -18,7 +18,7 @@ async function python(file, context, payload) {
 export const liveHost = {
   shared, setShared, agents, terminals, panes, run, now: () => Date.now(),
   knownAgents: context => knownAgents({ on: context.on }),
-  plane: readPlane,
+  tickets: readTickets, describe: fullTickets,
   read: async terminal => { const result = await hc(["read", terminal, "--lines", "40"]); return result.code === 0 ? result.stdout : ""; },
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),

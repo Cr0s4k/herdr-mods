@@ -1,10 +1,10 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
-import { readPlane, openIssue } from "./plane-source.js";
+import { readTickets, fullTickets } from "./ticket-source.js";
 
 const CHROME = 50 + 46 + 36 + 32;
 const COMET = ["●", "•", "·", "", "", ""];
@@ -16,7 +16,9 @@ const CHECK_HINTS = [
   "if [ -f go.mod ]; then echo 'go test ./...'; fi",
   "if [ -f pytest.ini ] || grep -qs pytest pyproject.toml; then echo 'python3 -m pytest'; fi",
 ].join("\n");
-const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota", "plane", "schedule"];
+const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule"];
+const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
+const filterLabel = filter => [SCOPES[filter.scope], filter.project?.name].filter(Boolean).join(" · ");
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -54,8 +56,10 @@ export default class Pipeline extends View {
     this.handle = cx.focus_handle(); this.handle.focus();
     this.search = InputState.new({ placeholder: "Search example tasks or repositories…" });
     this.search.on("change", (_e, cx) => cx.notify());
-    this.planeSearch = InputState.new({ placeholder: "Search Plane tickets…" });
-    this.planeSearch.on("change", (_e, cx) => cx.notify());
+    this.ticketSearch = InputState.new({ placeholder: "Search tickets…" });
+    this.ticketSearch.on("change", (_e, cx) => cx.notify());
+    this.projectSearch = InputState.new({ placeholder: "Find a Linear project…" });
+    this.projectSearch.on("submit", (_e, cx) => this.loadProjects(cx));
     this.title = InputState.new({ placeholder: "New task: type a title and press Enter" });
     this.title.on("change", (_e, cx) => cx.notify());
     this.title.on("submit", (_e, cx) => this.create(cx));
@@ -83,7 +87,11 @@ export default class Pipeline extends View {
     this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
     this.repo = null; this.agentChoices = [];
-    this.plane = { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }; this.planePicked = new Set();
+    this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
+    this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
+    this.linearFilter = { scope: "mine", project: null };
+    try { this.linearFilter = { ...this.linearFilter, ...JSON.parse(localStorage.getItem(`linear:${this.id}`) ?? "{}") }; } catch (_) { /* A damaged filter falls back to My tickets. */ }
+    this.projects = null;
     this.motion = localStorage.getItem("motion") !== "false";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
@@ -112,7 +120,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.planeSearch.release(); this.checkInput.release(); this.times.start.release(); this.times.pause.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.checkInput.release(); this.times.start.release(); this.times.pause.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -231,33 +239,66 @@ export default class Pipeline extends View {
   }
   open(drawer, cx) {
     if (drawer === "settings" && this.state()?.live) this.checkInput.set_value(this.state().check?.command ?? "");
-    if (drawer === "plane" && !this.state()?.live) return;
+    if (SOURCES[drawer] && !this.state()?.live) return;
     if (drawer === "schedule") { this.timeError = null; for (const kind of ["start", "pause"]) this.times[kind].set_value(this.state()?.schedule?.[kind] ?? ""); }
     if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
-    if (drawer !== this.drawer && drawer === "plane") this.planeSearch.set_value("");
+    if (drawer !== this.drawer && SOURCES[drawer]) { this.ticketSearch.set_value(""); this.ticketPicked.clear(); this.projects = null; }
     this.drawer = drawer;
-    if (drawer === "plane") { this.loadPlane(cx); this.planeSearch.focus(); }
+    if (SOURCES[drawer]) { this.loadTickets(drawer, cx); this.ticketSearch.focus(); }
     else if (drawer === "picker") this.search.focus(); else if (!drawer) this.handle.focus();
     cx.notify();
   }
-  loadPlane(cx) {
-    if (this.plane.loading) return;
-    this.plane = { ...this.plane, loading: true, error: null, kind: null };
-    const context = { cwd: this.context.cwd, on: this.context.on };
+  loadTickets(provider, cx) {
+    const request = this.ticketRequests[provider] = (this.ticketRequests[provider] ?? 0) + 1;
+    this.sources[provider] = { ...this.sources[provider], loading: true, error: null, kind: null };
+    const context = { cwd: this.context.cwd, on: this.context.on }, filter = this.linearFilter;
     cx.spawn(async cx => {
+      let next;
       try {
-        const listed = await readPlane({ op: "issues", context, scope: "all" });
-        const states = listed.needsProject ? { states: [] } : await readPlane({ op: "states", context });
-        this.plane = { loading: false, issues: (listed.issues ?? []).filter(openIssue), states: states.states ?? [], needsProject: Boolean(listed.needsProject),
-          project: listed.project?.name ?? null, error: null, kind: null };
-      } catch (error) { this.plane = { ...this.plane, loading: false, error: error?.message || String(error), kind: error?.kind ?? null }; }
-      cx.notify();
+        if (provider === "plane") {
+          const listed = await readTickets("plane", { op: "issues", context, scope: "all" });
+          const states = listed.needsProject ? { states: [] } : await readTickets("plane", { op: "states", context });
+          next = { issues: listed.issues, states: states.states, needsProject: Boolean(listed.needsProject), project: listed.project?.name ?? null };
+        } else {
+          const listed = await readTickets("linear", { op: "issues", open: true, scope: filter.scope, ...(filter.project ? { project: filter.project.id } : {}) });
+          const teams = [...new Set((listed.issues ?? []).map(issue => issue.team).filter(Boolean))];
+          const states = teams.length ? await readTickets("linear", { op: "states", teams }) : { states: [] };
+          next = { issues: listed.issues, states: states.states };
+        }
+        next = { ...next, issues: (next.issues ?? []).filter(openIssue), states: next.states ?? [], loading: false, error: null, kind: null };
+      } catch (error) { next = { ...this.sources[provider], loading: false, error: error?.message || String(error), kind: error?.kind ?? null }; }
+      if (this.ticketRequests[provider] !== request) return;
+      this.sources[provider] = next; cx.notify();
     });
   }
-  queuePlane(issues, cx) {
-    this.act({ type: "addPlane", issues, source: "Plane" }, cx);
-    this.planePicked.clear();
-    this.open(null, cx);
+  setLinearFilter(change, cx) {
+    this.linearFilter = { ...this.linearFilter, ...change }; this.projects = null; this.ticketPicked.clear();
+    localStorage.setItem(`linear:${this.id}`, JSON.stringify(this.linearFilter));
+    this.loadTickets("linear", cx); cx.notify();
+  }
+  loadProjects(cx) {
+    const query = this.projectSearch.value().trim(), request = this.projectRequest = (this.projectRequest ?? 0) + 1;
+    this.projects = { loading: true, items: this.projects?.items ?? [], error: null };
+    cx.spawn(async cx => {
+      let next;
+      try { next = { loading: false, items: (await readTickets("linear", { op: "projects", ...(query ? { query } : {}) })).projects ?? [], error: null }; }
+      catch (error) { next = { loading: false, items: [], error: error?.message || String(error) }; }
+      if (this.projectRequest === request && this.projects) { this.projects = next; cx.notify(); }
+    });
+    cx.notify();
+  }
+  queueTickets(provider, issues, cx) {
+    if (this.queueing) return;
+    this.queueing = true; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const full = await fullTickets(provider, issues);
+        this.act({ type: "addTickets", provider, issues: full, source: SOURCES[provider] }, cx);
+        this.ticketPicked.clear();
+        this.open(null, cx);
+      } catch (error) { this.sources[provider] = { ...this.sources[provider], error: error?.message || String(error), kind: error?.kind ?? null }; }
+      finally { this.queueing = false; cx.notify(); }
+    });
   }
   openLink(url) {
     if (!/^https?:\/\//.test(url ?? "")) return;
@@ -364,7 +405,8 @@ export default class Pipeline extends View {
       cx.stop_propagation(); return;
     }
     if (!this.handle.is_focused() || (this.state()?.live && ["a", "s"].includes(e.keystroke))) return;
-    if (e.keystroke === "p" && this.state()?.live) { this.open("plane", cx); cx.stop_propagation(); return; }
+    const source = { p: "plane", l: "linear" }[e.keystroke];
+    if (source && this.state()?.live) { this.open(source, cx); cx.stop_propagation(); return; }
     const actions = {
       space: () => this.toggleRun(cx),
       n: () => { this.title.focus(); cx.notify(); },
@@ -408,14 +450,20 @@ export default class Pipeline extends View {
         .child(div().flex_1().min_w(0).child(Input.new(this.title).w_full().text_size(12).accessibility_label("New task title")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true, hint: "Add to the queue (Enter)" }))))
       .when(state.live, el => el.child(this.button("agent", this.agentName(state), cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "terminal", hint: "The agent each task starts with" }))
-        .child(this.button("plane", state.watchPlane ? `Plane · ${state.watchPlane.name}` : "Plane", cx => this.open(this.drawer === "plane" ? null : "plane", cx), t,
-          { icon: "plane", selected: this.drawer === "plane" || Boolean(state.watchPlane), hint: state.planeError ?? "Queue tickets from the Plane project linked to this repository (P)" })))
+        .child(this.sourceButton("plane", state, t, "Queue tickets from the Plane project linked to this repository (P)"))
+        .child(this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")))
       .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
         .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch })))
       .child(this.button("schedule", this.scheduleLabel(state), cx => this.open(this.drawer === "schedule" ? null : "schedule", cx), t,
         { icon: "clock", selected: this.drawer === "schedule" || Boolean(state.schedule), hint: "Start and pause the pipeline at set times every day" }))
       .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }))
       .when(!state.live, el => el.child(this.button("quota", `Quota ${state.quota}%`, cx => this.open(this.drawer === "quota" ? null : "quota", cx), t, { icon: "gauge", hint: "Example quota and reserve controls" })));
+  }
+
+  sourceButton(provider, state, t, hint) {
+    const watch = state.watching?.[provider];
+    return this.button(provider, watch ? `${SOURCES[provider]} · ${watch.name}` : SOURCES[provider], cx => this.open(this.drawer === provider ? null : provider, cx), t,
+      { icon: provider, selected: this.drawer === provider || Boolean(watch), hint: state.sourceErrors?.[provider] ?? hint });
   }
 
   status(state, t, info, motion) {
@@ -447,7 +495,7 @@ export default class Pipeline extends View {
         .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
         .on_click((_e, cx) => this.open(this.drawer === "activity" ? null : "activity", cx))
         .child(div().min_w(0).truncate().child(latest?.message ?? "Start the pipeline to watch your first tasks enter.")))
-      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child(state.live ? "Space start · N new · P Plane · Q needs you · Y merge · R retry"
+      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child(state.live ? "Space start · N new · P Plane · L Linear · Q needs you · Y merge · R retry"
         : "Space start · N new · A examples · Q answer · Y approve · R retry · S speed")));
   }
 
@@ -636,7 +684,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.plane.project ? `Plane · ${this.plane.project}` : "Plane", picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -647,7 +695,7 @@ export default class Pipeline extends View {
       for (const task of tasks) body.child(this.taskRow(task, state, t, cx => this.inspect(task.id, cx)));
     };
     if (this.drawer === "picker") this.picker(body, state, t);
-    else if (this.drawer === "plane") this.planeDrawer(body, state, t);
+    else if (SOURCES[this.drawer]) this.ticketDrawer(this.drawer, body, state, t);
     else if (this.drawer === "queue") rows(state.tasks.filter(task => task.status === "queued"), "Queue is clear. Type a task above or add examples.");
     else if (this.drawer === "review") {
       const approvals = state.tasks.filter(needsApproval).length;
@@ -764,49 +812,85 @@ export default class Pipeline extends View {
       : state.schedule ? `${state.running ? "Running" : "Paused"} now, with no scheduled ${state.running ? "pause" : "start"}.` : "Nothing scheduled.", t));
     body.child(this.label("Times are this computer's local time and repeat daily. Start or pause by hand whenever you like; the schedule acts again at its next time. If Herdr is closed when a time comes round, the latest missed time applies when it opens.", t));
   }
-  planeDrawer(body, state, t) {
-    const plane = this.plane, unavailable = plane.needsProject || plane.kind === "auth";
+  ticketDrawer(provider, body, state, t) {
+    const source = this.sources[provider], service = SOURCES[provider], watch = state.watching?.[provider], filter = this.linearFilter;
     const warn = text => div().text_size(12).line_height(1.45).text_color(t.blocked).child(text);
-    if (unavailable) {
-      body.child(this.label(plane.needsProject ? "This repository isn't linked to a Plane project yet. Link it in the Tasks panel, then come back." : "Plane isn't connected on this computer. Connect it in the Tasks panel, then come back.", t));
-      body.child(this.button("open-tasks", "Open the Tasks panel", () => run("tabs-show.plane"), t, { icon: "plane" }));
-      body.child(this.button("plane-refresh", "Refresh", cx => this.loadPlane(cx), t, { icon: "reset", disabled: plane.loading }));
+    const refresh = id => this.button(id, source.loading ? "Loading…" : "Refresh", cx => this.loadTickets(provider, cx), t, { icon: "reset", disabled: source.loading });
+    if (source.needsProject || source.kind === "auth") {
+      const panel = provider === "plane" ? "Tasks" : "Linear";
+      body.child(this.label(source.needsProject ? "This repository isn't linked to a Plane project yet. Link it in the Tasks panel, then come back."
+        : `${service} isn't connected on this computer. Connect it in the ${panel} panel, then come back.`, t));
+      body.child(this.button(provider === "plane" ? "open-tasks" : "open-linear", `Open the ${panel} panel`, () => run(`tabs-show.${provider}`), t, { icon: provider }));
+      body.child(refresh(`${provider}-refresh`));
       return;
     }
-    if (plane.error) body.child(warn(plane.error));
+    if (source.error) body.child(warn(source.error));
+    if (provider === "linear" && this.projects) { this.projectPicker(body, t); return; }
+    if (provider === "linear") {
+      body.child(h_flex().gap(6).flex_wrap().children(Object.entries(SCOPES).map(([scope, label]) =>
+        this.button(`linear-scope-${scope}`, label, cx => this.setLinearFilter({ scope }, cx), t, { small: true, selected: filter.scope === scope }))));
+      body.child(h_flex().gap(6).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(filter.project?.name ?? "All projects"))
+        .child(this.button("linear-project", filter.project ? "Change" : "Choose project", cx => { this.projectSearch.set_value(""); this.loadProjects(cx); this.projectSearch.focus(); }, t, { small: true }))
+        .when(Boolean(filter.project), el => el.child(this.button("linear-project-clear", "Clear", cx => this.setLinearFilter({ project: null }, cx), t, { small: true, icon: "x" }))));
+      body.child(div().h(1).bg(t.border));
+    }
+    const watchable = provider !== "linear" || filter.scope === "mine" || Boolean(filter.project);
+    const filtered = provider === "linear" ? { scope: filter.scope, project: filter.project, label: filterLabel(filter) } : null;
     body.child(this.heading("Watch a state"));
-    body.child(this.label(state.watchPlane ? `Tickets in ${state.watchPlane.name} join the queue within a minute, each one once.`
-      : "Choose a state and its tickets join the queue by themselves, each one once. Pipeline never changes Plane.", t));
-    if (state.planeError) body.child(warn(state.planeError));
-    body.child(h_flex().gap(6).flex_wrap().children(plane.states.filter(row => !["completed", "canceled"].includes(row.group)).map(row =>
-      this.button(`watch-${row.id}`, row.name, cx => this.act({ type: "watchPlane", state: row }, cx), t, { small: true, selected: state.watchPlane?.id === row.id, hint: `Queue tickets that are in ${row.name}` })))
-      .when(Boolean(state.watchPlane), el => el.child(this.button("watch-stop", "Stop watching", cx => this.act({ type: "watchPlane", state: null }, cx), t, { small: true, icon: "x" }))));
-    if (!plane.states.length && !plane.loading) body.child(this.label("No states were found for this project.", t));
+    body.child(this.label(watch ? `Tickets in ${watch.name}${watch.filter?.label ? ` (${watch.filter.label})` : ""} join the queue within a minute, each one once.`
+      : !watchable ? "Choose a project or My tickets to watch a state, so tickets from other teams don't flood the queue."
+      : `Choose a state and its tickets join the queue by themselves, each one once. Pipeline never changes ${service}.`, t));
+    if (state.sourceErrors?.[provider]) body.child(warn(state.sourceErrors[provider]));
+    const current = row => watch?.id === row.id && JSON.stringify(watch?.filter ?? null) === JSON.stringify(filtered);
+    body.child(h_flex().gap(6).flex_wrap().children(source.states.filter(row => openIssue({ statusType: row.group ?? row.type })).map(row =>
+      this.button(`watch-${row.id}`, row.name, cx => this.act({ type: "watchTickets", provider, state: row, filter: filtered }, cx), t,
+        { small: true, selected: current(row), disabled: !watchable, hint: `Queue tickets that are in ${row.name}` })))
+      .when(Boolean(watch), el => el.child(this.button("watch-stop", "Stop watching", cx => this.act({ type: "watchTickets", provider, state: null }, cx), t, { small: true, icon: "x" }))));
+    if (!source.states.length && !source.loading) body.child(this.label(provider === "plane" ? "No states were found for this project." : "No states were found. States come from the teams of the tickets listed below.", t));
     body.child(div().h(1).bg(t.border));
     body.child(this.heading("Pick tickets"));
-    body.child(Input.new(this.planeSearch).w_full().h(34).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Search Plane tickets"));
-    const query = this.planeSearch.value().trim().toLowerCase();
-    const shown = plane.issues.filter(issue => `${issue.identifier} ${issue.title} ${issue.status}`.toLowerCase().includes(query));
-    const active = new Set(state.tasks.filter(task => task.plane && task.status !== "done").map(task => task.plane.uuid));
-    const chosen = plane.issues.filter(issue => this.planePicked.has(issue.uuid) && !active.has(issue.uuid));
+    body.child(Input.new(this.ticketSearch).w_full().h(34).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label(`Search ${service} tickets`));
+    const query = this.ticketSearch.value().trim().toLowerCase();
+    const shown = source.issues.filter(issue => `${issue.identifier} ${issue.title} ${issue.status}`.toLowerCase().includes(query));
+    const active = new Set(state.tasks.filter(task => task.ticket && task.status !== "done").map(task => task.ticket.uuid));
+    const chosen = source.issues.filter(issue => this.ticketPicked.has(issue.uuid) && !active.has(issue.uuid));
+    const limit = provider === "linear" ? 10 : Infinity;
     body.child(h_flex().gap(8).flex_wrap()
-      .child(this.button("plane-queue", `Queue ${count(chosen.length, "ticket")}`, cx => this.queuePlane(chosen, cx), t, { primary: true, icon: "plus", disabled: !chosen.length }))
-      .child(this.button("plane-refresh", plane.loading ? "Loading…" : "Refresh", cx => this.loadPlane(cx), t, { icon: "reset", disabled: plane.loading })));
-    if (plane.loading && !plane.issues.length) body.child(this.label("Loading open tickets…", t));
-    for (const issue of shown.slice(0, 80)) body.child(this.issueRow(issue, active.has(issue.uuid), t));
-    if (!plane.loading && !shown.length) body.child(this.label(query ? "No open tickets match." : "No open tickets in this project.", t));
+      .child(this.button(`${provider}-queue`, this.queueing ? "Queueing…" : `Queue ${count(chosen.length, "ticket")}`, cx => this.queueTickets(provider, chosen, cx), t,
+        { primary: true, icon: "plus", disabled: !chosen.length || chosen.length > limit || this.queueing, hint: chosen.length > limit ? `Queue up to ${limit} Linear tickets at a time` : undefined }))
+      .child(refresh(`${provider}-refresh`)));
+    if (source.loading && !source.issues.length) body.child(this.label("Loading open tickets…", t));
+    for (const issue of shown.slice(0, 80)) body.child(this.issueRow(provider, issue, active.has(issue.uuid), t));
+    if (!source.loading && !shown.length) body.child(this.label(query ? "No open tickets match." : provider === "plane" ? "No open tickets in this project." : "No open tickets here. Try All tickets or another project.", t));
     if (shown.length > 80) body.child(this.label(`Showing 80 of ${shown.length}. Search to narrow the list.`, t));
   }
-  issueRow(issue, inPipeline, t) {
-    const picked = this.planePicked.has(issue.uuid) && !inPipeline;
-    return Button.new(`pipeline-plane-${issue.identifier}`).w_full().p(10).rounded(6).bg(picked ? t.selected : t.surface)
+  projectPicker(body, t) {
+    const projects = this.projects;
+    body.child(h_flex().gap(8).items_center()
+      .child(this.button("linear-project-back", "Back", cx => { this.projects = null; cx.notify(); }, t, { small: true }))
+      .child(div().text_size(12).font_medium().child("Choose a project")));
+    body.child(Input.new(this.projectSearch).w_full().h(34).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Find a Linear project"));
+    body.child(this.label("Press Enter to search Linear.", t));
+    if (projects.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(projects.error));
+    if (projects.loading && !projects.items.length) body.child(this.label("Loading projects…", t));
+    for (const project of projects.items) body.child(Button.new(`pipeline-linear-project-${project.id}`).w_full().px(10).py(9).rounded(6).bg(t.surface)
+      .border_1().border_color(t.border).text_color(t.foreground).text_size(12).tab_index(0).accessibility_label(`Use ${project.name}`)
+      .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
+      .on_click((_e, cx) => this.setLinearFilter({ project: { id: project.id, name: project.name } }, cx))
+      .child(div().w_full().whitespace_normal().child(project.name)));
+    if (!projects.loading && !projects.items.length && !projects.error) body.child(this.label("No projects match.", t));
+  }
+  issueRow(provider, issue, inPipeline, t) {
+    const picked = this.ticketPicked.has(issue.uuid) && !inPipeline;
+    return Button.new(`pipeline-${provider}-${issue.identifier}`).w_full().p(10).rounded(6).bg(picked ? t.selected : t.surface)
       .border_1().border_color(picked ? t.accent : t.border).text_color(t.foreground).tab_index(0).disabled(inPipeline).opacity(inPipeline ? 0.55 : 1)
       .accessibility_label(`${issue.identifier}: ${issue.title}. ${issue.status}.${inPipeline ? " Already in Pipeline." : picked ? " Selected." : ""}`)
       .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
-      .on_click((_e, cx) => { if (inPipeline) return; this.planePicked.has(issue.uuid) ? this.planePicked.delete(issue.uuid) : this.planePicked.add(issue.uuid); cx.notify(); })
+      .on_click((_e, cx) => { if (inPipeline) return; this.ticketPicked.has(issue.uuid) ? this.ticketPicked.delete(issue.uuid) : this.ticketPicked.add(issue.uuid); cx.notify(); })
       .child(v_flex().w_full().gap(5)
         .child(h_flex().items_center().gap(6).child(div().text_size(10).font_medium().text_color(t.muted).child(issue.identifier))
-          .child(div().flex_1().min_w(0).text_size(10).text_color(t.muted).truncate().child(`${issue.status} · ${issue.priority?.name ?? "No priority"}`))
+          .child(div().flex_1().min_w(0).text_size(10).text_color(t.muted).truncate().child([issue.status, issue.priority?.name ?? "No priority", provider === "linear" ? issue.team : null].filter(Boolean).join(" · ")))
           .when(inPipeline, el => el.child(div().text_size(10).text_color(t.muted).child("In Pipeline")))
           .when(picked, el => el.child(icon("check", 13))))
         .child(div().text_size(12).font_medium().child(issue.title)));
@@ -862,8 +946,9 @@ export default class Pipeline extends View {
     body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : labelFor(state, task.status)))
       .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
-    if (task.plane) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`Plane ${task.plane.key} · ${task.plane.status} · ${task.source}`))
-      .when(Boolean(task.plane.url), el => el.child(this.button(`plane-link-${task.id}`, "Open in Plane", () => this.openLink(task.plane.url), t, { small: true, icon: "plane", hint: task.plane.url }))));
+    const ticket = task.ticket, service = SOURCES[ticket?.provider];
+    if (service) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${service} ${ticket.key} · ${ticket.status} · ${task.source}`))
+      .when(Boolean(ticket.url), el => el.child(this.button(`${ticket.provider}-link-${task.id}`, `Open in ${service}`, () => this.openLink(ticket.url), t, { small: true, icon: ticket.provider, hint: ticket.url }))));
     if (task.status === "queued") {
       body.child(this.heading("Details for the agent"));
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));

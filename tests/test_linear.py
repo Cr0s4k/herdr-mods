@@ -50,6 +50,24 @@ class LinearTest(unittest.TestCase):
             reader.request("/app", {"scope": "all"})
             self.assertNotIn("assignee", call.call_args.args[2])
 
+    def test_open_tickets_details_and_states_merge_team_workflows_by_name(self):
+        with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, _n, args: {"id": args["id"], "title": "T"} if args["id"] != "gone" else {}) as call:
+            data = reader.request("/app", {"op": "details", "ids": ["A-1", "gone", ""] + [f"B-{n}" for n in range(20)]})["data"]
+            self.assertEqual([issue["id"] for issue in data["issues"]][:2], ["A-1", "B-0"])
+            self.assertEqual(call.call_count, 10)
+            self.assertEqual({c.args[1] for c in call.call_args_list}, {"get_issue"})
+        pages = {"started": [{"id": "A-1", "uuid": "1"}], "unstarted": [{"id": "A-2", "uuid": "2"}, {"id": "A-1", "uuid": "1"}], "backlog": []}
+        with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, _n, args: {"issues": pages[args["state"]]}) as call:
+            data = reader.request("/app", {"scope": "mine", "open": True, "state": "ignored"})["data"]
+            self.assertEqual([issue["id"] for issue in data["issues"]], ["A-1", "A-2"])
+            self.assertEqual([c.args[2]["state"] for c in call.call_args_list], ["started", "unstarted", "backlog"])
+        teams = {"Core": [{"id": "a", "type": "unstarted", "name": "Todo"}, {"id": "b", "type": "started", "name": "In Progress"}],
+                 "Web": [{"id": "c", "type": "unstarted", "name": "Todo"}, {"id": "d", "type": "unstarted", "name": "Ready for agent"}, "junk"]}
+        with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, name, args: teams[args["team"]]) as call:
+            states = reader.request("/app", {"op": "states", "teams": ["Core", "Web", ""]})["data"]["states"]
+            self.assertEqual([(state["id"], state["type"]) for state in states], [("Todo", "unstarted"), ("In Progress", "started"), ("Ready for agent", "unstarted")])
+            self.assertEqual({c.args[1] for c in call.call_args_list}, {"list_issue_statuses"})
+
     def test_only_read_tools_can_be_called(self):
         with self.assertRaises(reader.LinearError):
             reader.call("token", "update_issue", {})

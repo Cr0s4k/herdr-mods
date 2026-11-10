@@ -1,7 +1,9 @@
 // A deterministic simulation. This module never starts agents, changes tickets or runs Git.
 export const STORE = "pipeline.prototype.v1";
 export const LIVE = "live:";
-export const VERSION = 3;
+export const VERSION = 4;
+export const SOURCES = { plane: "Plane", linear: "Linear" };
+export const openIssue = issue => !["completed", "canceled", "duplicate"].includes(issue.statusType);
 export const ACTIVE = ["routing", "working", "input", "testing"];
 export const MOVING = ["routing", "working", "testing", "merging"];
 export const DURATION = { routing: 2200, working: 9500, testing: 5500, merging: 3500 };
@@ -56,19 +58,25 @@ export function createPipeline(context, now = Date.now()) {
 export function createLive(context, now = Date.now()) {
   const repo = (context.cwd ?? "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "project";
   return { version: VERSION, live: true, context, repo, running: false, parallel: 2, reviewLimit: 4, delivery: "merge", agent: null, speed: 1, quota: 100, reserve: 0,
-    watch: false, column: "Ready", lastTick: now, sequence: 0, created: 0, events: [], tasks: [],
+    watch: false, column: "Ready", lastTick: now, sequence: 0, created: 0, events: [], tasks: [], watching: {}, sourceErrors: {},
     plan: "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree." };
+}
+
+function ticketed({ watchPlane, planeError, ...state }) {
+  return { ...state, version: VERSION, ...(state.live ? { watching: watchPlane ? { plane: watchPlane } : {}, sourceErrors: planeError ? { plane: planeError } : {} } : {}),
+    tasks: state.tasks.map(({ plane, ...task }) => plane ? { ...task, ticket: { provider: "plane", ...plane } } : task) };
 }
 
 export function migrate(state, now = Date.now()) {
   if (state?.live && state.tasks?.some(task => task.status === "merging" && task.pr && !task.merge))
-    return { ...state, tasks: state.tasks.map(task => task.status === "merging" && task.pr && !task.merge ? { ...task, status: "pr" } : task) };
+    state = { ...state, tasks: state.tasks.map(task => task.status === "merging" && task.pr && !task.merge ? { ...task, status: "pr" } : task) };
   if (!state || state.version === VERSION) return state;
+  if (state.version === 3 && Array.isArray(state.tasks)) return ticketed(state);
   if (![1, 2].includes(state.version) || !Array.isArray(state.tasks)) return createPipeline(state.context ?? {}, now);
   const questions = new Map(CATALOG.map(item => [item.id, item.question]));
-  return { ...state, version: VERSION, speed: state.speed ?? 1, created: state.created ?? 0, generated: state.generated ?? 0, askNext: false, lastTick: now,
+  return ticketed({ ...state, speed: state.speed ?? 1, created: state.created ?? 0, generated: state.generated ?? 0, askNext: false, lastTick: now,
     tasks: state.tasks.map(({ elapsed = 0, ...task }) => ({ ...task, since: task.since ?? now - elapsed,
-      question: task.question ?? ask(questions.get(task.id)), answer: task.answer ?? null, held: task.held ?? null })) };
+      question: task.question ?? ask(questions.get(task.id)), answer: task.answer ?? null, held: task.held ?? null })) });
 }
 
 export const duration = (state, status) => (DURATION[status] ?? 0) / (state.speed || 1);
@@ -270,36 +278,41 @@ export function reduce(state, action, now = Date.now()) {
       enqueue(next, ids, "Picked");
       break;
     }
-    case "addPlane": {
-      if (!next.live) return state;
+    case "addTickets": {
+      const provider = action.provider, name = SOURCES[provider];
+      if (!next.live || !name) return state;
       next.claimed ??= [];
       let added = 0;
       for (const issue of action.issues ?? []) {
         if (!issue?.uuid || !issue.title) continue;
-        if (next.tasks.some(task => task.plane?.uuid === issue.uuid && task.status !== "done")) continue;
+        if (next.tasks.some(task => task.ticket?.uuid === issue.uuid && task.status !== "done")) continue;
         if (action.watched && next.claimed.includes(issue.uuid)) continue;
         let id = String(issue.identifier || `T-${++next.created}`);
         if (next.tasks.some(task => task.id === id)) { let n = 2; while (next.tasks.some(task => task.id === `${id}-${n}`)) n++; id = `${id}-${n}`; }
         next.tasks.push(liveTask(next, { id, title: String(issue.title).slice(0, 200), description: String(issue.description ?? "").slice(0, 8000),
-          priority: PRIORITIES[issue.priority?.name] ?? 1, plane: { uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status } }, action.source ?? "Plane"));
+          priority: PRIORITIES[issue.priority?.name] ?? 1, ticket: { provider, uuid: issue.uuid, key: issue.identifier, url: issue.url, status: issue.status } }, action.source ?? name));
         next.claimed = [...next.claimed.filter(uuid => uuid !== issue.uuid), issue.uuid].slice(-500);
-        event(next, `${id} joined the queue · ${action.source ?? "Plane"}`, id);
+        event(next, `${id} joined the queue · ${action.source ?? name}`, id);
         added++;
       }
       if (!added) return state;
       break;
     }
-    case "watchPlane": {
-      if (!next.live) return state;
-      const watch = action.state?.id ? { id: action.state.id, name: String(action.state.name ?? "a state") } : null;
-      if (watch?.id === next.watchPlane?.id) return state;
-      next.watchPlane = watch; next.planeError = null;
-      event(next, watch ? `Watching Plane for tickets in ${watch.name}.` : "Stopped watching Plane.");
+    case "watchTickets": {
+      const provider = action.provider, name = SOURCES[provider];
+      if (!next.live || !name) return state;
+      const watch = action.state?.id ? { id: action.state.id, name: String(action.state.name ?? "a state"), ...(action.filter ? { filter: action.filter } : {}) } : null;
+      const current = next.watching?.[provider] ?? null;
+      if (watch?.id === current?.id && JSON.stringify(watch?.filter ?? null) === JSON.stringify(current?.filter ?? null)) return state;
+      next.watching = { ...next.watching, [provider]: watch };
+      next.sourceErrors = { ...next.sourceErrors, [provider]: null };
+      event(next, watch ? `Watching ${name} for tickets in ${watch.name}${watch.filter?.label ? ` · ${watch.filter.label}` : ""}.` : `Stopped watching ${name}.`);
       break;
     }
-    case "planeError": {
-      if (!next.live || (next.planeError ?? null) === (action.error ?? null)) return state;
-      next.planeError = action.error ?? null;
+    case "sourceError": {
+      const provider = action.provider;
+      if (!next.live || !SOURCES[provider] || (next.sourceErrors?.[provider] ?? null) === (action.error ?? null)) return state;
+      next.sourceErrors = { ...next.sourceErrors, [provider]: action.error ?? null };
       break;
     }
     case "describe": {

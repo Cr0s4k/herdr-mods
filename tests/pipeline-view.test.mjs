@@ -30,8 +30,9 @@ globalThis.__pipelineView = {
   knownAgents: async () => [], exec: async () => ({ code: 0, stdout: "" }), focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
-  openIssue: issue => !["completed", "canceled"].includes(issue.statusType),
-  readPlane: async payload => { world.planeCalls.push(payload); return world.planeReply?.(payload) ?? { issues: [] }; },
+  readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
+  fullTickets: async (provider, issues) => { world.fullCalls = [...(world.fullCalls ?? []), [provider, issues.map(issue => issue.identifier)]];
+    return provider === "linear" ? issues.map(issue => ({ ...issue, description: `Full ${issue.identifier}` })) : issues; },
   PathBuilder: { stroke: path }, window: { paint_path: native },
   shared: key => world.data[key], setShared: (key, value) => { world.data[key] = value; },
   props: () => ({ context: world.context ?? { id: "project", name: "Project" } }), appWindow: () => ({ platform: "linux", active: true }),
@@ -63,6 +64,14 @@ function click(view, id) {
   assert.ok(node, `control ${id} exists`);
   assert.equal(Boolean(node.styles.disabled?.[0]), false, `${id} is enabled`);
   node.handlers.on_click({}, cx);
+}
+async function settle(view, id) {
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  const node = find(view.render(cx), id);
+  assert.ok(node, `control ${id} exists`);
+  assert.equal(Boolean(node.styles.disabled?.[0]), false, `${id} is enabled`);
+  node.handlers.on_click({}, spawning);
+  while (spawned.length) await spawned.shift()(spawning);
 }
 const row = (view, id) => view.state().tasks.find(task => task.id === id);
 const press = (view, keystroke) => view.render(cx).handlers.on_key_down({ key: keystroke, keystroke, modifiers: {} }, cx);
@@ -406,9 +415,9 @@ test("the Plane drawer watches a state and queues picked tickets, skipping ones 
   assert.equal(find(scene, "plane-HMOD-3"), undefined, "finished tickets are left out");
   assert.equal(find(scene, "watch-done"), undefined);
   click(view, "watch-todo");
-  assert.deepEqual(view.state().watchPlane, { id: "todo", name: "Todo" });
+  assert.deepEqual(view.state().watching.plane, { id: "todo", name: "Todo" });
   click(view, "plane-HMOD-1"); click(view, "plane-HMOD-2");
-  click(view, "plane-queue");
+  await settle(view, "plane-queue");
   assert.deepEqual(view.state().tasks.map(task => task.id), ["HMOD-1", "HMOD-2"]);
   assert.equal(view.drawer, null);
   view.drawer = "plane";
@@ -514,4 +523,55 @@ test("the Schedule drawer saves, rejects and clears daily times", () => {
   click(view, "schedule-pause-clear");
   assert.equal(view.state().schedule, null);
   assert.ok(find(view.render(cx), "schedule").nodes.includes("Schedule"));
+});
+
+test("the Linear drawer filters by scope and project, watches only narrowed states, and queues full tickets", async () => {
+  const view = setupLive();
+  world.storage.delete("linear:shop");
+  const ticket = (n, extra = {}) => ({ uuid: `u-${n}`, identifier: `PRO-${n}`, title: `Ticket ${n}`, status: "Todo", statusType: "unstarted", priority: { name: "Urgent" }, team: "Product", url: `https://linear.test/PRO-${n}`, ...extra });
+  world.planeCalls = []; world.fullCalls = [];
+  world.planeReply = (payload, provider) => provider !== "linear" ? { issues: [] } : payload.op === "states"
+    ? { states: [{ id: "Todo", name: "Todo", type: "unstarted" }, { id: "Done", name: "Done", type: "completed" }] }
+    : payload.op === "projects" ? { projects: [{ id: "p1", name: "Herdr" }] }
+    : { issues: [ticket(1), ticket(2, { statusType: "canceled" })] };
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  const drain = async () => { while (spawned.length) await spawned.shift()(spawning); };
+  press(view, "l");
+  assert.equal(view.drawer, "linear");
+  view.open(null, cx); view.open("linear", spawning); await drain();
+  assert.deepEqual(world.planeCalls.filter(call => call.provider === "linear").map(call => [call.op, call.scope ?? call.teams?.join()]), [["issues", "mine"], ["states", "Product"]]);
+  assert.equal(world.planeCalls.find(call => call.provider === "linear").open, true);
+  let scene = view.render(cx);
+  assert.ok(find(scene, "linear-PRO-1"));
+  assert.equal(find(scene, "linear-PRO-2"), undefined, "closed tickets are left out");
+  assert.equal(find(scene, "watch-Done"), undefined);
+  await settle(view, "linear-scope-all");
+  assert.equal(world.planeCalls.filter(call => call.op === "issues").at(-1).scope, "all");
+  assert.equal(find(view.render(cx), "watch-Todo").styles.disabled[0], true, "a workspace-wide watch is not offered");
+  await settle(view, "linear-project");
+  await settle(view, "linear-project-p1");
+  assert.equal(world.planeCalls.filter(call => call.op === "issues").at(-1).project, "p1");
+  assert.deepEqual(JSON.parse(world.storage.get("linear:shop")), { scope: "all", project: { id: "p1", name: "Herdr" } });
+  click(view, "watch-Todo");
+  assert.deepEqual(view.state().watching.linear, { id: "Todo", name: "Todo", filter: { scope: "all", project: { id: "p1", name: "Herdr" }, label: "All tickets · Herdr" } });
+  assert.match(view.state().events[0].message, /Watching Linear for tickets in Todo · All tickets · Herdr/);
+  click(view, "linear-PRO-1");
+  await settle(view, "linear-queue");
+  assert.deepEqual(world.fullCalls.at(-1), ["linear", ["PRO-1"]]);
+  const task = row(view, "PRO-1");
+  assert.deepEqual([task.description, task.priority, task.source, task.ticket.provider], ["Full PRO-1", 4, "Linear", "linear"]);
+  view.inspect("PRO-1", cx);
+  assert.ok(find(view.render(cx), "linear-link-PRO-1"));
+  world.planeReply = null;
+});
+
+test("a missing Linear connection points to the Linear panel", async () => {
+  const view = setupLive();
+  world.planeReply = (_payload, provider) => { if (provider === "linear") throw Object.assign(new Error("Connect Linear to browse your tickets."), { kind: "auth" }); return { issues: [] }; };
+  const spawned = [];
+  view.open("linear", { ...cx, spawn: fn => spawned.push(fn) });
+  await spawned[0](cx);
+  click(view, "open-linear");
+  assert.deepEqual(world.runs.at(-1), ["tabs-show.linear", undefined]);
+  world.planeReply = null;
 });

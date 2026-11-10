@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
 const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, reduce, CHECK_FIXES } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
+const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, reduce, CHECK_FIXES } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { STORE, LIVE, createLive, createPipeline, reduce, activeTasks } = model;
 const context = { id: "project", name: "shop", cwd: "/work/shop", on: null };
 const id = `${LIVE}project`;
@@ -257,30 +257,30 @@ const ticket = (n, extra = {}) => ({ uuid: `plane:p:${n}`, identifier: `HMOD-${n
   status: "Ready", statusType: "unstarted", priority: { name: "High" }, ...extra });
 
 test("Plane tickets queue under their own keys with their description, once while active", () => {
-  let state = reduce(createLive(context, 0), { type: "addPlane", issues: [ticket(31), ticket(32, { priority: { name: "None" } })], source: "Plane" }, 0);
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(31), ticket(32, { priority: { name: "None" } })], source: "Plane" }, 0);
   assert.deepEqual(state.tasks.map(task => [task.id, task.priority, task.source]), [["HMOD-31", 3, "Plane"], ["HMOD-32", 1, "Plane"]]);
   assert.equal(row(state, "HMOD-31").description, "Do thing 31.");
-  assert.equal(row(state, "HMOD-31").plane.url, "https://plane.test/HMOD-31/");
-  assert.equal(reduce(state, { type: "addPlane", issues: [ticket(31)] }, 0), state, "an active ticket is not queued twice");
+  assert.equal(row(state, "HMOD-31").ticket.url, "https://plane.test/HMOD-31/");
+  assert.equal(reduce(state, { type: "addTickets", provider: "plane", issues: [ticket(31)] }, 0), state, "an active ticket is not queued twice");
   row(state, "HMOD-31").status = "done";
-  state = reduce(state, { type: "addPlane", issues: [ticket(31)] }, 0);
+  state = reduce(state, { type: "addTickets", provider: "plane", issues: [ticket(31)] }, 0);
   assert.equal(row(state, "HMOD-31-2").title, "Ticket 31", "a finished ticket can be picked again under a fresh id");
-  assert.equal(reduce(createLive(context, 0), { type: "addPlane", issues: [ticket(1)] }, 0).tasks.length, 1);
-  assert.equal(reduce(createPipeline(context, 0), { type: "addPlane", issues: [ticket(1)] }, 0).tasks.length, 8, "the simulation ignores Plane");
+  assert.equal(reduce(createLive(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(1)] }, 0).tasks.length, 1);
+  assert.equal(reduce(createPipeline(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(1)] }, 0).tasks.length, 8, "the simulation ignores Plane");
 });
 
 test("a watched state claims each ticket once, so merged tickets left in it are not queued again", () => {
-  let state = reduce(createLive(context, 0), { type: "watchPlane", state: { id: "ready", name: "Ready" } }, 0);
+  let state = reduce(createLive(context, 0), { type: "watchTickets", provider: "plane", state: { id: "ready", name: "Ready" } }, 0);
   assert.match(state.events[0].message, /Watching Plane for tickets in Ready/);
-  state = reduce(state, { type: "addPlane", issues: [ticket(5)], source: "Plane · Ready", watched: true }, 0);
+  state = reduce(state, { type: "addTickets", provider: "plane", issues: [ticket(5)], source: "Plane · Ready", watched: true }, 0);
   row(state, "HMOD-5").status = "done";
-  assert.equal(reduce(state, { type: "addPlane", issues: [ticket(5)], watched: true }, 0), state);
-  assert.equal(reduce(state, { type: "watchPlane", state: { id: "ready", name: "Ready" } }, 0), state);
-  assert.equal(reduce(state, { type: "watchPlane", state: null }, 0).watchPlane, null);
+  assert.equal(reduce(state, { type: "addTickets", provider: "plane", issues: [ticket(5)], watched: true }, 0), state);
+  assert.equal(reduce(state, { type: "watchTickets", provider: "plane", state: { id: "ready", name: "Ready" } }, 0), state);
+  assert.equal(reduce(state, { type: "watchTickets", provider: "plane", state: null }, 0).watching.plane, null);
 });
 
 test("the plan prompt names the ticket and keeps Plane read-only", () => {
-  const state = reduce(createLive(context, 0), { type: "addPlane", issues: [ticket(7)] }, 0);
+  const state = reduce(createLive(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(7)] }, 0);
   const text = live.prompt(row(state, "HMOD-7"), { cwd: "/wt", branch: "pipeline/hmod-7", target: "main", base: "a".repeat(40) });
   assert.match(text, /^Plane ticket HMOD-7: Ticket 7\nhttps:\/\/plane\.test\/HMOD-7\/\n\nDo thing 7\./);
   assert.match(text, /Do not change its Plane status or assignee/);
@@ -288,23 +288,23 @@ test("the plan prompt names the ticket and keeps Plane read-only", () => {
 
 test("the runner polls a watched state about once a minute and reports Plane problems", async () => {
   let now = 0, calls = [];
-  const world = host(reduce(createLive(context, 0), { type: "watchPlane", state: { id: "ready", name: "Ready" } }, 0), {
+  const world = host(reduce(createLive(context, 0), { type: "watchTickets", provider: "plane", state: { id: "ready", name: "Ready" } }, 0), {
     now: () => now,
-    plane: async payload => { calls.push(payload); if (calls.length === 2) throw new Error("Plane is unreachable."); return { issues: [ticket(9)] }; },
+    tickets: async (provider, payload) => { calls.push({ provider, ...payload }); if (calls.length === 2) throw new Error("Plane is unreachable."); return { issues: [ticket(9)] }; },
   });
   const runner = new live.LiveRunner(world.host);
   const tick = async () => { const spawned = []; runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) }); await Promise.all(spawned); };
   await tick();
-  assert.deepEqual(calls[0], { op: "issues", context: { cwd: "/work/shop", on: null }, state: "ready", scope: "all" });
+  assert.deepEqual(calls[0], { provider: "plane", op: "issues", context: { cwd: "/work/shop", on: null }, state: "ready", scope: "all" });
   assert.equal(row(world.state(), "HMOD-9").source, "Plane · Ready");
   now = 30000; await tick();
   assert.equal(calls.length, 1);
   now = 61000; await tick();
-  assert.equal(world.state().planeError, "Plane is unreachable.");
-  world.store = { [id]: reduce(world.state(), { type: "watchPlane", state: { id: "doing", name: "Doing" } }, 0) };
+  assert.equal(world.state().sourceErrors.plane, "Plane is unreachable.");
+  world.store = { [id]: reduce(world.state(), { type: "watchTickets", provider: "plane", state: { id: "doing", name: "Doing" } }, 0) };
   now = 62000; await tick();
   assert.equal(calls.at(-1).state, "doing", "a new watch polls at once");
-  assert.equal(world.state().planeError, null);
+  assert.equal(world.state().sourceErrors.plane, null);
 });
 
 async function finished(world, runner, results) {
@@ -479,7 +479,7 @@ test("a refused publish stays in review with gh's reason", async () => {
 
 test("Plane tasks title their PR with the ticket key and link the ticket", async () => {
   const world = prHost();
-  world.store = { [id]: reduce(reduce(createLive(context, 0), { type: "deliver", value: "pr" }, 0), { type: "addPlane", issues: [{ uuid: "plane:p:4", identifier: "HMOD-4", title: "Fix login", description: "Details.", url: "https://plane.test/HMOD-4/", status: "Ready", priority: { name: "High" } }] }, 0) };
+  world.store = { [id]: reduce(reduce(createLive(context, 0), { type: "deliver", value: "pr" }, 0), { type: "addTickets", provider: "plane", issues: [{ uuid: "plane:p:4", identifier: "HMOD-4", title: "Fix login", description: "Details.", url: "https://plane.test/HMOD-4/", status: "Ready", priority: { name: "High" } }] }, 0) };
   world.store = { [id]: reduce(world.state(), { type: "run" }, 0) };
   const runner = new live.LiveRunner(world.host);
   await reviewed(world, runner);
@@ -516,4 +516,53 @@ test("a PR opened before the pr status existed is read as open", () => {
   assert.equal(row(model.migrate(state), "T-1").status, "pr");
   const settled = model.migrate(state);
   assert.equal(model.migrate(settled), settled);
+});
+
+test("Linear tickets queue with their provider, and the prompt keeps Linear read-only", () => {
+  const issue = { uuid: "u-7", identifier: "PRO-7", title: "Ship it", description: "Full text.", url: "https://linear.test/PRO-7", status: "Todo", priority: { name: "Urgent" } };
+  const state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", issues: [issue] }, 0);
+  assert.deepEqual(row(state, "PRO-7").ticket, { provider: "linear", uuid: "u-7", key: "PRO-7", url: "https://linear.test/PRO-7", status: "Todo" });
+  assert.equal(row(state, "PRO-7").source, "Linear");
+  assert.equal(reduce(createLive(context, 0), { type: "addTickets", provider: "jira", issues: [issue] }, 0).tasks.length, 0);
+  const text = live.prompt(row(state, "PRO-7"), { cwd: "/wt", branch: "pipeline/pro-7", target: "main", base: "a".repeat(40) });
+  assert.match(text, /^Linear ticket PRO-7: Ship it\nhttps:\/\/linear\.test\/PRO-7\n\nFull text\./);
+  assert.match(text, /Do not change its Linear status or assignee/);
+});
+
+test("a watched Linear state polls with its filter, reads only unseen tickets in full, and keeps Plane separate", async () => {
+  let now = 0;
+  const calls = [], described = [];
+  const filter = { scope: "mine", project: { id: "p1", name: "Herdr" }, label: "My tickets · Herdr" };
+  let state = reduce(createLive(context, 0), { type: "watchTickets", provider: "linear", state: { id: "Todo", name: "Todo" }, filter }, 0);
+  state = reduce(state, { type: "addTickets", provider: "linear", issues: [{ uuid: "u-1", identifier: "PRO-1", title: "Old" }], watched: true }, 0);
+  const world = host(state, {
+    now: () => now,
+    tickets: async (provider, payload) => { calls.push({ provider, ...payload }); return { issues: [{ uuid: "u-1", identifier: "PRO-1", title: "Old" }, { uuid: "u-2", identifier: "PRO-2", title: "New" }] }; },
+    describe: async (provider, issues) => { described.push([provider, issues.map(issue => issue.identifier)]); return issues.map(issue => ({ ...issue, description: "Full." })); },
+  });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async () => { const spawned = []; runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) }); await Promise.all(spawned); };
+  await tick();
+  assert.deepEqual(calls, [{ provider: "linear", op: "issues", scope: "mine", project: "p1", state: "Todo" }]);
+  assert.deepEqual(described, [["linear", ["PRO-2"]]]);
+  assert.equal(row(world.state(), "PRO-2").description, "Full.");
+  assert.equal(row(world.state(), "PRO-2").source, "Linear · Todo");
+  assert.equal(world.state().watching.plane, undefined);
+  world.store = { [id]: reduce(world.state(), { type: "watchTickets", provider: "linear", state: { id: "Todo", name: "Todo" }, filter: { ...filter, scope: "unassigned" } }, 0) };
+  now = 1000; await tick();
+  assert.equal(calls.at(-1).scope, "unassigned", "a changed filter polls at once");
+});
+
+test("saved version 3 live pipelines move Plane fields onto the ticket", () => {
+  const old = { ...createLive(context, 0), version: 3, watching: undefined, sourceErrors: undefined, watchPlane: { id: "ready", name: "Ready" }, planeError: "Down." };
+  old.tasks = [{ id: "HMOD-1", title: "Fix", status: "queued", plane: { uuid: "plane:p:1", key: "HMOD-1", url: "https://plane.test/", status: "Ready" } }];
+  const state = model.migrate(old, 0);
+  assert.equal(state.version, model.VERSION);
+  assert.deepEqual(state.watching, { plane: { id: "ready", name: "Ready" } });
+  assert.deepEqual(state.sourceErrors, { plane: "Down." });
+  assert.deepEqual(row(state, "HMOD-1").ticket, { provider: "plane", uuid: "plane:p:1", key: "HMOD-1", url: "https://plane.test/", status: "Ready" });
+  assert.ok(!("plane" in row(state, "HMOD-1")) && !("watchPlane" in state));
+  old.tasks.push({ id: "T-2", title: "Open", status: "merging", merge: false, pr: { number: 2 } });
+  const both = model.migrate(old, 0);
+  assert.deepEqual([both.version, row(both, "T-2").status, row(both, "HMOD-1").ticket.provider], [model.VERSION, "pr", "plane"], "both changes land in one pass");
 });

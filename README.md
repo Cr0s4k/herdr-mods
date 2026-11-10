@@ -169,6 +169,12 @@ task, so parallel agents never touch each other or your checkout.
    a minute, each one once. A Plane task keeps the ticket's key (HMOD-12), priority and
    description, and the inspector links back to it. Pipeline only reads Plane; ticket status
    and assignee stay in your Plane workflow, and agents are told not to change them.
+   **Linear** (L) works the same way, with the connection the Linear panel uses: choose My
+   tickets, Unassigned or All tickets and optionally a Linear project, then pick tickets (up
+   to 10 at a time) or watch a state. States are merged by name across the teams of the listed
+   tickets, and a watch needs My tickets or a project, so a workspace-wide state can't flood
+   the queue. Linear's list shortens descriptions, so Pipeline reads each ticket in full
+   before it is queued.
 2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it
@@ -198,8 +204,8 @@ task, so parallel agents never touch each other or your checkout.
    To review on GitHub instead, set **Delivery** to **Open a pull request** in Settings. The
    approve action becomes **Open PR**: Pipeline commits anything the agent left, pushes the
    branch to `origin` and runs `gh pr create` into the branch the worktree started from, with
-   the task details, the Plane link and the check result in the description (a Plane task's
-   PR is titled with its key). The card then waits in its own state, **PR #12 open**, with a
+   the task details, the ticket link and the check result in the description (a Plane or
+   Linear task's PR is titled with its key). The card then waits in its own state, **PR #12 open**, with a
    link; Pipeline asks GitHub once a minute and finishes the task when the PR is merged (then
    cleans up as above), or returns it to review if the PR is closed. Needs `gh`, signed in, and a GitHub
    `origin`. An interrupted push or PR is safe to repeat: an open PR is reused. Turn on
@@ -253,7 +259,7 @@ has **Simulate a question** to make the next working task ask. Real agents will 
 the sidebar on their own; this only simulates that moment.
 
 Keys, with the scene focused: Space start/pause, N new task, A examples (in Live: P for
-Plane), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
+Plane, L for Linear), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
 S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
 **PR approval** in the status strip switches to **Auto-merge** (merge after checks).
 Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,

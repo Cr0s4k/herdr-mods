@@ -95,7 +95,7 @@ def parse_rpc(raw):
 
 
 def call(token, name, arguments):
-    if name not in {"list_issues", "get_issue", "list_projects", "get_user"}:
+    if name not in {"list_issues", "get_issue", "list_projects", "list_issue_statuses", "get_user"}:
         raise LinearError("Unsupported Linear operation.")
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": name, "arguments": arguments}}
@@ -127,13 +127,43 @@ def request(app_home, payload):
         for key in ("query", "project", "cursor", "state"):
             if payload.get(key):
                 args[key] = payload[key]
-        data = call(token, "list_issues", args)
+        if payload.get("open"):
+            issues = {}
+            for kind in ("started", "unstarted", "backlog"):
+                page = call(token, "list_issues", {**args, "state": kind})
+                if not isinstance(page.get("issues"), list):
+                    raise LinearError("Linear did not return a ticket list. Refresh to try again.")
+                for issue in page["issues"]:
+                    issues.setdefault(issue.get("uuid") or issue.get("id"), issue)
+            data = {"issues": list(issues.values()), "hasNextPage": False}
+        else:
+            data = call(token, "list_issues", args)
         if not isinstance(data.get("issues"), list):
             raise LinearError("Linear did not return a ticket list. Refresh to try again.")
     elif operation == "detail":
         data = call(token, "get_issue", {"id": payload["id"], "includeRelations": True})
         if not data.get("id") or not data.get("title"):
             raise LinearError("This ticket is no longer available. Refresh the list.")
+    elif operation == "details":
+        issues = []
+        for issue_id in [str(issue_id) for issue_id in payload.get("ids", []) if issue_id][:10]:
+            try:
+                issue = call(token, "get_issue", {"id": issue_id})
+            except LinearError as error:
+                if error.kind != "request":
+                    raise
+                continue
+            if issue.get("id") and issue.get("title"):
+                issues.append(issue)
+        data = {"issues": issues}
+    elif operation == "states":
+        states = {}
+        for team in [str(team) for team in payload.get("teams", []) if team][:5]:
+            rows = call(token, "list_issue_statuses", {"team": team})
+            for row in rows if isinstance(rows, list) else rows.get("statuses", []) if isinstance(rows, dict) else []:
+                if isinstance(row, dict) and row.get("name"):
+                    states.setdefault(row["name"], {"id": row["name"], "name": row["name"], "type": row.get("type", "backlog")})
+        data = {"states": list(states.values())}
     elif operation == "projects":
         args = {"limit": 50, "fields": ["id", "uuid", "name"]}
         for key in ("query", "cursor"):
