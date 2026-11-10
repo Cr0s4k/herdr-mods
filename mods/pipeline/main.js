@@ -362,6 +362,8 @@ export default class Pipeline extends View {
     const small = Boolean(options.small);
     return Button.new(`pipeline-${id}`).h(small ? 24 : 32).px(options.iconOnly ? (small ? 5 : 8) : small ? 8 : 11).gap(small ? 5 : 6).flex_none().flex().items_center().justify_center()
       .rounded(6).text_size(small ? 11 : 12).border_1().border_color(options.primary ? t.accent : t.border)
+      .when(options.segment === "left", el => el.rounded_r(0))
+      .when(options.segment === "right", el => el.rounded_l(0).when(!options.primary, el => el.border_l(0)))
       .bg(options.primary ? t.accent : options.selected ? t.selected : t.surface)
       .text_color(options.primary ? t.accent_foreground : t.foreground).disabled(Boolean(options.disabled))
       .opacity(options.disabled ? 0.45 : 1).tab_index(0).accessibility_label(options.hint ?? label)
@@ -474,9 +476,19 @@ export default class Pipeline extends View {
       .when(!narrow, el => el.child(this.button("motion", "Motion", cx => this.toggleMotion(cx), t,
         { icon: "motion", iconOnly: true, selected: this.motion && !this.reducedMotion, hint: this.reducedMotion ? "System Reduce Motion is enabled" : `${this.motion ? "Turn off" : "Turn on"} animation` })))
       .child(this.button("settings", "Settings", cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "settings", iconOnly: true, selected: this.drawer === "settings", hint: "Pipeline settings" }))
+      .child(this.runButton(state, t));
+  }
+
+  runButton(state, t) {
+    const primary = !state.running, next = this.upcoming(state);
+    return h_flex().flex_none().items_center()
       .child(this.button("run", state.running ? "Pause intake" : "Start pipeline", cx => this.toggleRun(cx), t,
-        { icon: state.running ? "pause" : "play", primary: !state.running, disabled: Boolean(state.live && this.repo?.error && !state.running),
-          hint: `${state.running ? "Pause intake; active work finishes" : state.live ? "Start an agent for each queued task, up to the parallel limit" : "Start dispatching queued work"} (Space)` }));
+        { icon: state.running ? "pause" : "play", primary, segment: "left", disabled: Boolean(state.live && this.repo?.error && !state.running),
+          hint: `${state.running ? "Pause intake; active work finishes" : state.live ? "Start an agent for each queued task, up to the parallel limit" : "Start dispatching queued work"} (Space)` }))
+      .when(primary, el => el.child(div().w(1).h(32).flex_none().flex().items_center().bg(t.accent).child(div().w(1).h(16).bg(t.accent_foreground).opacity(0.35))))
+      .child(this.button("schedule", next ? next.time : "Schedule", cx => this.open(this.drawer === "schedule" ? null : "schedule", cx), t,
+        { icon: "clock", iconOnly: !next, primary, segment: "right", selected: this.drawer === "schedule",
+          hint: next ? `${next.kind === "start" ? "Starts" : "Pauses intake"} every day at ${next.time}. Click to change the schedule` : state.schedule ? "Schedule: nothing more today until you start or pause by hand" : "Schedule a daily start and pause" }));
   }
 
   commands(state, t) {
@@ -491,8 +503,6 @@ export default class Pipeline extends View {
         .child(this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")))
       .when(!state.live, el => el.child(this.button("add", "Examples", cx => this.open(this.drawer === "picker" ? null : "picker", cx), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }))
         .child(this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", cx => this.open(this.drawer === "watch" ? null : "watch", cx), t, { icon: "eye", selected: state.watch })))
-      .child(this.button("schedule", this.scheduleLabel(state), cx => this.open(this.drawer === "schedule" ? null : "schedule", cx), t,
-        { icon: "clock", selected: this.drawer === "schedule" || Boolean(state.schedule), hint: "Start and pause the pipeline at set times every day" }))
       .child(this.button("parallel", `${state.parallel} parallel`, cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }))
       .when(!state.live, el => el.child(this.button("quota", `Quota ${state.quota}%`, cx => this.open(this.drawer === "quota" ? null : "quota", cx), t, { icon: "gauge", hint: "Example quota and reserve controls" })));
   }
@@ -824,10 +834,6 @@ export default class Pipeline extends View {
   upcoming(state) {
     const kind = state.running ? "pause" : "start", time = state.schedule?.[kind];
     return time ? { kind, time, at: nextScheduled({ schedule: { [kind]: time } }).at } : null;
-  }
-  scheduleLabel(state) {
-    const next = this.upcoming(state);
-    return next ? `${next.kind === "start" ? "Starts" : "Pauses"} ${next.time}` : state.schedule ? "Scheduled" : "Schedule";
   }
   schedule(body, state, t) {
     body.child(this.label(state.live ? "Every day at these times Pipeline starts the pipeline or pauses its intake for you, as the Start and Pause buttons do. Agents already working keep going after a pause."

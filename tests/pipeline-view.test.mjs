@@ -549,7 +549,10 @@ test("the Schedule drawer saves, rejects and clears daily times", () => {
   view.times.start.set_value("10pm"); view.times.start.emit("submit", cx);
   assert.deepEqual(view.state().schedule, { start: "22:00", pause: null });
   assert.equal(view.times.start.value(), "22:00");
-  assert.ok(find(view.render(cx), "schedule").nodes.includes("Starts 22:00"));
+  assert.ok(find(view.render(cx), "schedule").nodes.includes("22:00"), "the clock beside Start shows the next start");
+  click(view, "run");
+  assert.match(find(view.render(cx), "schedule").styles.tooltip[0], /Pauses intake|Schedule:/, "while running the clock shows the next pause, if any");
+  click(view, "run");
   view.times.pause.set_value("whenever"); view.times.pause.emit("blur", cx);
   assert.match(text(find(view.render(cx), "inspector")), /Use a time like/);
   view.times.pause.set_value("22:00"); view.times.pause.emit("submit", cx);
@@ -561,7 +564,7 @@ test("the Schedule drawer saves, rejects and clears daily times", () => {
   assert.deepEqual(view.state().schedule, { start: null, pause: "06:30" });
   click(view, "schedule-pause-clear");
   assert.equal(view.state().schedule, null);
-  assert.ok(find(view.render(cx), "schedule").nodes.includes("Schedule"));
+  assert.equal(text(find(view.render(cx), "schedule")).trim(), "", "with nothing scheduled the clock has no time beside it");
 });
 
 test("the Linear drawer filters by scope and project, watches only narrowed states, and queues full tickets", async () => {

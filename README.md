@@ -224,12 +224,13 @@ space).
 
 ### Schedule
 
-**Schedule** in the toolbar sets a daily **Start at** and **Pause intake at** time (22:00, 7:30
+The clock on the right half of the **Start pipeline** button opens the schedule, which sets a daily **Start at** and **Pause intake at** time (22:00, 7:30
 or 9pm), in Live and Simulation. When a time comes round, Pipeline does what the Start or
 Pause button does: a pause stops new work entering, and agents already working keep going.
 Either time can be left empty. Starting or pausing by hand still works; the schedule acts
 again at its next time. A time that already passed when you save it waits until tomorrow.
-The toolbar button shows the next time that changes anything (Starts 22:00, Pauses 07:00).
+The clock shows the next time that changes anything: beside Start pipeline the next start,
+beside Pause intake the next pause.
 Times are the computer's local time and need Herdr open; if Herdr was closed, the latest
 missed time applies when it opens.
 
