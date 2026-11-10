@@ -116,6 +116,36 @@ export const outstandingCount = state => outstanding(state).reduce((count, task)
 export const dependencies = (state, task) => task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done");
 export const needsInput = task => task.status === "input";
 export const needsApproval = task => task.status === "review" && task.delivery !== "direct" && task.repos.some(repo => !task.approvals.includes(repo));
+export function prNeeds(task) {
+  const status = task.pr?.status, target = task.workspace?.target ?? "the base branch";
+  if (!status) return { label: `PR #${task.pr?.number} open`, tone: "wait" };
+  if (status.draft) return { label: "Draft · mark it ready", tone: "wait" };
+  if (status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") return { label: `Conflicts with ${target}`, tone: "blocked" };
+  if (status.failed) return { label: `Checks failing · ${status.failed}`, tone: "blocked" };
+  if (status.review === "CHANGES_REQUESTED") return { label: "Changes requested", tone: "blocked" };
+  if (status.pending) return { label: `Checks running · ${status.pending}`, tone: "wait" };
+  if (status.review === "REVIEW_REQUIRED") return { label: "Waiting for review", tone: "wait" };
+  if (status.mergeState === "BEHIND") return { label: `Behind ${target}`, tone: "wait" };
+  if (status.mergeState === "BLOCKED") return { label: "Blocked by branch rules", tone: "wait" };
+  if (status.mergeState === "UNKNOWN") return { label: "GitHub is checking it", tone: "wait" };
+  return { label: "Ready to merge", tone: "ready" };
+}
+export function prChecklist(task) {
+  const status = task.pr?.status, target = task.workspace?.target ?? "the base branch";
+  if (!status) return [];
+  const failing = status.failing?.length ? `: ${status.failing.join(", ")}` : "";
+  const checks = status.failed ? { value: `${status.failed} failing${failing}`, tone: "blocked" }
+    : status.pending ? { value: `${status.pending} running${status.passed ? `, ${status.passed} passed` : ""}`, tone: "wait" }
+    : status.passed ? { value: `All ${status.passed} passed`, tone: "ready" } : { value: "None reported", tone: "ready" };
+  const review = { APPROVED: { value: "Approved", tone: "ready" }, CHANGES_REQUESTED: { value: "Changes requested", tone: "blocked" },
+    REVIEW_REQUIRED: { value: "Required, not given yet", tone: "wait" } }[status.review] ?? { value: "Not required", tone: "ready" };
+  const merge = status.draft ? { value: "Draft. Mark it ready for review on GitHub", tone: "wait" }
+    : status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY" ? { value: `Conflicts with ${target}`, tone: "blocked" }
+    : status.mergeState === "BEHIND" ? { value: `Behind ${target}. Update the branch`, tone: "wait" }
+    : status.mergeState === "BLOCKED" ? { value: "Blocked until branch rules are met", tone: "wait" }
+    : status.mergeState === "UNKNOWN" ? { value: "GitHub is still checking", tone: "wait" } : { value: `No conflicts with ${target}`, tone: "ready" };
+  return [{ name: "Checks", ...checks }, { name: "Review", ...review }, { name: "Merge", ...merge }];
+}
 export const quotaHeld = state => !state.live && state.quota - 8 < state.reserve;
 export function waitingReason(state, task) {
   const waits = dependencies(state, task);
@@ -499,6 +529,13 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "merging") return state;
       Object.assign(task, { status: "pr", merge: false, error: null, pr: { url: action.url, number: action.number } });
       event(next, `${task.id} · pull request #${action.number} opened. It finishes when it's merged on GitHub.`, task.id);
+      break;
+    }
+    case "prStatus": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "pr" || task.pr?.url !== action.url || !action.status) return state;
+      if (JSON.stringify(task.pr.status ?? null) === JSON.stringify(action.status)) return state;
+      task.pr = { ...task.pr, status: action.status };
       break;
     }
     case "prClosed": {

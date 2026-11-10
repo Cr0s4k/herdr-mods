@@ -213,9 +213,13 @@ task, so parallel agents never touch each other or your checkout.
    approve action becomes **Open PR**: Pipeline commits anything the agent left, pushes the
    branch to `origin` and runs `gh pr create` into the branch the worktree started from, with
    the task details, the ticket link and the check result in the description (a Plane or
-   Linear task's PR is titled with its key). The card then waits in its own state, **PR #12 open**, with a
-   link; Pipeline asks GitHub once a minute and finishes the task when the PR is merged (then
-   cleans up as above), or returns it to review if the PR is closed. Needs `gh`, signed in, and a GitHub
+   Linear task's PR is titled with its key). The card then moves to its own **Pull requests**
+   section under Review, with a link. Pipeline asks GitHub once a minute what the PR waits for and
+   puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
+   **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by
+   branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
+   merge state. The task finishes when the PR is merged (then cleans up as above), or returns to
+   review if the PR is closed. Needs `gh`, signed in, and a GitHub
    `origin`. An interrupted push or PR is safe to repeat: an open PR is reused. Turn on
    **Open pull requests automatically** to skip the approval: work that finishes with passing
    checks (or with no check set) is pushed straight away, and you review it on GitHub.

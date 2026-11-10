@@ -3,6 +3,7 @@ import { ACTIVE } from "./pipeline-model.js";
 export const CARD = { w: 164, h: 68, review: 78 };
 export const SUN = 55;
 export const RING = 86;
+export const PR_HEADER = 34;
 
 const random = seed => () => {
   seed = (seed + 0x6d2b79f5) | 0;
@@ -32,17 +33,26 @@ export function layoutScene(state, width, height) {
   const orbits = slotCount > 3 ? [inner, outer] : [inner];
 
   const queue = state.tasks.filter(task => task.status === "queued");
-  const review = state.tasks.filter(task => ["review", "merging", "pr", "failed"].includes(task.status));
+  const review = state.tasks.filter(task => ["review", "merging", "failed"].includes(task.status));
+  const prs = state.tasks.filter(task => task.status === "pr");
   const done = state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0));
   const queueFits = Math.max(2, Math.floor((h - 176) / 76) + 1);
-  const reviewFits = Math.max(2, Math.floor((h - 241) / 88) + 1);
-  const queueShown = queue.slice(0, queue.length > queueFits ? queueFits - 1 : queueFits);
-  const reviewShown = review.slice(0, review.length > reviewFits ? reviewFits - 1 : reviewFits);
+  const columnFits = Math.max(2, Math.floor((h - 241 - (prs.length ? PR_HEADER : 0)) / 88) + 1);
+  const prFits = !prs.length ? 0 : !review.length ? columnFits
+    : Math.max(1, Math.min(prs.length, columnFits - Math.min(review.length, Math.ceil(columnFits / 2))));
+  const reviewFits = columnFits - prFits;
+  const shown = (list, fits) => list.slice(0, list.length > fits && fits > 1 ? fits - 1 : fits);
+  const queueShown = shown(queue, queueFits);
+  const reviewShown = shown(review, reviewFits);
+  const prShown = shown(prs, prFits);
+  const reviewRows = Math.min(review.length, reviewFits);
+  const prTop = reviewRows ? 43 + reviewRows * 88 + 10 : 53;
+  const prY = i => prTop + PR_HEADER + CARD.review / 2 + i * 88;
   const lowest = slots.reduce((edge, slot) => slot.y > center.y ? Math.max(edge, slot.x + CARD.w / 2) : edge, center.x + SUN);
   const starFits = Math.max(1, Math.min(12, Math.floor((w - 44 - (lowest + 28)) / 30) + 1));
   const doneShown = done.slice(0, starFits);
   const wave = [0, 14, 5, 19, 9, 22, 3, 16, 7, 20, 11, 1];
-  const dock = { x: w - 112 - CARD.w / 2 - 22, y: 92 + ((Math.min(review.length, reviewFits) || 1) - 1) * 44 };
+  const dock = { x: w - 112 - CARD.w / 2 - 22, y: 92 + ((reviewRows || 1) - 1) * 44 };
 
   const nodes = [];
   for (const task of state.tasks) {
@@ -54,6 +64,7 @@ export function layoutScene(state, width, height) {
     }
     else if (ACTIVE.includes(task.status)) point = { ...slots[task.slot], kind: "card" };
     else if (reviewShown.includes(task)) point = { x: w - 112, y: 92 + reviewShown.indexOf(task) * 88, kind: "review" };
+    else if (prShown.includes(task)) point = { x: w - 112, y: prY(prShown.indexOf(task)), kind: "review" };
     else if (task.status === "done" && doneShown.includes(task)) {
       const i = doneShown.indexOf(task);
       point = { x: w - 44 - i * 30, y: h - 66 - wave[i % wave.length], kind: "star" };
@@ -67,5 +78,5 @@ export function layoutScene(state, width, height) {
     low: 0.12 + pick() * 0.2, high: 0.45 + pick() * 0.45, period: 2200 + Math.round(pick() * 4200),
   }));
 
-  return { w, h, center, slots, orbits, nodes, stars, dock, queue, review, done, queueShown, reviewShown, doneShown };
+  return { w, h, center, slots, orbits, nodes, stars, dock, queue, review, prs, done, queueShown, reviewShown, prShown, reviewFits, prFits, prTop, prY, doneShown };
 }

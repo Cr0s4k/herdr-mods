@@ -79,11 +79,38 @@ def publish(payload):
     return found
 
 
+FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+WAITING = {"PENDING", "EXPECTED"}
+
+
+def checks(rollup):
+    failing, pending, passed = [], 0, 0
+    for check in rollup or []:
+        if check.get("__typename") == "StatusContext":
+            result = check.get("state")
+            done = result not in WAITING
+        else:
+            result = check.get("conclusion")
+            done = check.get("status") == "COMPLETED"
+        if not done:
+            pending += 1
+        elif result in FAILED:
+            failing.append(check.get("name") or check.get("context") or "check")
+        else:
+            passed += 1
+    return {"failed": len(failing), "failing": failing[:5], "pending": pending, "passed": passed}
+
+
 def pr_state(payload):
-    viewed = gh(payload["root"], "pr", "view", payload["url"], "--json", "state")
+    fields = "state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
+    viewed = gh(payload["root"], "pr", "view", payload["url"], "--json", fields)
     if viewed.returncode:
         raise ValueError(viewed.stderr.strip() or "GitHub didn't answer about the pull request.")
-    return {"state": json.loads(viewed.stdout).get("state", "OPEN")}
+    pr = json.loads(viewed.stdout)
+    status = {"draft": bool(pr.get("isDraft")), "mergeable": pr.get("mergeable") or "UNKNOWN",
+              "mergeState": pr.get("mergeStateStatus") or "UNKNOWN", "review": pr.get("reviewDecision") or None,
+              **checks(pr.get("statusCheckRollup"))}
+    return {"state": pr.get("state", "OPEN"), "status": status}
 
 
 def remove(payload):

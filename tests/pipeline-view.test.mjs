@@ -241,6 +241,22 @@ test("the scene keeps slots, queue and review apart at the smallest canvas", () 
   }
 });
 
+test("open pull requests sit in their own section below review, inside the review column", () => {
+  const live = model.createLive({ id: "prs", cwd: "/r" }, 0);
+  for (const [width, height] of [[940, 420], [1100, 600], [1400, 900]]) for (const [reviews, prs] of [[0, 1], [1, 1], [4, 4], [0, 8], [8, 1]]) {
+    const tasks = [...Array.from({ length: reviews }, (_, i) => ({ id: `R-${i}`, status: "review" })), ...Array.from({ length: prs }, (_, i) => ({ id: `P-${i}`, status: "pr" }))]
+      .map(task => ({ ...task, title: task.id, repos: ["r"], approvals: [], depends: [], slot: null }));
+    const scene = geometry.layoutScene({ ...live, tasks }, width, height);
+    const cards = scene.nodes.filter(node => node.kind === "review");
+    assert.ok(scene.prShown.length >= 1, `${width}x${height} ${reviews}/${prs}: a PR is always on the canvas`);
+    if (reviews) assert.ok(scene.reviewShown.length >= 1, "review keeps a card");
+    for (const node of cards) assert.ok(node.y - 39 >= 53 && node.y + 39 <= scene.h - 90 && node.x === scene.w - 112, `${node.task.id} stays in the column`);
+    const lastReview = Math.max(0, ...cards.filter(node => node.task.status === "review").map(node => node.y + 39));
+    assert.ok(scene.prTop >= lastReview, "the PR header follows review");
+    for (const node of cards.filter(node => node.task.status === "pr")) assert.ok(node.y - 39 >= scene.prTop + 24, "PR cards sit under their header");
+  }
+});
+
 test("occupied higher slots keep their canvas width after lowering concurrency", () => {
   let state = model.createPipeline({ id: "slots" }, 0);
   for (const action of [{ type: "parallel", value: 6 }, { type: "reviewLimit", value: 10 }, { type: "add", ids: ["DEMO-106", "DEMO-108"] }, { type: "run" }]) state = model.reduce(state, action, 0);
@@ -529,9 +545,24 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.ok(find(scene, "approve-all").nodes.includes("Open 1 PR"));
   assert.match(text(find(scene, "card-T-2")), /PR #12 open/);
   assert.ok(find(scene, "pr-T-2"));
+  assert.match(text(find(scene, "pr-list")), /Pull requests · 1/);
+  assert.ok(find(scene, "node-T-2").styles.top[0] > find(scene, "node-T-1").styles.top[0], "the open PR sits below review");
   assert.match(text(find(scene, "status")), /Opens pull requests into main/);
   view.inspect("T-2", cx);
   assert.ok(find(view.render(cx), "pr-link-T-2"));
+  assert.match(text(find(view.render(cx), "inspector")), /Asking GitHub what it waits for/);
+  view.act({ type: "prStatus", id: "T-2", url: "https://github.com/me/shop/pull/12",
+    status: { draft: false, mergeable: "MERGEABLE", mergeState: "BLOCKED", review: "REVIEW_REQUIRED", failed: 1, failing: ["test"], pending: 0, passed: 2 } }, cx);
+  const waiting = view.render(cx);
+  assert.match(text(find(waiting, "card-T-2")), /Checks failing · 1/);
+  assert.match(text(find(waiting, "pr-checks-T-2")), /1 failing: test/);
+  assert.match(text(find(waiting, "pr-review-T-2")), /Required, not given yet/);
+  assert.match(text(find(waiting, "pr-merge-T-2")), /Blocked until branch rules are met/);
+  click(view, "pr-list");
+  assert.equal(view.drawer, "prs");
+  assert.ok(find(view.render(cx), "row-T-2"));
+  assert.equal(find(view.render(cx), "row-T-1"), undefined, "tasks waiting for you stay in Review");
+  view.inspect("T-2", cx);
   assert.equal(find(view.render(cx), "discard-T-2"), undefined, "an open PR is closed on GitHub, not discarded");
   click(view, "approve-T-1");
   assert.match(text(find(view.render(cx), "card-T-1")), /Opening PR/);

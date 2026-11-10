@@ -49,17 +49,18 @@ export const fixRequest = (command, output) => ["The check command failed after 
 export class LiveRunner {
   constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); }
 
-  // Open pull requests are asked about once a minute; merging on GitHub finishes the task.
+  // Open pull requests are asked about once a minute: what they wait for, and whether GitHub merged or closed them.
   watchPullRequest(id, state, task, cx) {
     const key = `pr/${id}/${task.id}`, now = this.host.now();
     if (this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < 60000) return;
     this.polled.set(key, now); this.polling.add(key);
     cx.spawn(async () => {
       try {
-        const { state: github } = await this.host.delivery(state.context, { op: "pr_state", root: state.context.cwd, url: task.pr.url });
+        const { state: github, status } = await this.host.delivery(state.context, { op: "pr_state", root: state.context.cwd, url: task.pr.url });
         const now = this.task(id, task.id);
         if (now?.status !== "pr" || now.pr?.url !== task.pr.url) return;
-        if (github === "MERGED") {
+        if (github === "OPEN" && status) this.apply(id, { type: "prStatus", id: task.id, url: task.pr.url, status });
+        else if (github === "MERGED") {
           this.apply(id, { type: "merged", id: task.id, target: `${task.workspace?.target ?? "the base branch"} on GitHub (#${task.pr.number})` });
           try { await this.clean(state.context, now, true); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
           this.apply(id, { type: "cleaned", id: task.id });

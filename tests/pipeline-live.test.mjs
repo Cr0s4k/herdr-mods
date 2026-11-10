@@ -489,6 +489,45 @@ test("a merged PR finishes the task and cleans up; a closed one returns it to re
   assert.deepEqual([back.status, back.pr, back.error], ["review", null, "Pull request #12 was closed without merging."]);
 });
 
+test("an open PR keeps what it waits for from GitHub, without rewriting state when nothing changed", async () => {
+  const waiting = { draft: false, mergeable: "MERGEABLE", mergeState: "BLOCKED", review: "REVIEW_REQUIRED", failed: 1, failing: ["test"], pending: 0, passed: 3 };
+  let github = { state: "OPEN", status: waiting };
+  const world = prHost(() => github);
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.clock(1000); await settle(runner);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.pr.status], ["pr", waiting]);
+  assert.equal(model.prNeeds(task).label, "Checks failing · 1");
+  const before = world.state();
+  github = { state: "OPEN", status: { ...waiting } };
+  world.clock(62000); await settle(runner);
+  assert.equal(world.state(), before, "the same answer leaves the store alone");
+  github = { state: "OPEN", status: { ...waiting, failed: 0, failing: [], passed: 4, review: "APPROVED", mergeState: "CLEAN" } };
+  world.clock(123000); await settle(runner);
+  assert.equal(model.prNeeds(row(world.state(), "T-1")).label, "Ready to merge");
+  assert.equal(reduce(world.state(), { type: "prStatus", id: "T-1", url: "https://github.com/me/shop/pull/99", status: waiting }, 0), world.state(), "another PR's answer is ignored");
+});
+
+test("a PR's most pressing need comes first", () => {
+  const needs = status => model.prNeeds({ pr: { number: 3, status: status && { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 0, ...status } }, workspace: { target: "main" } });
+  assert.deepEqual(needs(null), { label: "PR #3 open", tone: "wait" });
+  assert.equal(needs({ draft: true, failed: 2 }).label, "Draft · mark it ready");
+  assert.deepEqual(needs({ mergeable: "CONFLICTING", failed: 2 }), { label: "Conflicts with main", tone: "blocked" });
+  assert.equal(needs({ failed: 2, review: "CHANGES_REQUESTED" }).label, "Checks failing · 2");
+  assert.equal(needs({ review: "CHANGES_REQUESTED", pending: 1 }).label, "Changes requested");
+  assert.equal(needs({ pending: 2, review: "REVIEW_REQUIRED" }).label, "Checks running · 2");
+  assert.equal(needs({ review: "REVIEW_REQUIRED", mergeState: "BLOCKED" }).label, "Waiting for review");
+  assert.equal(needs({ mergeState: "BEHIND" }).label, "Behind main");
+  assert.equal(needs({ mergeState: "BLOCKED" }).label, "Blocked by branch rules");
+  assert.equal(needs({ mergeState: "UNKNOWN" }).label, "GitHub is checking it");
+  assert.deepEqual(needs({ review: "APPROVED", passed: 4 }), { label: "Ready to merge", tone: "ready" });
+  const list = model.prChecklist({ pr: { status: { draft: false, mergeable: "MERGEABLE", mergeState: "BEHIND", review: "APPROVED", failed: 1, failing: ["lint"], pending: 0, passed: 2 } }, workspace: { target: "main" } });
+  assert.deepEqual(list.map(item => [item.name, item.value, item.tone]), [["Checks", "1 failing: lint", "blocked"], ["Review", "Approved", "ready"], ["Merge", "Behind main. Update the branch", "wait"]]);
+});
+
 test("a refused publish stays in review with gh's reason", async () => {
   const world = prHost();
   world.host.delivery = async (_context, payload) => { if (payload.op === "publish") throw new Error("The GitHub CLI (gh) isn't installed here."); return {}; };
