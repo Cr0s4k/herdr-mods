@@ -27,10 +27,30 @@ export default class WorkspaceStatus extends View {
     });
   }
 
+  runSync(args, label, cx) {
+    const { folder, on } = where();
+    if (!folder || this.syncing) return;
+    this.syncing = label; this.error = null;
+    cx.spawn(async cx => {
+      try {
+        const r = await remoteGit(args, folder, on, 120000);
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop());
+      } catch (e) {
+        const error = this.error = `${label} failed: ${e.message ?? e}`;
+        cx.timer.after(15000, cx => { if (this.error === error) { this.error = null; cx.notify(); } });
+      } finally { this.syncing = null; this.check(cx, false); cx.notify(); }
+    });
+    cx.notify();
+  }
+
   counts(t) {
+    if (this.syncing) return div().text_color(t.dim).child(`${this.syncing === "Pull" ? "Pulling" : "Pushing"}…`);
     const { ahead, behind } = this.sync;
-    return div().id("branch-sync").flex().gap(6).cursor_pointer().text_color(t.foreground).on_click((_e, cx) => this.check(cx, true))
-      .when(behind > 0, el => el.child(`↓${behind}`)).when(ahead > 0, el => el.child(`↑${ahead}`));
+    const count = (id, text, args, label) => div().id(id).px(4).rounded(4).cursor_pointer().hover(s => s.bg(t.hover))
+      .on_click((_e, cx) => this.runSync(args, label, cx)).child(text);
+    return h_flex().gap(2).text_color(t.foreground)
+      .when(behind > 0, el => el.child(count("branch-pull", `↓${behind}`, ["pull"], "Pull")))
+      .when(ahead > 0 && !this.sync.gone, el => el.child(count("branch-push", `↑${ahead}`, ["push"], "Push")));
   }
 
   // The palette key as actually bound, not a hardcoded one; without a
@@ -54,7 +74,8 @@ export default class WorkspaceStatus extends View {
     return h_flex().size_full().px(14).gap(16).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
       .child(label(space?.machine ? "server" : "monitor", space?.machine ?? "This computer"))
       .when(Boolean(space?.branch), el => el.child(label("branch", space.branch)))
-      .when(Boolean(this.sync?.ahead || this.sync?.behind), el => el.child(this.counts(t)))
+      .when(Boolean(this.syncing || this.sync?.ahead || this.sync?.behind), el => el.child(this.counts(t)))
+      .when(Boolean(this.error), el => el.child(div().min_w(0).truncate().text_color(t.ansi1).child(this.error)))
       .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
         .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
       .child(div().flex_1())

@@ -69,8 +69,8 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
   with no upstream shows **Publish** (`git push -u origin HEAD`). Pull runs plain `git pull`, so
   your `pull.rebase` setting applies; failures show in red above the bar.
   The bottom status bar shows the same counts beside the space's branch (`main ↑2 ↓1`), only when
-  there is something to push or pull. It checks every 10 seconds, fetches every 3 minutes, and
-  clicking the counts fetches now.
+  there is something to push or pull. Click **↓N** to pull or **↑N** to push; a failure shows in
+  red beside them for a few seconds. It checks every 10 seconds and fetches every 3 minutes.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
