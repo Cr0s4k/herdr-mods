@@ -1,18 +1,22 @@
 // A deterministic simulation. This module never starts agents, changes tickets or runs Git.
 export const STORE = "pipeline.prototype.v1";
-export const ACTIVE = ["routing", "working", "testing"];
-export const MOVING = [...ACTIVE, "merging"];
+export const VERSION = 3;
+export const ACTIVE = ["routing", "working", "input", "testing"];
+export const MOVING = ["routing", "working", "testing", "merging"];
 export const DURATION = { routing: 2200, working: 9500, testing: 5500, merging: 3500 };
 export const SPEEDS = [1, 2, 4];
 export const REPOS = ["api", "web", "contracts", "docs"];
-export const LABELS = { backlog: "Backlog", queued: "Queued", routing: "Entering pipeline", working: "Implementing", testing: "Running checks", review: "Awaiting approval", merging: "Merging", done: "Done", failed: "Checks failed" };
+export const LABELS = { backlog: "Backlog", queued: "Queued", routing: "Entering pipeline", working: "Implementing", input: "Needs your input", testing: "Running checks", review: "Awaiting approval", merging: "Merging", done: "Done", failed: "Checks failed" };
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
   { id: "DEMO-102", title: "Build the checkout endpoint", repos: ["api"], priority: 3, depends: ["DEMO-101"], column: "Ready", description: "Implement the checkout endpoint against the shared contract. Cover validation and idempotency before creating the pull request." },
-  { id: "DEMO-103", title: "Connect the checkout screen", repos: ["web", "api"], priority: 2, depends: ["DEMO-102"], column: "Ready", description: "Connect the checkout form to the new endpoint and handle the success response across the web and API repositories." },
-  { id: "DEMO-104", title: "Cover the empty cart state", repos: ["web"], priority: 2, depends: [], column: "Ready", description: "Add the empty cart screen, keyboard navigation and an accessible path back to browsing. This can run independently of the API work." },
+  { id: "DEMO-103", title: "Connect the checkout screen", repos: ["web", "api"], priority: 2, depends: ["DEMO-102"], column: "Ready", description: "Connect the checkout form to the new endpoint and handle the success response across the web and API repositories.",
+    question: { text: "When a card is declined, should checkout keep the cart or clear it?", options: ["Keep the cart", "Clear the cart"] } },
+  { id: "DEMO-104", title: "Cover the empty cart state", repos: ["web"], priority: 2, depends: [], column: "Ready", description: "Add the empty cart screen, keyboard navigation and an accessible path back to browsing. This can run independently of the API work.",
+    question: { text: "The empty cart can link back to the home page or to recently viewed products. Which should it show?", options: ["Home page", "Recently viewed products"] } },
   { id: "DEMO-105", title: "Document local development", repos: ["docs"], priority: 1, depends: [], column: "Ready", description: "Document how to run the repositories together and add a troubleshooting guide for local setup." },
-  { id: "DEMO-106", title: "Add request tracing", repos: ["api"], priority: 2, depends: [], column: "Backlog", description: "Add request identifiers and structured tracing around checkout calls. Include tests for propagation between services." },
+  { id: "DEMO-106", title: "Add request tracing", repos: ["api"], priority: 2, depends: [], column: "Backlog", description: "Add request identifiers and structured tracing around checkout calls. Include tests for propagation between services.",
+    question: { text: "Tracing every request adds about 2% latency. Trace all requests, or one in ten?", options: ["All requests", "One in ten"] } },
   { id: "DEMO-107", title: "Improve order confirmation", repos: ["web"], priority: 1, depends: ["DEMO-103"], column: "Backlog", description: "Show a useful order summary after checkout. Wait for the connected checkout screen to land first." },
   { id: "DEMO-108", title: "Refresh repository setup guides", repos: ["docs", "contracts"], priority: 1, depends: [], column: "Backlog", description: "Keep setup instructions and schema generation examples aligned across the documentation and contracts repositories." },
 ];
@@ -24,6 +28,11 @@ const EXAMPLES = [
   ["Validate addresses at checkout", ["contracts", "api", "web"]], ["Trim unused web dependencies", ["web"]],
   ["Explain the deploy pipeline", ["docs"]], ["Paginate the orders endpoint", ["api"]],
 ];
+const QUESTIONS = [
+  { text: "Two approaches pass the checks. Keep the change small, or refactor the module first?", options: ["Keep it small", "Refactor first"] },
+  { text: "An existing test contradicts the task description. Update the test, or follow it?", options: ["Update the test", "Follow the test"] },
+  { text: "This needs a new dependency. Add it, or write the helper by hand?", options: ["Add the dependency", "Write it by hand"] },
+];
 const HINTS = [
   ["contracts", /\b(schemas?|contracts?|types?|protocol|openapi)\b/i],
   ["api", /\b(api|endpoints?|server|backend|database|db|auth|login|webhooks?|queue|cache|payments?)\b/i],
@@ -31,23 +40,27 @@ const HINTS = [
   ["docs", /\b(docs?|document(ation)?|readme|guides?|tutorial|changelog)\b/i],
 ];
 
-const fresh = (item, status, source) => ({ ...item, repos: [...item.repos], depends: [...item.depends], status, source, slot: null, since: 0, approvals: [], attempts: 0 });
+const ask = question => question ? { text: question.text, options: [...question.options] } : null;
+const fresh = (item, status, source) => ({ ...item, repos: [...item.repos], depends: [...item.depends], question: ask(item.question), answer: null, held: null,
+  status, source, slot: null, since: 0, approvals: [], attempts: 0 });
 
 export function createPipeline(context, now = Date.now()) {
-  return { version: 2, context, running: false, watch: false, column: "Ready", parallel: 3, reviewLimit: 5, delivery: "pr", quota: 72, reserve: 15, speed: 1,
-    lastTick: now, sequence: 0, created: 0, generated: 0, failNext: false, events: [], plan: "Ready. Start the pipeline and the planner picks independent work first.",
+  return { version: VERSION, context, running: false, watch: false, column: "Ready", parallel: 3, reviewLimit: 5, delivery: "pr", quota: 72, reserve: 15, speed: 1,
+    lastTick: now, sequence: 0, created: 0, generated: 0, failNext: false, askNext: false, events: [], plan: "Ready. Start the pipeline and the planner picks independent work first.",
     tasks: CATALOG.map((item, index) => fresh(item, index < 5 ? "queued" : "backlog", index < 5 ? "Picked" : null)) };
 }
 
 export function migrate(state, now = Date.now()) {
-  if (!state || state.version === 2) return state;
-  if (state.version !== 1 || !Array.isArray(state.tasks)) return createPipeline(state.context ?? {}, now);
-  return { ...state, version: 2, speed: 1, created: 0, generated: 0, lastTick: now,
-    tasks: state.tasks.map(({ elapsed = 0, ...task }) => ({ ...task, since: now - elapsed })) };
+  if (!state || state.version === VERSION) return state;
+  if (![1, 2].includes(state.version) || !Array.isArray(state.tasks)) return createPipeline(state.context ?? {}, now);
+  const questions = new Map(CATALOG.map(item => [item.id, item.question]));
+  return { ...state, version: VERSION, speed: state.speed ?? 1, created: state.created ?? 0, generated: state.generated ?? 0, askNext: false, lastTick: now,
+    tasks: state.tasks.map(({ elapsed = 0, ...task }) => ({ ...task, since: task.since ?? now - elapsed,
+      question: task.question ?? ask(questions.get(task.id)), answer: task.answer ?? null, held: task.held ?? null })) };
 }
 
 export const duration = (state, status) => (DURATION[status] ?? 0) / (state.speed || 1);
-export const progress = (state, task, now = Date.now()) => MOVING.includes(task.status)
+export const progress = (state, task, now = Date.now()) => task.status === "input" ? task.held ?? 0 : MOVING.includes(task.status)
   ? Math.max(0, Math.min(1, (now - task.since) / duration(state, task.status))) : 0;
 
 function event(state, message, task = null) {
@@ -57,6 +70,7 @@ export const activeTasks = state => state.tasks.filter(task => ACTIVE.includes(t
 export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "review", "merging"].includes(task.status));
 export const outstandingCount = state => outstanding(state).reduce((count, task) => count + task.repos.length, 0);
 export const dependencies = (state, task) => task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done");
+export const needsInput = task => task.status === "input";
 export const needsApproval = task => task.status === "review" && task.delivery !== "direct" && task.repos.some(repo => !task.approvals.includes(repo));
 export const quotaHeld = state => state.quota - 8 < state.reserve;
 export function waitingReason(state, task) {
@@ -114,8 +128,10 @@ function explain(state, picked) {
   const held = queued.filter(task => dependencies(state, task).length);
   const ready = queued.filter(task => !dependencies(state, task).length);
   const reviews = state.tasks.filter(needsApproval).length;
+  const asking = state.tasks.filter(needsInput).map(task => task.id);
   const holding = held.length ? ` Holding ${held.map(task => task.id).join(", ")} until ${held.length === 1 ? "its dependency merges" : "their dependencies merge"}.` : "";
   if (picked.length) return `Launched ${picked.join(" + ")} by priority.${holding || " They can proceed independently."}`;
+  if (asking.length) return `${asking.join(", ")} ${asking.length === 1 ? "is paused until you answer. Its slot stays" : "are paused until you answer. Their slots stay"} reserved.`;
   if (!state.running) return outstanding(state).length ? "Intake paused. Active work and approved merges can finish." : "Ready. Start the pipeline and the planner picks independent work first.";
   if (ready.length && quotaHeld(state)) return `Holding new work to protect your quota reserve. Reset the example quota to resume.${holding}`;
   if (ready.length) return `${ready[0].id}: ${waitingReason(state, ready[0])}.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} awaiting your approval.` : ""}${holding}`;
@@ -151,7 +167,7 @@ export function reduce(state, action, now = Date.now()) {
         const n = next.generated ?? 0, [title, repos] = EXAMPLES[n % EXAMPLES.length];
         next.generated = n + 1;
         const id = `DEMO-${109 + n}`;
-        next.tasks.push(fresh({ id, title, repos, priority: 1 + (n % 3), depends: [], column: next.column,
+        next.tasks.push(fresh({ id, title, repos, priority: 1 + (n % 3), depends: [], column: next.column, question: n % 3 === 1 ? QUESTIONS[n % QUESTIONS.length] : null,
           description: "An example task generated by the simulation." }, "backlog", null));
         ids.push(id);
       }
@@ -191,6 +207,14 @@ export function reduce(state, action, now = Date.now()) {
     case "quota": next.quota = Math.max(0, Math.min(100, Number(action.value) || 0)); break;
     case "reserve": next.reserve = Math.max(0, Math.min(50, Number(action.value) || 0)); break;
     case "fail": next.failNext = true; event(next, "The next example check will fail."); break;
+    case "ask": next.askNext = true; event(next, "The next working task will ask you a question."); break;
+    case "answer": {
+      const task = row(action.id), value = String(action.value ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      if (task?.status !== "input" || !value) return state;
+      task.status = "working"; task.answer = value; task.since = now - (task.held ?? 0.5) * duration(next, "working"); task.held = null;
+      event(next, `${task.id} · you answered “${value}”. Back to work.`, task.id);
+      break;
+    }
     case "approve": if (!approve(next, row(action.id), action.repo ? [action.repo] : row(action.id)?.repos ?? [])) return state; break;
     case "approveAll": if (!next.tasks.reduce((count, task) => count + approve(next, task, task.repos), 0)) return state; break;
     case "retry":
@@ -208,8 +232,15 @@ export function reduce(state, action, now = Date.now()) {
       const pause = Math.max(0, Number(action.pause) || 0);
       const moving = next.tasks.filter(task => MOVING.includes(task.status));
       for (const task of moving) task.since += pause;
-      const due = moving.filter(task => now - task.since >= duration(next, task.status));
-      if (!due.length && !(pause && moving.length)) return state;
+      let asked = 0;
+      for (const task of moving.filter(task => task.status === "working" && !task.answer && now - task.since >= duration(next, "working") / 2)) {
+        if (!task.question && next.askNext) { task.question = ask(QUESTIONS[next.sequence % QUESTIONS.length]); next.askNext = false; }
+        if (!task.question) continue;
+        task.held = Math.min(1, (now - task.since) / duration(next, "working")); task.status = "input"; asked++;
+        event(next, `${task.id} needs you · ${task.question.text}`, task.id);
+      }
+      const due = moving.filter(task => MOVING.includes(task.status) && now - task.since >= duration(next, task.status));
+      if (!due.length && !asked && !(pause && moving.length)) return state;
       for (const task of due) advance(next, task, now);
       break;
     }

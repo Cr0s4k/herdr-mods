@@ -115,12 +115,12 @@ Object.assign(globalThis.__reviewNative, {
   theme: () => new Proxy({}, { get: (_, key) => key }),
   BriefTracker: class { start() {} observe() {} },
   LaunchTracker: class { start() {} },
-  PipelineTracker: class { start() {} },
+  PipelineTracker: class { start() {} }, PIPELINES: "pipeline.prototype.v1",
   ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -199,4 +199,15 @@ test("Pipeline opens as a mod-only tab and focuses an existing view without dupl
   world.calls = [];
   find(tabs.render(), "open-pipeline").handlers.click({}, cx);
   assert.deepEqual(world.calls, [["tab.select", { id: "pipeline-tab" }], ["pane.focus", { pane: "pipeline-pane" }]]);
+});
+
+test("the Pipeline button counts simulated tasks waiting for an answer", () => {
+  const tabs = setupTabs();
+  assert.doesNotMatch(text(find(tabs.render(), "open-pipeline")), /Needs you/);
+  preferences.set("pipeline.prototype.v1", {
+    a: { tasks: [{ id: "A", status: "input" }, { id: "B", status: "working" }] },
+    b: { tasks: [{ id: "C", status: "input" }] },
+  });
+  try { assert.match(text(find(tabs.render(), "open-pipeline")), /Needs you 2/); }
+  finally { preferences.delete("pipeline.prototype.v1"); }
 });

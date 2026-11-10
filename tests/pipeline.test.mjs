@@ -4,10 +4,15 @@ import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8");
 const model = await import(`data:text/javascript,${encodeURIComponent(source)}`);
-const { createPipeline, reduce, activeTasks, outstanding, waitingReason, migrate, progress, guessRepos, needsApproval } = model;
+const { createPipeline, reduce, activeTasks, outstanding, waitingReason, migrate, progress, guessRepos, needsApproval, needsInput, VERSION } = model;
 const context = { id: "project", name: "Project", cwd: "/project", on: null };
 let clock = 0;
-const fresh = () => { clock = 0; return createPipeline(context, 0); };
+const fresh = ({ questions = false } = {}) => {
+  clock = 0;
+  const state = createPipeline(context, 0);
+  if (!questions) state.tasks.forEach(task => { task.question = null; });
+  return state;
+};
 const act = (state, action) => reduce(state, action, clock);
 const tick = (state, count = 1) => {
   for (let i = 0; i < count; i++) { clock += 1000; state = reduce(state, { type: "tick" }, clock); }
@@ -217,16 +222,18 @@ test("saved version 1 pipelines migrate their elapsed time", () => {
   legacy.tasks = legacy.tasks.map(({ since, ...task }) => ({ ...task, elapsed: task.id === "DEMO-101" ? 4000 : 0 }));
   row(legacy, "DEMO-101").status = "working";
   const state = migrate(legacy, 10000);
-  assert.equal(state.version, 2);
+  assert.equal(state.version, VERSION);
   assert.equal(row(state, "DEMO-101").since, 6000);
   assert.ok(!("elapsed" in row(state, "DEMO-101")));
   assert.equal(migrate(state, 20000), state);
 });
 
 async function tracker(values) {
-  globalThis.__pipelineTracker = { ...model, shared: key => values.get(key), setShared: (key, value) => { values.set(key, value); values.writes = (values.writes ?? 0) + 1; } };
+  values.toasts = [];
+  globalThis.__pipelineTracker = { ...model, shared: key => values.get(key), setShared: (key, value) => { values.set(key, value); values.writes = (values.writes ?? 0) + 1; },
+    notify: toast => values.toasts.push(toast), panes: () => values.panes ?? [], focused: () => values.focused ?? null };
   const trackerSource = (await readFile(new URL("../mods/pipeline/tracker.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-  const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, MOVING, reduce, migrate } = globalThis.__pipelineTracker;\nconst shared = key => globalThis.__pipelineTracker.shared(key), setShared = (key, value) => globalThis.__pipelineTracker.setShared(key, value);\n${trackerSource}`)}`);
+  const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, MOVING, reduce, migrate } = globalThis.__pipelineTracker;\nconst { shared, setShared, notify, panes, focused } = Object.fromEntries(["shared", "setShared", "notify", "panes", "focused"].map(name => [name, (...args) => globalThis.__pipelineTracker[name](...args)]));\n${trackerSource}`)}`);
   const callbacks = [];
   const host = { timer: { every: (_ms, fn) => callbacks.push(fn) } };
   new PipelineTracker().start(host); new PipelineTracker().start(host);
@@ -268,7 +275,72 @@ test("the tracker migrates a saved version 1 pipeline once", async () => {
   const original = Date.now;
   try {
     Date.now = () => 5000; callbacks[0](); callbacks[0]();
-    assert.equal(values.get("pipeline.prototype.v1").project.version, 2);
+    assert.equal(values.get("pipeline.prototype.v1").project.version, VERSION);
     assert.equal(values.writes, 1);
+  } finally { Date.now = original; }
+});
+
+test("a task with a question pauses halfway through work, keeps its slot and resumes where it stopped", () => {
+  let state = tick(act(fresh({ questions: true }), { type: "run" }), 7);
+  assert.equal(row(state, "DEMO-104").status, "input");
+  assert.ok(Math.abs(row(state, "DEMO-104").held - 0.5) < 0.06);
+  assert.equal(row(state, "DEMO-104").slot, 1);
+  assert.match(state.plan, /DEMO-104 is paused until you answer/);
+  assert.match(state.events[0].message, /DEMO-104 needs you · The empty cart/);
+  const waiting = tick(state, 30);
+  assert.equal(row(waiting, "DEMO-104").status, "input", "it waits as long as it takes");
+  assert.equal(activeTasks(waiting).length, 1, "the waiting task still holds its slot");
+  assert.equal(reduce(waiting, { type: "tick" }, clock + 5000), waiting, "a waiting pipeline writes nothing");
+  assert.equal(act(waiting, { type: "answer", id: "DEMO-104", value: "  " }), waiting);
+  assert.equal(act(waiting, { type: "answer", id: "DEMO-101", value: "Yes" }), waiting);
+  state = act(waiting, { type: "answer", id: "DEMO-104", value: "Recently viewed products" });
+  const task = row(state, "DEMO-104");
+  assert.deepEqual([task.status, task.answer, task.held], ["working", "Recently viewed products", null]);
+  assert.ok(Math.abs(progress(state, task, clock) - 0.5) < 0.06);
+  assert.match(state.events[0].message, /you answered “Recently viewed products”/);
+  state = tick(state, 5);
+  assert.equal(row(state, "DEMO-104").status, "testing", "an answered task does not ask again");
+});
+
+test("Simulate a question makes the next working task ask, once", () => {
+  let state = act(fresh(), { type: "ask" });
+  state = tick(act(state, { type: "run" }), 7);
+  assert.equal(state.tasks.filter(needsInput).length, 1);
+  assert.equal(state.askNext, false);
+  assert.ok(state.tasks.find(needsInput).question.options.length >= 2);
+});
+
+test("speed changes leave a waiting task's progress alone", () => {
+  let state = tick(act(fresh({ questions: true }), { type: "run" }), 7);
+  const held = row(state, "DEMO-104").held;
+  state = act(state, { type: "speed", value: 4 });
+  assert.equal(progress(state, row(state, "DEMO-104"), clock), held);
+});
+
+test("saved version 2 pipelines gain the example questions", () => {
+  const old = { ...createPipeline(context, 0), version: 2 };
+  old.tasks = old.tasks.map(({ question, answer, held, ...task }) => task);
+  const state = migrate(old, 5000);
+  assert.equal(state.version, VERSION);
+  assert.match(row(state, "DEMO-104").question.text, /empty cart/);
+  assert.equal(row(state, "DEMO-101").question, null);
+});
+
+test("the tracker raises one toast per new question, unless a Pipeline view has focus", async () => {
+  const values = new Map([["pipeline.prototype.v1", { project: act(fresh({ questions: true }), { type: "run" }) }]]);
+  const callbacks = await tracker(values);
+  const original = Date.now;
+  try {
+    for (let now = 1000; now <= 9000; now += 1000) { Date.now = () => now; callbacks[0](); }
+    assert.equal(values.toasts.length, 1);
+    assert.deepEqual([values.toasts[0].title, values.toasts[0].action.name], ["DEMO-104 needs your input", "tabs-show.pipeline"]);
+    Date.now = () => 10000; callbacks[0]();
+    assert.equal(values.toasts.length, 1, "still waiting is not news");
+    const quiet = new Map([["pipeline.prototype.v1", { project: act(fresh({ questions: true }), { type: "run" }) }]]);
+    quiet.panes = [{ pane: "p1", mod: "pipeline" }]; quiet.focused = { pane: "p1" };
+    const watched = await tracker(quiet);
+    for (let now = 1000; now <= 9000; now += 1000) { Date.now = () => now; watched[0](); }
+    assert.equal(quiet.toasts.length, 0);
+    assert.equal(quiet.get("pipeline.prototype.v1").project.tasks.find(needsInput).id, "DEMO-104");
   } finally { Date.now = original; }
 });

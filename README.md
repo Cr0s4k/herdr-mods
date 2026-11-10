@@ -172,8 +172,17 @@ strip (Y). Merged tasks become stars in the completed constellation. Dependencie
 for their prerequisite changes to merge, and the plan above the planner says why anything
 waits. Failed checks get **Retry** on the card or **Retry N failed** (R).
 
-Keys, with the scene focused: Space start/pause, N new task, A examples, Y approve all,
-R retry failed, S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
+Some example tasks stop halfway through implementing to ask you a question, the way a real
+agent waits for input: the card shows **Needs you** and keeps its slot, the toolbar's
+**Pipeline** button shows **Needs you N**, and a toast appears unless Pipeline already has
+focus (click it to open Pipeline). **Answer** on the card, **Answer N questions** in the
+status strip, or Q opens the question; pick an option (or press its number) or type your
+own answer, and the task resumes where it stopped and the next question opens. Settings
+has **Simulate a question** to make the next working task ask. Real agents will appear in
+the sidebar on their own once Pipeline launches them; this only simulates that moment.
+
+Keys, with the scene focused: Space start/pause, N new task, A examples, Q answer,
+Y approve all, R retry failed, S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
 **PR approval** in the status strip switches to **Auto-merge** (merge after checks).
 Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,
 the animation toggle and **Reset example pipeline**. **Quota** simulates exhaustion and

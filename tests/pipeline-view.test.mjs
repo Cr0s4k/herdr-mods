@@ -224,3 +224,44 @@ test("painted root bounds are normalized for app zoom before positioning review"
   assert.ok(Math.abs(view.size.width - 1000) < 0.01);
   assert.ok(Math.abs(view.size.height - 800) < 0.01);
 });
+
+function asking(view, id = "DEMO-104", slot = 1) {
+  const task = row(view, id); task.status = "input"; task.slot = slot; task.held = 0.5; task.since = 0;
+}
+
+test("a waiting task shows Needs you, and the card's Answer opens its question", () => {
+  const view = setup();
+  view.act({ type: "run" }, cx); asking(view);
+  const scene = view.render(cx);
+  assert.ok(find(scene, "halo-DEMO-104"), "the card pulses for attention");
+  assert.equal(findAll(scene, "bar-DEMO-104").length, 0, "progress is paused");
+  assert.ok(find(scene, "answer-next"), "the status strip offers the question");
+  click(view, "answer-DEMO-104");
+  assert.deepEqual([view.drawer, view.selected], ["task", "DEMO-104"]);
+  click(view, "choice-DEMO-104-1");
+  assert.deepEqual([row(view, "DEMO-104").status, row(view, "DEMO-104").answer], ["working", "Recently viewed products"]);
+  assert.equal(find(view.render(cx), "answer-next"), undefined);
+});
+
+test("questions can be answered with a number key, a typed reply, or Q to jump between them", () => {
+  const view = setup();
+  view.act({ type: "run" }, cx); asking(view); asking(view, "DEMO-103", 2);
+  press(view, "q");
+  assert.equal(view.selected, "DEMO-103");
+  press(view, "1");
+  assert.equal(row(view, "DEMO-103").answer, "Keep the cart");
+  assert.equal(view.selected, "DEMO-104", "the next question opens");
+  view.reply.set_value("Show both, home page first");
+  click(view, "reply-DEMO-104");
+  assert.equal(row(view, "DEMO-104").answer, "Show both, home page first");
+  assert.equal(view.reply.value(), "");
+  press(view, "1");
+  assert.equal(row(view, "DEMO-104").status, "working", "digits do nothing without a question");
+});
+
+test("Settings can make the next working task ask a question", () => {
+  const view = setup();
+  click(view, "settings"); click(view, "ask");
+  assert.equal(view.state().askNext, true);
+  assert.equal(find(view.render(cx), "ask").styles.disabled[0], true);
+});

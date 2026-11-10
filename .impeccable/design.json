@@ -47,7 +47,7 @@
         "border": "Thin boundaries, dividers, connection paths and dashed planner orbit.",
         "hover": "Pointer feedback.",
         "selected": "Persistent selection fill.",
-        "blocked": "Failure and quota wait in Pipeline.",
+        "blocked": "Failure, quota wait and tasks waiting for your answer in Pipeline; the Needs you pill uses it at 15% behind blocked text.",
         "ansi2": "Completed task state in Pipeline.",
         "ansi5": "Review and merging states in Pipeline.",
         "working": "Existing workspace working status.",

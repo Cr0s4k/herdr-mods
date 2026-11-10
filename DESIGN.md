@@ -101,7 +101,7 @@ The palette follows the active Herdr theme. Obtain `t = theme()` during render a
 
 ### State roles
 
-Pipeline binds queued tasks to `t.muted`, active tasks to `t.accent`, review and merging to `t.ansi5`, completed tasks to `t.ansi2`, and failures to `t.blocked`. Its quota-wait indicator also uses `t.blocked`. These are host bindings, not a new palette; `ansi2` and `ansi5` can change with the theme. Existing panels also use host status roles such as `t.working` and `t.done` in their own contexts.
+Pipeline binds queued tasks to `t.muted`, active tasks to `t.accent`, review and merging to `t.ansi5`, completed tasks to `t.ansi2`, and failures and tasks waiting for your answer to `t.blocked`. A waiting task's **Needs you** pill matches the sidebar's: `t.blocked` text on `t.blocked` at 15% (`"26"` alpha), 10.5 semibold. Its quota-wait indicator also uses `t.blocked`. These are host bindings, not a new palette; `ansi2` and `ansi5` can change with the theme. Existing panels also use host status roles such as `t.working` and `t.done` in their own contexts.
 
 **The Native Theme Rule.** Resolve colors from Herdr at render time; preserve semantic foreground/background pairs instead of freezing a screenshot's palette.
 
@@ -180,9 +180,11 @@ Task nodes combine an identifier and repository line, medium task title and expl
 
 Inspector task rows use the pipeline-task-row measurements, grow to fit their contents and live in a vertically scrolling body. Their selected state uses selected fill and an accent border, with a check in the picker. Queue preview limits never limit access to the full queue.
 
-The inspector uses a bordered surface, a fixed header with a close action, and a shrinkable scrolling body. Closing it returns focus to the scene handle. Escape closes the inspector or leaves the New task field. With the scene handle focused, Space toggles intake, N focuses New task, A opens example tasks, Y approves everything waiting, R retries failed tasks and S cycles speed (1×, 2×, 4×). Shortcuts only fire from the scene handle, so they never interfere with native text editing. The New task field keeps focus after Enter, so several tasks can be typed in a row.
+The inspector uses a bordered surface, a fixed header with a close action, and a shrinkable scrolling body. Closing it returns focus to the scene handle. Escape closes the inspector or leaves the New task field. With the scene handle focused, Space toggles intake, N focuses New task, A opens example tasks, Q opens the next question, Y approves everything waiting, R retries failed tasks and S cycles speed (1×, 2×, 4×). Shortcuts only fire from the scene handle, so they never interfere with native text editing. The New task field keeps focus after Enter, so several tasks can be typed in a row.
 
-The status strip shows Approve N tasks and Retry N failed only while there is something to act on, beside a PR approval / Auto-merge toggle.
+The status strip shows Answer N questions, Approve N tasks and Retry N failed only while there is something to act on, beside a PR approval / Auto-merge toggle.
+
+A task waiting for input keeps its slot as a taller card (78) with the Needs you pill, a pulsing `t.blocked` halo, a paused bar and an Answer action. Its inspector leads with the question in a `t.blocked` outlined block: numbered options as full-width actions (number keys choose them while the scene handle has focus), then a field for a typed answer and Send. Answering resumes the task from where it paused and opens the next question, if any. The workspace tab bar's Pipeline action shows a Needs you count across all pipelines, and the tracker raises one warning toast per new question unless a Pipeline view has focus.
 
 ### Pipeline planner and motion
 

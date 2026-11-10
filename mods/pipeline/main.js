@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState } from "gpui-base";
 import { shared, setShared, theme, props, exec, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 
 const CHROME = 50 + 46 + 36 + 32;
@@ -10,7 +10,7 @@ const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "w
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const stateColor = (task, t) => task.status === "failed" ? t.blocked : task.status === "done" ? t.ansi2
+const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.blocked : task.status === "done" ? t.ansi2
   : ["review", "merging"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
 function cardStatus(state, task) {
   if (task.status === "queued") {
@@ -18,6 +18,7 @@ function cardStatus(state, task) {
     if (waits.length) return `Needs ${waits.join(", ")}`;
     return { "Ready for the planner": "Next up", "Waiting for a work slot": "Waiting for a slot", "Waiting for quota above the reserve": "Held by quota reserve", "Outstanding PR limit reached": "Held by PR limit", "Intake paused": "Queued · intake paused" }[waitingReason(state, task)] ?? "Queued";
   }
+  if (task.status === "input") return "Needs you";
   if (ACTIVE.includes(task.status)) return `${LABELS[task.status]} · slot ${task.slot + 1}`;
   if (needsApproval(task)) {
     const left = task.repos.filter(repo => !task.approvals.includes(repo)).length;
@@ -40,10 +41,13 @@ export default class Pipeline extends View {
     this.title = InputState.new({ placeholder: "New task: type a title and press Enter" });
     this.title.on("change", (_e, cx) => cx.notify());
     this.title.on("submit", (_e, cx) => this.create(cx));
+    this.reply = InputState.new({ placeholder: "Or type your own answer" });
+    this.reply.on("change", (_e, cx) => cx.notify());
+    this.reply.on("submit", (_e, cx) => this.answer(this.selected, this.reply.value(), cx));
     this.motion = localStorage.getItem("motion") !== "false";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
-    if (saved?.version !== 2) setShared(STORE, { ...all, [this.id]: saved ? migrate(saved) : createPipeline(this.context) });
+    if (saved?.version !== VERSION) setShared(STORE, { ...all, [this.id]: saved ? migrate(saved) : createPipeline(this.context) });
     if (appWindow()?.platform === "macos") cx.spawn(async cx => {
       try {
         const result = await exec("defaults", ["read", "com.apple.universalaccess", "reduceMotion"]);
@@ -59,13 +63,14 @@ export default class Pipeline extends View {
         else if (command === "new") { this.title.focus(); cx.notify(); }
         else if (command === "approve") this.act({ type: "approveAll" }, cx);
         else if (command === "retry") this.act({ type: "retry" }, cx);
+        else if (command === "answer") this.nextQuestion(cx);
         else if (DRAWERS.includes(command)) this.open(command, cx);
         else if (command === "close") this.open(null, cx);
       }
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.handle.release(); }
   state() { return shared(STORE)?.[this.id]; }
   act(action, cx) {
     const all = shared(STORE) ?? {}, state = all[this.id];
@@ -80,6 +85,17 @@ export default class Pipeline extends View {
     cx.notify();
   }
   inspect(id, cx) { this.selected = id; this.drawer = "task"; cx.notify(); }
+  nextQuestion(cx) {
+    const task = this.state()?.tasks.find(needsInput);
+    if (task) { this.inspect(task.id, cx); this.handle.focus(); }
+  }
+  answer(id, value, cx) {
+    if (!id || !String(value ?? "").trim()) return;
+    this.act({ type: "answer", id, value }, cx);
+    this.reply.set_value("");
+    const next = this.state()?.tasks.find(needsInput);
+    if (next) this.inspect(next.id, cx); else this.handle.focus();
+  }
   create(cx) {
     const title = this.title.value().trim();
     if (!title) { this.handle.focus(); cx.notify(); return; }
@@ -121,12 +137,13 @@ export default class Pipeline extends View {
       queued: state.tasks.filter(task => task.status === "queued").length,
       approvals: state.tasks.filter(needsApproval).length,
       failed: state.tasks.filter(task => task.status === "failed").length,
+      questions: state.tasks.filter(needsInput).length,
       done: state.tasks.filter(task => task.status === "done").length,
     };
     const held = state.running && info.queued > 0 && quotaHeld(state);
-    info.status = !state.running ? (info.active ? "Intake paused · finishing active work" : "Paused")
+    info.status = info.questions ? `Waiting for your answer` : !state.running ? (info.active ? "Intake paused · finishing active work" : "Paused")
       : held ? "Waiting for quota" : info.active ? "Pipeline running" : info.approvals ? "Waiting for your approval" : info.queued ? "Waiting" : "Watching for work";
-    info.color = held || info.failed ? t.blocked : state.running ? t.accent : t.muted;
+    info.color = held || info.failed || info.questions ? t.blocked : state.running ? t.accent : t.muted;
     const narrow = this.size.width < 820;
     const root = v_flex().id("pipeline-root").size_full().min_w(0).min_h(0).bg(t.canvas).text_color(t.foreground).text_size(13)
       .track_focus(this.handle)
@@ -163,9 +180,12 @@ export default class Pipeline extends View {
       a: () => this.open("picker", cx),
       y: () => this.act({ type: "approveAll" }, cx),
       r: () => this.act({ type: "retry" }, cx),
+      q: () => this.nextQuestion(cx),
       s: () => this.speed(cx),
     };
-    const action = actions[e.keystroke];
+    const asked = this.drawer === "task" ? this.state()?.tasks.find(task => task.id === this.selected && needsInput(task)) : null;
+    const option = asked?.question.options[Number(e.keystroke) - 1];
+    const action = option ? () => this.answer(asked.id, option, cx) : actions[e.keystroke];
     if (action) { action(); cx.stop_propagation(); }
   }
 
@@ -204,6 +224,8 @@ export default class Pipeline extends View {
       .child(div().flex_none().child(`${info.queued} queued`))
       .child(div().flex_none().child(`${info.done} done`))
       .child(div().flex_1())
+      .when(info.questions > 0, el => el.child(this.button("answer-next", `Answer ${count(info.questions, "question")}`, cx => this.nextQuestion(cx), t,
+        { icon: "question", primary: true, small: true, hint: "Open the next question waiting for you (Q)" })))
       .when(info.approvals > 0, el => el.child(this.button("approve-all", `Approve ${count(info.approvals, "task")}`, cx => this.act({ type: "approveAll" }, cx), t,
         { icon: "check", primary: true, small: true, hint: "Approve every PR waiting for you (Y)" })))
       .when(info.failed > 0, el => el.child(this.button("retry-all", `Retry ${info.failed} failed`, cx => this.act({ type: "retry" }, cx), t,
@@ -221,7 +243,7 @@ export default class Pipeline extends View {
         .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
         .on_click((_e, cx) => this.open(this.drawer === "activity" ? null : "activity", cx))
         .child(div().min_w(0).truncate().child(latest?.message ?? "Start the pipeline to watch your first tasks enter.")))
-      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child("Space start · N new · A examples · Y approve · R retry · S speed")));
+      .when(this.size.width > 900, el => el.child(div().text_color(t.muted).flex_none().child("Space start · N new · A examples · Q answer · Y approve · R retry · S speed")));
   }
 
   bar(task, state, width, color, motion, now, cx) {
@@ -274,7 +296,7 @@ export default class Pipeline extends View {
     if (!g.queueShown.length) link([30 + CARD.w, c.y, c.x - SUN, c.y], false);
     g.slots.forEach((slot, i) => {
       const task = state.tasks.find(row => ACTIVE.includes(row.status) && row.slot === i);
-      link([c.x + SUN, c.y, slot.x - CARD.w / 2, slot.y], Boolean(task), task && task.status !== "testing" && { key: `dispatch-${i}`, color: t.accent });
+      link([c.x + SUN, c.y, slot.x - CARD.w / 2, slot.y], Boolean(task), ["routing", "working"].includes(task?.status) && { key: `dispatch-${i}`, color: t.accent });
       link([slot.x + CARD.w / 2, slot.y, g.dock.x, g.dock.y], task?.status === "testing", task?.status === "testing" && { key: `checks-${i}`, color: t.ansi5 });
     });
     for (const task of g.reviewShown) {
@@ -344,7 +366,8 @@ export default class Pipeline extends View {
   }
 
   node({ task, x, y, kind }, state, t, motion, now, cx, newest) {
-    const [w, h] = { card: [CARD.w, CARD.h], review: [CARD.w, CARD.review], comet: [18, 18], star: [16, 16] }[kind];
+    const asking = needsInput(task);
+    const [w, h] = asking ? [CARD.w, CARD.review] : { card: [CARD.w, CARD.h], review: [CARD.w, CARD.review], comet: [18, 18], star: [16, 16] }[kind];
     const color = stateColor(task, t), selected = this.drawer === "task" && this.selected === task.id;
     const round = kind === "comet" || kind === "star";
     let wrap = div().id(`pipeline-node-${task.id}`).absolute().left(x - w / 2).top(y - h / 2).w(w).h(h);
@@ -352,13 +375,13 @@ export default class Pipeline extends View {
       .transition("width", { duration: 450, easing: "ease-out" }).transition("height", { duration: 450, easing: "ease-out" });
     if (kind === "comet") wrap.child(div().id(`pipeline-glow-${task.id}`).absolute().left(-7).top(-7).size(32).rounded(16).bg(t.accent).opacity(0.25)
       .when(motion, el => el.loop("opacity", { from: 0.08, to: 0.45, period: 900 })));
-    if (kind === "review" && needsApproval(task)) wrap.child(div().id(`pipeline-halo-${task.id}`).absolute().left(-4).top(-4).w(w + 8).h(h + 8).rounded(12)
-      .border_1().border_color(t.ansi5).opacity(0.5).when(motion, el => el.loop("opacity", { from: 0.15, to: 0.85, period: 1800 })));
+    if (asking || (kind === "review" && needsApproval(task))) wrap.child(div().id(`pipeline-halo-${task.id}`).absolute().left(-4).top(-4).w(w + 8).h(h + 8).rounded(12)
+      .border_1().border_color(asking ? t.blocked : t.ansi5).opacity(0.5).when(motion, el => el.loop("opacity", { from: 0.15, to: 0.85, period: 1800 })));
     if (kind === "star" && newest) wrap.child(div().id(`pipeline-nova-${task.id}`).absolute().left(-6).top(-6).size(28).rounded(14).border_1().border_color(t.ansi2)
       .opacity(0.5).when(motion, el => el.loop("opacity", { from: 0.1, to: 0.8, period: 2400 })));
     const card = Button.new(`pipeline-card-${task.id}`).size_full().rounded(round ? h / 2 : 9)
       .bg(kind === "comet" ? t.accent : kind === "star" ? t.canvas : selected ? t.selected : t.surface)
-      .border_1().border_color(selected ? t.accent : task.status === "failed" ? t.blocked : kind === "star" ? t.canvas : kind === "comet" ? t.accent : t.border)
+      .border_1().border_color(selected ? t.accent : ["failed", "input"].includes(task.status) ? t.blocked : kind === "star" ? t.canvas : kind === "comet" ? t.accent : t.border)
       .text_color(t.foreground).text_size(12).tab_index(0).flex().items_center().justify_center()
       .accessibility_label(`${task.id}: ${task.title}. ${LABELS[task.status]}. ${task.repos.join(", ")}`)
       .tooltip(task.status === "queued" ? `${task.title}\n${waitingReason(state, task)}` : `${task.title}\n${LABELS[task.status]}`)
@@ -367,18 +390,20 @@ export default class Pipeline extends View {
     if (kind === "star") card.child(div().id(`pipeline-twinkle-${task.id}`).size(newest ? 9 : 7).rounded(5).bg(color)
       .when(motion, el => el.loop("opacity", { from: 0.55, to: 1, period: 1800 + (task.finished ?? 0) % 7 * 300 })));
     else if (kind !== "comet") {
-      const busy = ACTIVE.includes(task.status) && motion;
-      card.child(v_flex().size_full().p(kind === "review" ? 9 : 10).gap(4)
+      const busy = ACTIVE.includes(task.status) && !asking && motion;
+      card.child(v_flex().size_full().p(kind === "review" || asking ? 9 : 10).gap(4)
         .child(h_flex().gap(6).items_center()
           .child(busy ? svg("mods/pipeline/satellite.svg").id(`pipeline-sat-${task.id}`).size(11).flex_none().text_color(color).spin(task.status === "testing" ? 800 : 1500) : dot(color))
           .child(div().text_size(10).font_medium().text_color(t.muted).flex_none().child(task.id))
           .child(div().flex_1())
           .child(div().text_size(10).text_color(t.muted).truncate().child(task.repos.join(" + "))))
         .child(div().text_size(12).font_medium().truncate().child(task.title))
-        .child(div().text_size(10).text_color(task.status === "failed" ? t.blocked : t.muted).truncate().when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
+        .child(asking
+          ? h_flex().child(div().px(6).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(10.5).font_semibold().flex().items_center().child(cardStatus(state, task)))
+          : div().text_size(10).text_color(task.status === "failed" ? t.blocked : t.muted).truncate().when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
-    if (ACTIVE.includes(task.status) && kind === "card") wrap.child(div().absolute().left(10).bottom(6).w(CARD.w - 20).h(2).rounded(1).bg(t.raised)
+    if (ACTIVE.includes(task.status) && kind === "card" && !asking) wrap.child(div().absolute().left(10).bottom(6).w(CARD.w - 20).h(2).rounded(1).bg(t.raised)
       .child(this.bar(task, state, CARD.w - 20, t.accent, motion, now, cx)));
     if (task.status === "merging" && kind === "review") wrap.child(div().absolute().left(9).bottom(6).w(CARD.w - 18).h(2).rounded(1).bg(t.raised)
       .child(this.bar(task, state, CARD.w - 18, t.ansi2, motion, now, cx)));
@@ -387,6 +412,8 @@ export default class Pipeline extends View {
       wrap.child(this.button(`approve-${task.id}`, left > 1 ? `Approve ${left}` : "Approve", cx => this.act({ type: "approve", id: task.id }, cx), t,
         { icon: "check", primary: true, small: true, hint: `Approve ${task.id}'s ${count(left, "PR")}` }).absolute().right(8).bottom(8));
     }
+    if (asking) wrap.child(this.button(`answer-${task.id}`, "Answer", cx => { this.inspect(task.id, cx); this.handle.focus(); }, t,
+      { icon: "question", primary: true, small: true, hint: task.question?.text ?? "Answer the agent" }).absolute().right(8).bottom(8));
     if (kind === "review" && task.status === "failed") wrap.child(this.button(`retry-${task.id}`, "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t,
       { icon: "reset", small: true, hint: `Return ${task.id} to the queue` }).absolute().right(8).bottom(8));
     return wrap;
@@ -466,6 +493,7 @@ export default class Pipeline extends View {
     body.child(this.heading("Simulation speed"));
     body.child(h_flex().gap(8).children(SPEEDS.map(value => this.button(`speed-${value}`, `${value}×`, cx => this.act({ type: "speed", value }, cx), t, { selected: state.speed === value }))));
     body.child(div().h(1).bg(t.border));
+    body.child(this.button("ask", state.askNext ? "Next working task will ask" : "Simulate a question", cx => this.act({ type: "ask" }, cx), t, { disabled: state.askNext, icon: "question" }));
     body.child(this.button("fail-check", state.failNext ? "Next check will fail" : "Simulate a failed check", cx => this.act({ type: "fail" }, cx), t, { disabled: state.failNext }));
     body.child(this.button("motion-setting", this.motion ? "Turn animation off" : "Turn animation on", cx => this.toggleMotion(cx), t));
     body.child(this.button("reset", "Reset example pipeline", cx => { this.act({ type: "reset" }, cx); this.picked.clear(); this.selected = null; }, t, { icon: "reset" }));
@@ -494,6 +522,16 @@ export default class Pipeline extends View {
     if (!task) { body.child(this.label("Select a task in the scene.", t)); return; }
     body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
     body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(LABELS[task.status])));
+    if (needsInput(task)) body.child(v_flex().gap(10).p(12).rounded(8).border_1().border_color(t.blocked).bg(t.blocked + "14")
+      .child(h_flex().gap(6).items_center().child(icon("question", 14).text_color(t.blocked))
+        .child(div().text_size(12).font_semibold().text_color(t.blocked).child(`${task.id} is paused until you answer`)))
+      .child(div().text_size(13).line_height(1.45).child(task.question.text))
+      .children(task.question.options.map((option, i) => this.button(`choice-${task.id}-${i}`, `${i + 1}  ${option}`, cx => this.answer(task.id, option, cx), t,
+        { hint: `Answer “${option}” (${i + 1})` }).w_full().justify_start()))
+      .child(h_flex().gap(6).items_center()
+        .child(Input.new(this.reply).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Your own answer"))
+        .child(this.button(`reply-${task.id}`, "Send", cx => this.answer(task.id, this.reply.value(), cx), t, { disabled: !this.reply.value().trim(), hint: "Send your answer (Enter)" }))));
+    else if (task.answer) body.child(this.label(`You answered: “${task.answer}”`, t));
     body.child(div().text_size(12).line_height(1.5).text_color(t.muted).child(task.description));
     if (["queued", "backlog"].includes(task.status)) {
       body.child(this.heading("Repositories"));
