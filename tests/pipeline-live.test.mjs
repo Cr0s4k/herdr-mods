@@ -1166,3 +1166,106 @@ test("a start interrupted after its worktree was planned retries with the same b
   assert.equal(task.status, "working");
   assert.equal(task.workspaces.shop.base, "b".repeat(40), "the adopted worktree keeps the commit it started from");
 });
+
+test("a task marked to start first goes ahead of the queue, whatever its priority", () => {
+  let state = typed("One", "Two", "Three");
+  state = reduce(state, { type: "first", id: "T-3" }, 0);
+  assert.deepEqual(model.queueOrder(state).map(task => task.id), ["T-3", "T-1", "T-2"]);
+  state = reduce(state, { type: "first", id: "T-2" }, 0);
+  assert.deepEqual(model.queueOrder(state).map(task => task.id), ["T-2", "T-3", "T-1"], "the last one marked goes first");
+  assert.equal(reduce(state, { type: "first", id: "T-2", value: true }, 0), state);
+  state = reduce(state, { type: "first", id: "T-2" }, 0);
+  assert.deepEqual(model.queueOrder(state).map(task => task.id), ["T-3", "T-1", "T-2"]);
+  state = reduce(state, { type: "run" }, 0);
+  assert.deepEqual(activeTasks(state).map(task => task.id).sort(), ["T-1", "T-3"]);
+  assert.equal(row(state, "T-3").rank, 0, "a started task gives its place back");
+});
+
+test("a task's own model and effort win over the agent's setting when it starts", async () => {
+  let state = reduce(typed("Write the docs", "Rework billing"), { type: "tune", key: "claude", model: "opus", effort: "high" }, 0);
+  state = reduce(state, { type: "tuneTask", id: "T-1", key: "claude", model: "haiku" }, 0);
+  assert.deepEqual(row(state, "T-1").tune, { model: "haiku", effort: null });
+  assert.deepEqual(model.taskTuning(state, row(state, "T-1"), "claude"), { model: "haiku", effort: "high" }, "what the task leaves unset follows the setting");
+  assert.equal(reduce(state, { type: "tuneTask", id: "T-1", key: "claude", effort: "enormous" }, 0), state, "an unknown effort is refused");
+  const world = host(reduce(state, { type: "run" }, 0));
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  await step(runner);
+  assert.deepEqual(world.started.map(start => start.run), [["claude", "--model", "haiku", "--effort", "high"], ["claude", "--model", "opus", "--effort", "high"]]);
+  assert.equal(row(world.state(), "T-1").tuning, "haiku · high effort");
+  state = reduce(state, { type: "tuneTask", id: "T-1", key: "claude", model: null }, 0);
+  assert.equal(row(state, "T-1").tune, null);
+});
+
+test("Pipeline announces what Herdr doesn't: failed checks, refused merges, pull requests and checked work", () => {
+  const base = typed("One");
+  const at = (patch, extra = {}) => ({ ...base, ...extra, tasks: [{ ...base.tasks[0], ...patch }] });
+  const notices = (before, after) => model.liveNotices(before, after).map(notice => [notice.title, notice.level]);
+  assert.deepEqual(notices(at({ status: "testing" }), at({ status: "failed", reason: "checks" })), [["T-1 checks failed", "error"]]);
+  assert.deepEqual(notices(at({ status: "working" }), at({ status: "failed", error: "Its terminal closed." })), [["T-1 stopped", "error"]]);
+  assert.deepEqual(notices(at({ status: "merging" }), at({ status: "review", error: "The branch conflicts with main." })), [["T-1 not merged", "error"]]);
+  assert.equal(model.liveNotices(at({ status: "merging" }), at({ status: "review", error: "The branch conflicts with main." }))[0].body, "The branch conflicts with main.");
+  assert.deepEqual(notices(at({ status: "testing" }), at({ status: "review" })), [["T-1 is ready for review", "success"]]);
+  assert.deepEqual(notices(at({ status: "working" }), at({ status: "review" })), [], "Herdr already says an agent finished");
+  assert.deepEqual(notices(at({ status: "working" }), at({ status: "input" })), [], "and that an agent asks");
+  assert.deepEqual(notices(at({ status: "working" }), at({ status: "input", reason: "trust" })), [["T-1 asks to trust its worktree", "warning"]]);
+  assert.deepEqual(notices(at({ status: "testing" }), at({ status: "review", approvals: ["shop"] })), [], "approved work needs nobody");
+  const pr = status => ({ status: "pr", prs: { shop: { url: "u", number: 4, status } } });
+  assert.deepEqual(notices(at(pr({ pending: 2 })), at(pr({ failed: 1 }))), [["T-1 pull request · checks failing · 1", "warning"]]);
+  assert.deepEqual(notices(at(pr({ pending: 2 })), at(pr({}))), [["T-1 pull request · ready to merge", "success"]]);
+  assert.deepEqual(notices(at(pr({ pending: 2 })), at(pr({ pending: 1 }))), []);
+  assert.deepEqual(notices(at(pr({})), at({ status: "done" })), [["T-1 merged on GitHub", "success"]]);
+  assert.deepEqual(notices(at({ status: "merging" }), at({ status: "done" })), [], "a merge you asked for needs no notice");
+  assert.deepEqual(notices(at({ status: "merging" }), at({ status: "done" }, { autoMerge: true })), [["T-1 merged", "success"]]);
+  assert.deepEqual(notices(at({ status: "testing" }), at({ status: "failed", reason: "checks" }, { quiet: true })), [], "Notify me off silences them");
+});
+
+test("the runner hands each notice to the host as the change lands", async () => {
+  let state = reduce(reduce(typed("One"), { type: "check", command: "npm test" }, 0), { type: "run" }, 0);
+  const said = [], world = host(state, { announce: (_id, notice) => said.push(notice.title), check: async () => ({ code: 1, output: "1 failing" }) });
+  world.store[id] = reduce(world.store[id], { type: "check", fix: false }, 0);
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.agents = [{ address: "t9", status: "working" }]; await step(runner);
+  world.agents = [{ address: "t9", status: "done" }]; await step(runner);
+  let job;
+  runner.step({ spawn: fn => { job = fn({ sleep: async () => {} }); } });
+  await job;
+  assert.equal(row(world.state(), "T-1").status, "failed");
+  assert.deepEqual(said, ["T-1 checks failed"]);
+});
+
+test("a refused merge can go back to its agent to rebase, which clears the refusal", () => {
+  let state = typed("One");
+  state = { ...state, tasks: [{ ...state.tasks[0], status: "review", error: "The branch conflicts with main.", approvals: [], workspaces: { shop: { root: "/wt", cwd: "/wt", branch: "b", base: "a", target: "main" } } }] };
+  const next = reduce(state, { type: "resolving", id: "T-1" }, 0);
+  assert.equal(row(next, "T-1").error, null);
+  assert.match(next.events[0].message, /asked its agent to rebase onto main/);
+  assert.equal(reduce(next, { type: "resolving", id: "T-1" }, 0), next, "nothing to resolve without a refusal");
+  assert.match(live.rebaseRequest("main", "The branch conflicts with main."), /refused:\nThe branch conflicts with main\.\n\nRebase this branch onto main/);
+});
+
+test("changed files come from git's own lists, with new files the agent hasn't committed", () => {
+  const files = live.changedFiles("M\0src/a.js\0A\0docs/new file.md\0D\0old.txt\0", "3\t1\tsrc/a.js\x0012\t0\tdocs/new file.md\x000\t7\told.txt\x00-\t-\tlogo.png\0", "?? notes.md\0 M src/a.js\0");
+  assert.deepEqual(files, [
+    { path: "src/a.js", status: "M", fresh: false, add: 3, del: 1, binary: false },
+    { path: "docs/new file.md", status: "A", fresh: false, add: 12, del: 0, binary: false },
+    { path: "old.txt", status: "D", fresh: false, add: 0, del: 7, binary: false },
+    { path: "notes.md", status: "A", fresh: true, add: 0, del: 0 },
+  ]);
+  assert.deepEqual(live.changedFiles("", "", ""), []);
+  assert.deepEqual(live.changedFiles(undefined, undefined, undefined), []);
+});
+
+test("a task remembers when its agent got it and how long the work took", () => {
+  let state = reduce(typed("One"), { type: "run" }, 60000);
+  assert.equal(row(state, "T-1").began, 60000);
+  assert.equal(model.timing(row(state, "T-1"), 120000), null, "nothing to say while it starts");
+  state = { ...state, tasks: [{ ...state.tasks[0], status: "working" }] };
+  assert.equal(model.timing(row(state, "T-1"), 60000 + 12 * 60000), "12 min");
+  state = { ...state, tasks: [{ ...state.tasks[0], status: "merging", merge: true }] };
+  state = reduce(state, { type: "merged", id: "T-1", target: "main" }, 60000 + 75 * 60000);
+  assert.equal(row(state, "T-1").ended, 60000 + 75 * 60000);
+  assert.equal(model.timing(row(state, "T-1")), "took 1 h 15 min");
+  assert.deepEqual([model.elapsed(20000), model.elapsed(3600000)], ["under a minute", "1 h"]);
+});

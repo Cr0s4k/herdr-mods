@@ -3,6 +3,7 @@ import { STORE, MOVING, reduce, migrate } from "./pipeline-model.js";
 import { LiveRunner, prompt } from "./pipeline-live.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
+const watching = () => panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline";
 const scripts = {};
 async function python(file, context, payload) {
   scripts[file] ??= await readTextFile(`${appHome()}/mods/${file}`);
@@ -17,6 +18,7 @@ async function python(file, context, payload) {
 
 export const liveHost = {
   shared, setShared, agents, terminals, panes, run, now: () => Date.now(),
+  announce: (_id, notice) => { if (!watching()) notify({ title: notice.title, body: notice.body, level: notice.level, action: { name: "tabs-show.pipeline" } }); },
   knownAgents: context => knownAgents({ on: context.on }),
   tickets: readTickets, describe: fullTickets, blockers: ticketBlockers, updateTicket,
   read: async terminal => { const result = await hc(["read", terminal, "--lines", "40"]); return result.code === 0 ? result.stdout : ""; },
@@ -91,7 +93,7 @@ export class PipelineTracker {
     if (after.live) return;
     const was = new Map((before?.tasks ?? []).map(task => [task.id, task.status]));
     const asking = after.tasks.filter(task => task.status === "input" && was.get(task.id) !== "input");
-    if (!asking.length || panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline") return;
+    if (!asking.length || watching()) return;
     for (const task of asking) notify({ title: `${task.id} needs your input`, body: task.question?.text, level: "warning", action: { name: "tabs-show.pipeline" } });
   }
 }

@@ -42,6 +42,18 @@ Pipeline writes to a tracker only when `ticketUpdates[provider]` (`start` and `m
 
 Both writes read the ticket first and do nothing when it already has the state or the link. Plane: `update_state` GETs `work-items/<id>/` and PATCHes `{state}`; `add_link` lists `work-items/<id>/links/` and POSTs `{url, title}` if the URL is missing. Plane's `call` reports a write it could not confirm as `uncertain`, and nothing follows it. Linear: `update_state` reads `get_issue` `status` and calls `save_issue {id, state}`; `add_link` reads `get_issue` `attachments` and calls `save_issue {id, links: [{url, title}]}`. `herdr-linear` allows exactly those two `save_issue` argument sets (`WRITES`) besides its read tools. A 403 or a tool error about permission or scope on a write, or a Claude login only for the read-only MCP endpoint, is `write_access` ("Pipeline needs write access to Linear…"), and the inspector offers the API key connect flow; a 5xx or lost connection on a write is `uncertain`. Agents are still told not to change a ticket's status or assignee.
 
+### Review, order and notices
+
+The review inspector lists a task's changed files per worktree (`changedFiles` in `pipeline-live.js`, from `git diff <base> --name-status` and `--numstat` plus untracked files from `git status`, all with `-z`; `base` is the worktree's start commit, so later merges into the target never show up as the task's work). A file opens the `changes-modal` dialog with `props.base`, which makes its viewer diff against that commit instead of `HEAD`; nothing else in that clone changes. The list is read once per task status (`peekAt`), and again on demand.
+
+The queue starts, and is drawn, in `queueOrder`: `task.rank` (set by `first`, the highest last-marked, cleared when the task starts), then priority, then id. `task.tune` (`{model, effort}`, set by `tuneTask` on a queued task) overrides the agent's `tuning` per field through `taskTuning`, which `agentRun` and the launch's tuning label use.
+
+`task.began` is set when a task first enters a slot and `task.ended` when it is done; `timing` turns them into the card's elapsed time and the completed row's duration. Tasks saved before this have neither and show nothing.
+
+`liveNotices(before, after)` lists what a change should announce: checks failed, stopped, a trust prompt, a refused merge or pull request, a closed or merged pull request, a pull request whose need turns ready or blocked, checked work ready for review, and an automatic merge. An agent that asks or finishes is left to Herdr's own notification. `LiveRunner.apply` hands each to `host.announce`, which posts it unless a Pipeline pane has focus; `state.quiet` (`quiet` action, Notify me) silences them. A merge refused for a conflict offers `rebaseRequest` to the agent (`resolve` in the view, then `resolving`, which clears the refusal); the agent working again moves the card as any feedback does.
+
+Task cards are 164 wide below 1320 px of window width, 188 up to 1500 and 212 beyond (`cardWidth`, from the window rather than the scene, so opening the inspector never resizes them).
+
 ## Next milestone
 
 Pull requests on hosts other than GitHub.

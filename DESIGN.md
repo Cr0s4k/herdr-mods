@@ -198,11 +198,11 @@ The central planner combines an accent outline and icon with a title, brief stat
 
 All motion is native; the script never renders frames.
 
-- Node transitions move `left` and `top` over 850 ms `ease-in-out` and resize over 450 ms `ease-out`: a task appears as a comet on the planner orbit, launches into its slot as a card, docks in review and shrinks into a star.
+- Node transitions move `left` and `top` over 620 ms `ease-in-out` and resize over 320 ms `ease-out`: a task appears as a comet on the planner orbit, launches into its slot as a card, docks in review and shrinks into a star.
 - Stage progress bars render the current progress, then a single follow-up render targets full width with a linear transition for the remaining stage time. A bar's identity includes its stage start, so speed changes and resumed pauses relaunch it.
 - Busy paths carry comet particles: glyph samples along the curve run `frames()` with phase-shifted lists on Herdr's shared clock, so the head travels one way with a two-step tail. Dispatch is accent, checks ansi5 and merges ansi2.
 - While intake runs, a moon orbits the planner ring (spin 7000 ms), an electron circles closer (3200 ms) and a corona pulses outwards (3200 ms). Paused, they rest.
-- A starfield (about one star per 11000 square units) and completed stars twinkle with opacity loops; review cards waiting for you pulse an ansi5 halo; active cards spin a small satellite.
+- A starfield (about one star per 11000 square units) and completed stars twinkle with opacity loops; review cards waiting for you carry a still ansi5 halo (only a task that needs you pulses); active cards spin a small satellite.
 
 Motion runs only when the local motion preference is on, system Reduce Motion is off and the app window is active. Outside Pipeline, working spinners go through `spin()` in `ui.js`, which leaves them still under Reduce Motion. The current system preference check is macOS-specific. Turning motion off removes particles and loops, keeps every label and state, and shows progress at the last render.
 

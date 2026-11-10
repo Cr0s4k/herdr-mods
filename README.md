@@ -196,6 +196,12 @@ task, so parallel agents never touch each other or your checkout.
    that waited starts from its branch freshly fetched from `origin`, so it has its blocker's
    merge; with local merges it starts from your project folder, so pull first if a blocker
    landed somewhere else.
+
+   The queue starts in the order it is drawn: by priority (a ticket's own; typed tasks are
+   Medium), then arrival. **Start first** in a queued task's inspector puts it ahead of the
+   rest, whatever its priority; the last one marked goes first, and clicking again puts it
+   back. **Model and effort for this task** there lets one task start with its own (a small
+   model for a docs change, say); what you leave **As set** follows Settings.
 2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it
@@ -205,9 +211,9 @@ task, so parallel agents never touch each other or your checkout.
    its `models_cache.json`, or any model name typed in) and **Effort**, passed as launch
    flags; **Default** leaves the agent's own setting. The agent button and each task's
    inspector show what it started with.
-3. The card follows the agent: **Working**, **Needs you** when it waits for you (click
-   **Answer** to jump to its terminal, or message it from the task's inspector), and **Ready
-   for review** when it finishes. A new worktree first asks whether to trust the folder:
+3. The card follows the agent: **Working** with how long its agent has had the task,
+   **Needs you** when it waits for you (click **Answer** to jump to its terminal, or message
+   it from the task's inspector), and **Ready for review** when it finishes. A new worktree first asks whether to trust the folder:
    click **Trust** on the card, or turn on **Trust new worktrees automatically** in
    Settings.
 4. With a **Check before review** command in Settings (Pipeline suggests one it recognises,
@@ -218,13 +224,18 @@ task, so parallel agents never touch each other or your checkout.
    you**) the task stops as **Checks failed** with the output and **Fix**, **Review anyway**
    and **Run checks again**. Checks run in the worktree with your environment, for up to 10
    minutes, beside merges and launches rather than in front of them.
-5. Review the change summary in the inspector, send feedback if it needs another pass, then
+5. Review the work: the inspector lists the files the task changed since it started, with
+   lines added and removed. Click a file, or **Read the changes** (D), to read the full diff
+   in the changes dialog, file by file. The list is there while the agent works too; the
+   round arrow reads it again. Send feedback if it needs another pass, then
    **Merge** (or **Merge N tasks**, Y). Merging commits anything the agent left, rebases its
    branch onto the branch your project folder is on and fast-forwards, so history stays
    linear. It refuses, and keeps the task in review with the reason, while your folder has
    uncommitted changes or the branch conflicts. Afterwards the agent's tab closes and its
    worktree and branch are removed. **Discard** (asked twice) stops the agent and deletes the
-   worktree and branch.
+   worktree and branch. When a merge is refused because the branch conflicts, **Ask the agent
+   to rebase** sends the refusal to its agent, which rebases, resolves the conflicts and
+   comes back to review.
 
    Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
    finishes with passing checks (or with no check set) merges straight away. Work you sent
@@ -270,6 +281,12 @@ inspector name a task's repositories when it has more than one ("shop + api").
   (**Approved · merging next**) until the one ahead of it is done. **Branches waiting for
   review** counts repositories, so a task across two holds two. **Discard** removes every
   worktree and branch.
+
+While you're looking elsewhere, Pipeline posts a notification for what Herdr doesn't already
+announce: failed checks, checked work ready for review, a refused merge, an agent that
+stopped or asks to trust its worktree, and a pull request that turns ready to merge, gets
+blocked, is closed or is merged. Clicking one opens Pipeline. **Notify me** in Settings
+turns them off. Completed tasks say how long they took.
 
 Agents run in herdr-core, so they keep going when the Pipeline tab or Herdr is closed; the
 tab-bar tracker catches up when Herdr opens. A start that Herdr can't confirm after a
@@ -318,8 +335,9 @@ own answer, and the task resumes where it stopped and the next question opens. S
 has **Simulate a question** to make the next working task ask. Real agents will appear in
 the sidebar on their own; this only simulates that moment.
 
-Keys, with the scene focused: Space start/pause, N new task, A examples (in Live: P for
-Plane, L for Linear), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
+Keys, with the scene focused: Space start/pause, N new task, the arrow keys (or J and K)
+to walk the tasks in the order the scene shows them, A examples (in Live: P for
+Plane, L for Linear, D to read the selected task's changes), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
 S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
 **PR approval** in the status strip switches to **Auto-merge** (merge after checks); in Live,
 that is **Merge automatically** in Settings.

@@ -5,8 +5,12 @@ import test from "node:test";
 const modelSource = await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8");
 const model = await import(`data:text/javascript,${encodeURIComponent(modelSource)}`);
 const geometrySource = (await readFile(new URL("../mods/pipeline/geometry.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const geometry = await import(`data:text/javascript,${encodeURIComponent(`const ACTIVE = ${JSON.stringify(model.ACTIVE)};\n${geometrySource}`)}`);
-const world = { data: {}, storage: new Map(), hc: [], runs: [], planeCalls: [] };
+globalThis.__pipelineGeometry = { ACTIVE: model.ACTIVE, queueOrder: model.queueOrder };
+const geometry = await import(`data:text/javascript,${encodeURIComponent(`const { ACTIVE, queueOrder } = globalThis.__pipelineGeometry;\n${geometrySource}`)}`);
+const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8"));
+globalThis.__pipelineViewModel = model;
+const live = await import(`data:text/javascript,${encodeURIComponent(`const {${liveSource.match(/^import \{([^}]*)\} from "\.\/pipeline-model\.js";/m)[1]}} = globalThis.__pipelineViewModel;\n${liveSource.replace(/^import .*;\n/gm, "")}`)}`);
+const world = { data: {}, storage: new Map(), hc: [], runs: [], planeCalls: [], overlays: [] };
 function native() {
   const data = { nodes: [], styles: {}, handlers: {} };
   let element;
@@ -30,6 +34,8 @@ globalThis.__pipelineView = {
   knownAgents: async () => [], exec: async (...args) => world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
+  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, changedFiles: live.changedFiles,
+  openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
   fullTickets: async (provider, issues) => { world.fullCalls = [...(world.fullCalls ?? []), [provider, issues.map(issue => issue.identifier)]];
     return provider === "linear" ? issues.map(issue => ({ ...issue, description: `Full ${issue.identifier}` })) : issues; },
@@ -43,7 +49,7 @@ globalThis.__pipelineView = {
 const uiSource = (await readFile(new URL("../mods/pipeline/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const { default: Pipeline } = await import(`data:text/javascript,${encodeURIComponent(`const { ${Object.keys(globalThis.__pipelineView).join(", ")} } = globalThis.__pipelineView;\n${uiSource}`)}`);
 const timers = [];
-const cx = { notify() {}, spawn() {}, stop_propagation() {}, timer: { after: (_ms, fn) => { timers.push(fn); return { cancel() {} }; } },
+const cx = { notify() {}, spawn() {}, stop_propagation() {}, timer: { after: (_ms, fn) => { timers.push(fn); return { cancel() {} }; }, every: () => ({ cancel() {} }) },
   focus_handle: () => ({ focus() {}, release() {}, is_focused: () => true }) };
 function setup() {
   world.data = {}; timers.length = 0;
@@ -792,11 +798,16 @@ test("a queued task picks its repositories as chips, and cards name them only wh
   agentTask(view, "T-1", { status: "review", slot: null, workspaces: {
     shop: { root: "/wt/shop/T-1", cwd: "/wt/shop/T-1", branch: "pipeline/T-1", base: "a".repeat(40), target: "main", source: "/work/shop" },
     api: { root: "/wt/api/T-1", cwd: "/wt/api/T-1", branch: "pipeline/T-1", base: "b".repeat(40), target: "main", source: "/work/api" } } });
-  view.peek = { key: `T-1:review:t9:/wt/shop/T-1,/wt/api/T-1`, screen: [], diff: [{ name: "shop", lines: [" a.js | 2 +-"] }, { name: "api", lines: [] }] };
+  view.peek = { key: `T-1:review:t9:/wt/shop/T-1,/wt/api/T-1`, task: "T-1", screen: [], diff: [
+    { name: "shop", root: "/wt/shop/T-1", base: "a".repeat(40), files: [{ path: "src/a.js", status: "M", fresh: false, add: 1, del: 1 }] }, { name: "api", root: "/wt/api/T-1", base: "b".repeat(40), files: [] }] };
   scene = view.render(cx);
   const inspector = text(find(scene, "inspector"));
   assert.match(inspector, /Repositories: shop \+ api/);
-  assert.match(inspector, /Changes · shop .* a\.js \| 2 \+-/);
+  assert.match(inspector, /Changes · shop .*1 file .*M a\.js src \+1 −1/);
+  click(view, "file-T-1-shop-0");
+  assert.deepEqual(world.overlays.at(-1).props, { root: "/wt/shop/T-1", on: null, hasHead: true, base: "a".repeat(40), index: 0,
+    files: [{ path: "src/a.js", status: "M", fresh: false, add: 1, del: 1 }] }, "a file opens the changes dialog on the task's worktree, against its start commit");
+  assert.equal(find(scene, "diff-T-1-api"), undefined, "nothing to read where the agent changed nothing");
   assert.match(inspector, /Changes · api .*No changes in api\. It is left out of the merge\./);
   assert.match(inspector, /Branch pipeline\/T-1 in each repository .*shop · \/wt\/shop\/T-1 .*api · \/wt\/api\/T-1/);
   assert.ok(find(scene, "merge-T-1").nodes.includes("Merge into main in all 2"));
@@ -827,4 +838,69 @@ test("a task across repositories shows a checklist per pull request and its most
   assert.match(text(find(scene, "pr-merge-T-1-api")), /Conflicts with main/);
   assert.equal(find(scene, "pr-merge-T-1-shop"), undefined, "a merged PR needs nothing");
   assert.ok(find(scene, "pr-link-T-1-shop") && find(scene, "pr-link-T-1-api"));
+});
+
+test("arrow keys walk the tasks in the order the scene shows them, and Start first reorders the queue", () => {
+  const view = setupLive();
+  for (const title of ["One", "Two", "Three"]) view.act({ type: "create", title }, cx);
+  const press = keystroke => view.key({ key: keystroke, keystroke }, cx);
+  press("down");
+  assert.deepEqual([view.drawer, view.selected], ["task", "T-1"]);
+  press("down"); press("j");
+  assert.equal(view.selected, "T-3");
+  press("down");
+  assert.equal(view.selected, "T-1", "past the last task it wraps to the first");
+  press("up");
+  assert.equal(view.selected, "T-3");
+  assert.match(text(find(view.render(cx), "first-T-3")), /Start first/);
+  click(view, "first-T-3");
+  const scene = view.render(cx);
+  assert.match(text(find(scene, "first-T-3")), /Starts first/);
+  assert.match(text(find(scene, "card-T-3")), /Queued · starts first/);
+  const top = id => find(scene, `node-${id}`).styles.top[0];
+  assert.ok(top("T-3") < top("T-1") && top("T-1") < top("T-2"), "the queue is drawn in the order it starts");
+  press("escape"); press("down");
+  assert.equal(view.selected, "T-3", "and walked in that order");
+});
+
+test("a queued task can start with its own model and effort", () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "Docs" }, cx);
+  view.inspect("T-1", cx);
+  assert.match(text(find(view.render(cx), "inspector")), /Starts Claude Code with its own default model and effort/);
+  click(view, "task-model-haiku-T-1");
+  click(view, "task-effort-low-T-1");
+  assert.deepEqual(row(view, "T-1").tune, { model: "haiku", effort: "low" });
+  assert.match(text(find(view.render(cx), "inspector")), /Starts Claude Code with haiku · low effort/);
+  click(view, "task-model-same-T-1");
+  assert.deepEqual(row(view, "T-1").tune, { model: null, effort: "low" });
+});
+
+test("a merge refused for conflicts offers to send its agent to rebase", async () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null, error: "The branch conflicts with main. Ask the agent to rebase onto main and resolve the conflicts, then merge again." });
+  view.inspect("T-1", cx);
+  world.hc = [];
+  await settle(view, "resolve-T-1");
+  assert.deepEqual(world.hc.at(-1).slice(0, 2), ["send", "t9"]);
+  assert.match(world.hc.at(-1)[2], /rebase onto main: The branch conflicts with main/);
+  assert.equal(row(view, "T-1").error, null);
+  assert.equal(find(view.render(cx), "resolve-T-1"), undefined);
+  agentTask(view, "T-1", { status: "review", slot: null, error: "Your project folder has uncommitted changes on main. Commit or stash them, then merge again." });
+  assert.equal(find(view.render(cx), "resolve-T-1"), undefined, "an agent can't fix your own uncommitted changes");
+});
+
+test("a narrow Pipeline keeps Start in reach, and wide windows give cards room for titles", () => {
+  const view = setup();
+  view.size = { width: 460, height: 800 };
+  let scene = view.render(cx);
+  assert.deepEqual(find(scene, "run").nodes.filter(node => typeof node === "string"), ["Start"]);
+  assert.equal(find(scene, "speed"), undefined);
+  view.size = { width: 1600, height: 900 };
+  scene = view.render(cx);
+  assert.deepEqual(find(scene, "run").nodes.filter(node => typeof node === "string"), ["Start pipeline"]);
+  assert.equal(find(scene, "node-DEMO-101").styles.w[0], 212);
+  view.size = { width: 1200, height: 800 };
+  assert.equal(find(view.render(cx), "node-DEMO-101").styles.w[0], 164);
 });

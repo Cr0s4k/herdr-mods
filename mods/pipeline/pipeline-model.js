@@ -33,8 +33,13 @@ export function codexModels(text) {
     .map(model => ({ slug: String(model.slug), name: String(model.display_name ?? model.slug),
       efforts: (model.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => /^[a-z]{1,20}$/.test(effort ?? "")) }));
 }
+// A task's own model or effort wins over the agent's setting; what it leaves unset follows the setting.
+export const taskTuning = (state, task, key) => {
+  const tune = tuningFor(state, key), own = task?.tune ?? {}, options = AGENT_OPTIONS[key];
+  return options ? { model: own.model ?? tune.model, effort: effortFits(options, own.effort) ? own.effort : tune.effort } : tune;
+};
 // Agents without a way to open more folders find the other worktrees in their first message.
-export const agentRun = (state, agent, extra = []) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(tuningFor(state, agent.key)) ?? []),
+export const agentRun = (state, agent, extra = [], task = null) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(taskTuning(state, task, agent.key)) ?? []),
   ...(extra.length ? AGENT_OPTIONS[agent.key]?.dirs(extra) ?? [] : [])];
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
@@ -125,6 +130,21 @@ export const progress = (state, task, now = Date.now()) => task.status === "inpu
 function event(state, message, task = null) {
   state.events = [{ id: ++state.sequence, message, task }, ...state.events].slice(0, 40);
 }
+// The order the planner starts work in: tasks marked to start first, then priority, then arrival.
+const startOrder = (a, b) => (b.rank ?? 0) - (a.rank ?? 0) || b.priority - a.priority || a.id.localeCompare(b.id, undefined, { numeric: true });
+export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder);
+export function elapsed(ms) {
+  const minutes = Math.floor(Math.max(0, ms) / 60000);
+  if (minutes < 1) return "under a minute";
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
+}
+// What a task's card says about time: how long its agent has had it, or how long it took.
+export function timing(task, now = Date.now()) {
+  if (!task.began) return null;
+  if (task.status === "done") return task.ended ? `took ${elapsed(task.ended - task.began)}` : null;
+  return ["queued", "routing"].includes(task.status) ? null : elapsed(now - task.began);
+}
 export const activeTasks = state => state.tasks.filter(task => ACTIVE.includes(task.status));
 export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
 export const outstandingCount = state => outstanding(state).reduce((count, task) => count + task.repos.length, 0);
@@ -194,6 +214,28 @@ export function prChecklist(pr, target = "the base branch") {
     : status.mergeState === "BLOCKED" ? { value: "Blocked until branch rules are met", tone: "wait" }
     : status.mergeState === "UNKNOWN" ? { value: "GitHub is still checking", tone: "wait" } : { value: `No conflicts with ${target}`, tone: "ready" };
   return [{ name: "Checks", ...checks }, { name: "Review", ...review }, { name: "Merge", ...merge }];
+}
+// What changed that the person should hear about while looking elsewhere. Herdr itself announces an agent that asks or finishes.
+export function liveNotices(before, after) {
+  if (!after?.live || after.quiet) return [];
+  const was = new Map((before?.tasks ?? []).map(task => [task.id, task])), notices = [];
+  for (const task of after.tasks) {
+    const old = was.get(task.id);
+    if (!old || task.discard) continue;
+    const say = (title, body, level) => notices.push({ title: `${task.id} ${title}`, body: body || task.title, level, task: task.id });
+    if (task.status === "failed" && old.status !== "failed") say(task.reason === "checks" ? "checks failed" : "stopped", task.reason === "checks" ? task.title : task.error, "error");
+    else if (task.status === "input" && task.reason === "trust" && old.reason !== "trust") say("asks to trust its worktree", task.title, "warning");
+    else if (task.status === "review" && old.status === "merging") say(after.delivery === "pr" ? "pull request not opened" : "not merged", task.error, "error");
+    else if (task.status === "review" && old.status === "pr") say("pull request closed", task.error, "warning");
+    else if (task.status === "review" && old.status === "testing" && needsApproval(task)) say("is ready for review", `Checks passed · ${task.title}`, "success");
+    else if (task.status === "done" && old.status === "pr") say("merged on GitHub", task.title, "success");
+    else if (task.status === "done" && old.status === "merging" && after.autoMerge) say("merged", task.title, "success");
+    else if (task.status === "pr" && old.status === "pr") {
+      const need = prNeeds(task), last = prNeeds(old);
+      if (need.label !== last.label && need.tone !== "wait" && need.tone !== last.tone) say(`pull request · ${need.label.toLowerCase()}`, task.title, need.tone === "ready" ? "success" : "warning");
+    }
+  }
+  return notices;
 }
 export const quotaHeld = state => !state.live && state.quota - 8 < state.reserve;
 export function waitingReason(state, task) {
@@ -557,6 +599,37 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "queued" || Boolean(task.unblocked) === value || (value && !dependencies(next, task).length)) return state;
       task.unblocked = value;
       event(next, value ? `${task.id} starts without waiting.` : `${task.id} waits for what it depends on again.`, task.id);
+      break;
+    }
+    case "first": {
+      const task = row(action.id), value = Boolean(action.value ?? !task?.rank);
+      if (task?.status !== "queued" || Boolean(task.rank) === value) return state;
+      task.rank = value ? Math.max(0, ...next.tasks.map(other => other.rank ?? 0)) + 1 : 0;
+      event(next, value ? `${task.id} starts before the rest of the queue.` : `${task.id} is back in its usual place in the queue.`, task.id);
+      break;
+    }
+    case "tuneTask": {
+      const task = row(action.id), key = next.agent?.key ?? action.key, options = AGENT_OPTIONS[key];
+      if (!next.live || task?.status !== "queued" || !options) return state;
+      const before = { model: task.tune?.model ?? null, effort: task.tune?.effort ?? null }, tune = { ...before };
+      if ("model" in action) tune.model = String(action.model ?? "").trim().slice(0, 100) || null;
+      if ("effort" in action) tune.effort = effortFits(options, action.effort) ? action.effort : null;
+      if (tune.model === before.model && tune.effort === before.effort) return state;
+      task.tune = tune.model || tune.effort ? tune : null;
+      break;
+    }
+    case "resolving": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "review" || !task.error) return state;
+      task.error = null; task.approvals = [];
+      event(next, `${task.id} · asked its agent to rebase onto ${targetOf(task) ?? "your branch"} and resolve the conflicts.`, task.id);
+      break;
+    }
+    case "quiet": {
+      const value = Boolean(action.value ?? !next.quiet);
+      if (!next.live || Boolean(next.quiet) === value) return state;
+      next.quiet = value;
+      event(next, value ? "Pipeline no longer notifies you." : "Pipeline notifies you when work needs you.");
       break;
     }
     case "describe": {
@@ -943,18 +1016,20 @@ export function reduce(state, action, now = Date.now()) {
   const picked = [];
   if (next.running) {
     const candidates = next.tasks.filter(task => task.status === "queued" && dependencies(next, task).length === 0)
-      .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id, undefined, { numeric: true }));
+      .sort(startOrder);
     for (const task of candidates) {
       if (activeTasks(next).length >= next.parallel || quotaHeld(next)) break;
       if (outstandingCount(next) + task.repos.length > next.reviewLimit) continue;
       const used = new Set(activeTasks(next).map(row => row.slot));
       let slot = 0; while (used.has(slot)) slot++;
-      task.status = "routing"; task.slot = slot; task.since = now; task.attempts++; task.approvals = [];
+      task.status = "routing"; task.slot = slot; task.since = now; task.attempts++; task.approvals = []; task.began ??= now;
+      if (task.rank) task.rank = 0;
       if (next.live) { task.launch = null; task.error = null; } else next.quota -= 8;
       picked.push(task.id);
       event(next, `${task.id} entering slot ${slot + 1} · ${task.repos.join(" + ")}`, task.id);
     }
   }
+  for (const task of next.tasks) if (task.status === "done" && task.began && !task.ended) task.ended = now;
   next.plan = explain(next, picked);
   return next;
 }

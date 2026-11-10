@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, tuningFor, tuningLabel, workspacesOf, prList } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -50,7 +50,25 @@ export function observe(task, host) {
 
 export const worktreesOf = task => Object.entries({ ...task.planned, ...task.workspaces }).map(([name, ws]) => ({ name, ...ws }));
 
+// The files a branch changed since its start commit, as the changes dialog lists them: git's name-status, numstat and status, all with -z.
+export function changedFiles(names, stats, status) {
+  const counts = new Map();
+  for (const entry of String(stats ?? "").split("\0")) {
+    const [add, del, ...parts] = entry.split("\t");
+    if (parts.length) counts.set(parts.join("\t"), { add: Number(add) || 0, del: Number(del) || 0, binary: add === "-" });
+  }
+  const files = [], parts = String(names ?? "").split("\0");
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const kind = parts[i][0], path = parts[i + 1];
+    files.push({ path, status: "ADM".includes(kind) ? kind : "M", fresh: false, ...(counts.get(path) ?? { add: 0, del: 0 }) });
+  }
+  for (const entry of String(status ?? "").split("\0")) if (entry.startsWith("?? ")) files.push({ path: entry.slice(3), status: "A", fresh: true, add: 0, del: 0 });
+  return files.slice(0, 1000);
+}
+
 export const tail = (text, lines = 40) => String(text ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").trimEnd().split("\n").slice(-lines).join("\n").slice(-4000);
+export const rebaseRequest = (target, error) => [`Merging this branch into ${target} was refused:`, error || "The branch conflicts.", "",
+  `Rebase this branch onto ${target}, resolve the conflicts, make sure the work still does what the task asked, commit, and stop.`].join("\n");
 export const fixRequest = (command, output) => ["The check command failed after your change:", `$ ${command}`, output || "(no output)", "",
   "Fix the problem, commit on this branch, and stop when the check passes."].join("\n");
 
@@ -87,7 +105,9 @@ export class LiveRunner {
     const all = this.host.shared(STORE) ?? {}, state = all[id];
     if (!state) return;
     const next = reduce(state, action, this.host.now());
-    if (next !== state) this.host.setShared(STORE, { ...all, [id]: next });
+    if (next === state) return;
+    this.host.setShared(STORE, { ...all, [id]: next });
+    for (const notice of liveNotices(state, next)) this.host.announce?.(id, notice);
   }
 
   start() {
@@ -267,9 +287,9 @@ export class LiveRunner {
       if (!agent) throw new Error("No coding agent is installed on that machine. Install Claude Code or Codex, then retry.");
       this.apply(id, { type: "launch", id: task.id, phase: "starting" });
       const state = host.shared(STORE)[id], space = state.space, workspaces = workspacesOf(current);
-      const own = host.start(context, current, workspaces, { ...agent, run: agentRun(state, agent, workspaces.slice(1).map(ws => ws.root)) }, space);
+      const own = host.start(context, current, workspaces, { ...agent, run: agentRun(state, agent, workspaces.slice(1).map(ws => ws.root), current) }, space);
       const opened = await host.locate(context, workspaces[0], cx, current.terminal);
-      this.apply(id, opened ? { type: "launched", id: task.id, ...opened, own, agent: agent.name, tuning: tuningLabel(tuningFor(state, agent.key)) }
+      this.apply(id, opened ? { type: "launched", id: task.id, ...opened, own, agent: agent.name, tuning: tuningLabel(taskTuning(state, current, agent.key)) }
         : { type: "launchFailed", id: task.id, error: "Its agent was asked to start, but its terminal never appeared. Check the new space before retrying." });
     } catch (error) {
       this.apply(id, { type: "launchFailed", id: task.id, error: error?.message || String(error) });

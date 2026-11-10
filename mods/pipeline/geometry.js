@@ -1,4 +1,4 @@
-import { ACTIVE } from "./pipeline-model.js";
+import { ACTIVE, queueOrder } from "./pipeline-model.js";
 
 export const CARD = { w: 164, h: 68, review: 78 };
 export const SUN = 55;
@@ -17,12 +17,15 @@ const curvePoint = (x1, y1, x2, y2, t) => {
 };
 export const samples = ([x1, y1, x2, y2], count) => Array.from({ length: count }, (_, i) => curvePoint(x1, y1, x2, y2, (i + 0.5) / count));
 
-export function layoutScene(state, width, height) {
+// Cards widen with the window so titles have room; the scene's own width never changes them.
+export const cardWidth = width => width >= 1500 ? 212 : width >= 1320 ? 188 : CARD.w;
+
+export function layoutScene(state, width, height, cw = CARD.w) {
   const slotCount = Math.max(state.parallel, ...state.tasks.filter(task => ACTIVE.includes(task.status)).map(task => task.slot + 1));
   const w = Math.max(slotCount > 3 ? 1180 : 940, width), h = Math.max(420, height);
   const center = { x: Math.round(w * 0.35), y: Math.round(h * 0.5) };
   const inner = Math.round(Math.min(300, Math.max(210, w * 0.25)));
-  const outer = Math.round(Math.min(inner + 200, w - 112 - CARD.w / 2 - 24 - CARD.w / 2 - center.x));
+  const outer = Math.round(Math.min(inner + 200, w - 30 - cw - 24 - cw / 2 - center.x));
   const reach = h / 2 - CARD.h / 2 - 20;
   const orbit = (radius, index) => {
     const spread = Math.asin(Math.min(0.78, reach / radius));
@@ -32,7 +35,7 @@ export function layoutScene(state, width, height) {
   const slots = Array.from({ length: slotCount }, (_, index) => ({ ...orbit(index < 3 ? inner : outer, index), radius: index < 3 ? inner : outer }));
   const orbits = slotCount > 3 ? [inner, outer] : [inner];
 
-  const queue = state.tasks.filter(task => task.status === "queued");
+  const queue = queueOrder(state);
   const review = state.tasks.filter(task => ["review", "merging", "failed"].includes(task.status));
   const prs = state.tasks.filter(task => task.status === "pr");
   const done = state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0));
@@ -48,23 +51,23 @@ export function layoutScene(state, width, height) {
   const reviewRows = Math.min(review.length, reviewFits);
   const prTop = reviewRows ? 43 + reviewRows * 88 + 10 : 53;
   const prY = i => prTop + PR_HEADER + CARD.review / 2 + i * 88;
-  const lowest = slots.reduce((edge, slot) => slot.y > center.y ? Math.max(edge, slot.x + CARD.w / 2) : edge, center.x + SUN);
+  const lowest = slots.reduce((edge, slot) => slot.y > center.y ? Math.max(edge, slot.x + cw / 2) : edge, center.x + SUN);
   const starFits = Math.max(1, Math.min(12, Math.floor((w - 44 - (lowest + 28)) / 30) + 1));
   const doneShown = done.slice(0, starFits);
   const wave = [0, 14, 5, 19, 9, 22, 3, 16, 7, 20, 11, 1];
-  const dock = { x: w - 112 - CARD.w / 2 - 22, y: 92 + ((reviewRows || 1) - 1) * 44 };
+  const dock = { x: w - 30 - cw - 22, y: 92 + ((reviewRows || 1) - 1) * 44 };
 
   const nodes = [];
   for (const task of state.tasks) {
     let point;
-    if (task.status === "queued" && queueShown.includes(task)) point = { x: 112, y: 92 + queueShown.indexOf(task) * 76, kind: "card" };
+    if (task.status === "queued" && queueShown.includes(task)) point = { x: 30 + cw / 2, y: 92 + queueShown.indexOf(task) * 76, kind: "card" };
     else if (task.status === "routing") {
       const angle = -0.9 + (task.slot % 6) * 0.36;
       point = { x: Math.round(center.x + RING * Math.cos(angle)), y: Math.round(center.y + RING * Math.sin(angle)), kind: "comet" };
     }
     else if (ACTIVE.includes(task.status)) point = { ...slots[task.slot], kind: "card" };
-    else if (reviewShown.includes(task)) point = { x: w - 112, y: 92 + reviewShown.indexOf(task) * 88, kind: "review" };
-    else if (prShown.includes(task)) point = { x: w - 112, y: prY(prShown.indexOf(task)), kind: "review" };
+    else if (reviewShown.includes(task)) point = { x: w - 30 - cw / 2, y: 92 + reviewShown.indexOf(task) * 88, kind: "review" };
+    else if (prShown.includes(task)) point = { x: w - 30 - cw / 2, y: prY(prShown.indexOf(task)), kind: "review" };
     else if (task.status === "done" && doneShown.includes(task)) {
       const i = doneShown.indexOf(task);
       point = { x: w - 44 - i * 30, y: h - 66 - wave[i % wave.length], kind: "star" };
@@ -78,5 +81,5 @@ export function layoutScene(state, width, height) {
     low: 0.12 + pick() * 0.2, high: 0.45 + pick() * 0.45, period: 2200 + Math.round(pick() * 4200),
   }));
 
-  return { w, h, center, slots, orbits, nodes, stars, dock, queue, review, prs, done, queueShown, reviewShown, prShown, reviewFits, prFits, prTop, prY, doneShown };
+  return { w, h, cw, center, slots, orbits, nodes, stars, dock, queue, review, prs, done, queueShown, reviewShown, prShown, reviewFits, prFits, prTop, prY, doneShown };
 }

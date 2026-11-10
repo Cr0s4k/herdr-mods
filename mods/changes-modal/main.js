@@ -85,13 +85,13 @@ function parseAnsi(text) {
   });
 }
 
-async function highlighted({ root, on, hasHead }, file) {
+async function highlighted({ root, on, hasHead, base }, file) {
   const run = async (script, args) => {
     const r = await exec("sh", ["-c", script, "sh", ...args], { cwd: root, on }).catch(() => null);
     return r?.code === 0 && r.stdout.length < 2000000 ? parseAnsi(r.stdout) : null;
   };
   const [old, now] = await Promise.all([
-    hasHead && !file.fresh && file.status !== "A" ? run(`git show "HEAD:$1" | { ${bat()} --file-name "$1"; }`, [file.path]) : null,
+    hasHead && !file.fresh && file.status !== "A" ? run(`git show "$2:$1" | { ${bat()} --file-name "$1"; }`, [file.path, base ?? "HEAD"]) : null,
     file.status !== "D" ? run(`${bat()} -- "$1"`, [file.path]) : null,
   ]);
   return { old, now };
@@ -254,7 +254,7 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 5000).map(l => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? ["HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? [this.base ?? "HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
@@ -304,7 +304,7 @@ export default class Changes extends View {
   }
 
   initViewer(p, cx) {
-    this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.index = p.index ?? 0;
+    this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.base = p.base ?? null; this.index = p.index ?? 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.show(this.index, cx);
@@ -318,7 +318,7 @@ export default class Changes extends View {
       cx.spawn(async (cx) => {
         const stage = (rev) => stageImage(this.root, file.path, rev).catch(() => null);
         const [before, after] = await Promise.all([
-          this.hasHead && !file.fresh && file.status !== "A" ? stage("HEAD") : undefined,
+          this.hasHead && !file.fresh && file.status !== "A" ? stage(this.base ?? "HEAD") : undefined,
           file.status !== "D" ? stage() : undefined,
         ]);
         if (this.index !== index) return;
