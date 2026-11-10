@@ -24,7 +24,7 @@ const path = () => new Proxy({}, { get: (_target, key) => key === "build" ? () =
 globalThis.__pipelineView = {
   TextareaState: { new: () => globalThis.__pipelineView.InputState.new() },
   ...model, ...geometry, View: class {}, div: native, svg: native, h_flex: native, v_flex: native,
-  Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native },
+  Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) },
   InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
   knownAgents: async () => [], exec: async () => ({ code: 0, stdout: "" }), focused: () => ({ space: "sp-project" }),
@@ -207,6 +207,23 @@ test("busy dispatch paths carry comet particles only while motion is on", () => 
   assert.equal(findAll(view.render(cx), "star-")[0].styles.loop, undefined);
   view.motion = true; view.act({ type: "reset" }, cx);
   assert.equal(findAll(view.render(cx), "star-")[0].styles.loop, undefined, "a paused, idle pipeline stays still");
+});
+
+test("the settings drawer turns animation off with a switch", () => {
+  const view = setup();
+  view.open("settings", cx);
+  const toggle = find(view.render(cx), "motion-setting");
+  assert.equal(toggle.styles.checked[0], true);
+  assert.match(text(toggle), /Animation/);
+  toggle.handlers.on_change(false, cx);
+  assert.equal(view.motion, false);
+  assert.equal(world.storage.get("motion"), "false");
+  assert.equal(find(view.render(cx), "motion-setting").styles.checked[0], false);
+  view.reducedMotion = true; view.motion = true;
+  const locked = find(view.render(cx), "motion-setting");
+  assert.equal(locked.styles.disabled[0], true);
+  assert.equal(locked.styles.checked[0], false);
+  assert.match(text(locked), /Reduce Motion/);
 });
 
 test("the scene keeps slots, queue and review apart at the smallest canvas", () => {

@@ -1,5 +1,5 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
-import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
+import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
@@ -372,6 +372,19 @@ export default class Pipeline extends View {
       .on_click((_e, cx) => fn(cx))
       .when(Boolean(options.icon), el => el.child(icon(options.icon, small ? 12 : 15)))
       .when(!options.iconOnly, el => el.child(label));
+  }
+  motionSwitch(t) {
+    const on = this.motion && !this.reducedMotion, locked = this.reducedMotion;
+    return Switch.new("pipeline-motion-setting").checked(on).disabled(locked).on_change((_value, cx) => this.toggleMotion(cx))
+      .accessibility_label("Animation")
+      .child(h_flex().py(6).gap(12).items_center().opacity(locked ? 0.55 : 1).when(!locked, el => el.cursor_pointer())
+        .child(v_flex().flex_1().min_w(0).gap(3)
+          .child(div().text_size(12).font_medium().child("Animation"))
+          .child(div().text_size(11).text_color(t.muted).child(locked ? "Off while the system's Reduce Motion is on" : "Flowing work, progress bars and the spinning ring")))
+        .child(div().w(30).h(18).p(2).flex_none().flex().items_center().rounded(9)
+          .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.border)
+          .when(on, el => el.justify_end())
+          .child(div().size(12).rounded(6).bg(on ? t.accent_foreground : t.muted))));
   }
   label(text, t) { return div().text_size(12).line_height(1.5).text_color(t.muted).child(text); }
   heading(text) { return div().text_size(12).font_medium().child(text); }
@@ -785,7 +798,7 @@ export default class Pipeline extends View {
     body.child(div().h(1).bg(t.border));
     body.child(this.button("ask", state.askNext ? "Next working task will ask" : "Simulate a question", cx => this.act({ type: "ask" }, cx), t, { disabled: state.askNext, icon: "question" }));
     body.child(this.button("fail-check", state.failNext ? "Next check will fail" : "Simulate a failed check", cx => this.act({ type: "fail" }, cx), t, { disabled: state.failNext }));
-    body.child(this.button("motion-setting", this.motion ? "Turn animation off" : "Turn animation on", cx => this.toggleMotion(cx), t));
+    body.child(this.motionSwitch(t));
     body.child(this.button("reset", "Reset example pipeline", cx => { this.act({ type: "reset" }, cx); this.picked.clear(); this.selected = null; }, t, { icon: "reset" }));
     body.child(this.label("Runs while Herdr is open. You can close this tab; the pipeline keeps going.", t));
   }
@@ -957,7 +970,7 @@ export default class Pipeline extends View {
       ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
       : `Merge commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. Afterwards its tab closes and the worktree and branch are removed.`, t));
     body.child(div().h(1).bg(t.border));
-    body.child(this.button("motion-setting", this.motion ? "Turn animation off" : "Turn animation on", cx => this.toggleMotion(cx), t));
+    body.child(this.motionSwitch(t));
     body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
   }
   tuning(body, state, t) {
