@@ -97,10 +97,10 @@ export default class Skills extends View {
       .child(v_flex().w_full().gap(5)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_1().min_w(0).font_medium().truncate().child(skill.name))
-          .child(div().flex_none().text_size(10.5).text_color(t.muted).child(agents)))
+          .child(div().flex_none().text_size(11).text_color(t.muted).child(agents)))
         .when(Boolean(skill.description), el => el.child(div().text_size(11.5).text_color(t.muted).whitespace_normal()
           .child(skill.description.length > 150 ? skill.description.slice(0, 147) + "…" : skill.description)))
-        .when(skill.group === "plugin" || disabled, el => el.child(div().text_size(10.5).text_color(t.muted).truncate()
+        .when(skill.group === "plugin" || disabled, el => el.child(div().text_size(11).text_color(t.muted).truncate()
           .child(disabled ? [...new Set(skill.installations.map(statusLabel))].join(" · ") + " · " + origins : origins))));
   }
 
@@ -161,7 +161,7 @@ export default class Skills extends View {
         .children(GROUPS.map(group).filter(Boolean))
         .when(this.warnings.length > 0, el => el.child(v_flex().px(10).py(12).gap(6)
           .children(this.warnings.map(warning => div().text_size(11).text_color(t.blocked).whitespace_normal().child(warning))))))
-      .child(div().flex_none().px(14).py(10).border_t(1).border_color(t.border).text_size(10.5).text_color(t.muted).whitespace_normal()
+      .child(div().flex_none().px(14).py(10).border_t(1).border_color(t.border).text_size(11).text_color(t.muted).whitespace_normal()
         .tooltip("Lists discovered files and configured plugins. A running agent may have different settings or session context.")
         .child(`${visible.length} ${visible.length === 1 ? "skill" : "skills"} · Discovered on disk; session loading unverified.`));
   }

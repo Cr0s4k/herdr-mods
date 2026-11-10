@@ -3,10 +3,12 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, home, appHome, spaces, panes, agents, theme, run, props, openOverlay, closeOverlay, notify, watchFolder } from "herdr";
 import * as fs from "fs/promises";
 import { moveToPaneButton } from "./panel-actions.js";
+import { ink, spin, watchMotion } from "./ui.js";
 
 const ITEMS = () => `${appHome()}/show/items`;
 const CLI = () => `${home()}/.local/bin/herdr-show`;
 const COLORS = ["#e5484d", "#f5c518", "#3b82f6", "#22c55e", "#ffffff"];
+const COLOR_NAMES = { "#e5484d": "Red", "#f5c518": "Yellow", "#3b82f6": "Blue", "#22c55e": "Green", "#ffffff": "White" };
 const TOOLS = [["pen", "Pen"], ["arrow", "Arrow"], ["ellipse", "Circle"], ["box", "Box"], ["text", "Text"], ["pin", "Pin"]];
 const HEADER = 50, FOOTER = 58, PAD = 24;
 
@@ -100,7 +102,7 @@ function paintShape(shape, s, key) {
     case "pin": {
       const r = shape.size * s, [x, y] = P[0];
       return div().id(key).absolute().left(x - r).top(y - r).size(r * 2).rounded(r).bg(shape.c)
-        .flex().items_center().justify_center().text_size(r * 1.15).font_bold().text_color("#ffffff").child(String(shape.n));
+        .flex().items_center().justify_center().text_size(r * 1.15).font_bold().text_color(ink(shape.c)).child(String(shape.n));
     }
     case "text": {
       const [x, y] = P[0];
@@ -113,6 +115,7 @@ function paintShape(shape, s, key) {
 
 export default class Show extends View {
   init(_props, cx) {
+    watchMotion(cx);
     this.mode = props()?.editor ? "editor" : "panel";
     this.size = { width: 360, height: 600 };
     if (this.mode === "editor") return this.initEditor(cx);
@@ -229,9 +232,9 @@ export default class Show extends View {
     const title = items.findLast?.((i) => i.title)?.title ?? [...items].reverse().find((i) => i.title)?.title;
     const W = Math.max(120, this.size.width - 28);
     const stop = (_e, cx) => cx.stop_propagation();
-    const iconButton = (id, icon, tip, action) => div().id(id).size(22).flex().items_center().justify_center().rounded(5)
+    const iconButton = (id, icon, tip, action) => div().id(id).size(24).flex().items_center().justify_center().rounded(5)
       .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().on_mouse_down("left", stop)
-      .on_click((_e, cx) => action(cx)).child(typeof icon === "string" && icon.endsWith(".svg") ? svg(icon).size(13) : icon);
+      .tooltip(tip).accessibility_label(tip).on_click((_e, cx) => action(cx)).child(typeof icon === "string" && icon.endsWith(".svg") ? svg(icon).size(13) : icon);
     const pill = (id, label, primary, action) => h_flex().id(id).h(26).px(10).items_center().rounded(7).text_size(11.5).font_medium()
       .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground).border_1().border_color(primary ? t.solid : t.border)
       .cursor_pointer().hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click((_e, cx) => action(cx)).child(label);
@@ -256,7 +259,7 @@ export default class Show extends View {
         .when(item.kind === "marked", (el) => el.child(h_flex().gap(8).items_center()
           .when(!item.sent, (r) => r.child(pill(`send-${item.id}`, "Send back ↩", true, (cx) => cx.spawn(async (cx) => { await sendBack(item); cx.notify(); }))))
           .when(Boolean(item.sent) && !fixedLater, (r) => r
-            .child(svg("mods/show/spinner.svg").size(12).text_color(t.working).spin(900))
+            .child(spin(svg("mods/show/spinner.svg").size(12).text_color(t.working)))
             .child(div().text_size(11.5).text_color(t.muted).child(`Sent to ${item.sentTo}, waiting for the fix…`))
             .child(div().flex_1())
             .child(pill(`resend-${item.id}`, "Resend", false, (cx) => cx.spawn(async (cx) => { await sendBack(item); cx.notify(); }))))
@@ -416,7 +419,7 @@ export default class Show extends View {
         .child(div().w(10))
         .children(TOOLS.map(([id, label]) => chip(`tool-${id}`, label, this.tool === id, () => { this.tool = id; this.textAt = null; })))
         .child(div().w(10))
-        .children(COLORS.map((c) => div().id(`color-${c}`).size(20).rounded(10).bg(c).cursor_pointer().border_2()
+        .children(COLORS.map((c) => div().id(`color-${c}`).size(24).rounded(12).bg(c).cursor_pointer().tooltip(COLOR_NAMES[c]).accessibility_label(`${COLOR_NAMES[c]} marker`).border_2()
           .border_color(this.color === c ? t.foreground : t.border).on_mouse_down("left", stop)
           .on_click((_e, cx) => { this.color = c; cx.notify(); })))
         .child(div().flex_1())

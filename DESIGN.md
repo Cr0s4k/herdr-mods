@@ -95,13 +95,15 @@ The palette follows the active Herdr theme. Obtain `t = theme()` during render a
 - **Workspace and canvas — `t.background`, `t.canvas`, `t.chrome`:** Native panel background, Pipeline's scene background and workspace tab-bar background respectively.
 - **Surface and raised — `t.surface`, `t.raised`:** Pipeline nodes, buttons and inspector; compact existing controls, active tabs, badges and quiet progress tracks.
 - **Input — `t.input`:** Editable native fields.
-- **Foreground and muted — `t.foreground`, `t.muted`:** Main content and secondary metadata. `t.dim` serves unavailable workspace actions.
+- **Foreground and muted — `t.foreground`, `t.muted`:** Main content and secondary metadata. `t.dim` serves unavailable workspace actions, gutter line numbers and decorative dots only, never text someone needs to read.
+- **Chrome labels — `brighter(t)`:** The labels of the tab bar, status bar and sidebar footer use `muted` blended 35% towards `foreground` (about 9:1 in Catppuccin dark). It lives in `mods/tabs-show/ui.js`, symlinked into the mods that use it.
+- **Text on a fill — `ink(fill)`:** Letters on a colored fill (space badges, Show markers) take white or near-black, whichever contrasts more with that fill.
 - **Border — `t.border`:** Single-stroke panel edges, row separators, scene connections and planner orbit.
 - **Hover and selection — `t.hover`, `t.selected`:** Pointer feedback and persistent chosen state. These roles remain distinct.
 
 ### State roles
 
-Pipeline binds queued tasks to `t.muted`, active tasks to `t.accent`, review and merging to `t.ansi5`, completed tasks to `t.ansi2`, and failures and tasks waiting for your answer to `t.blocked`. A waiting task's **Needs you** pill matches the sidebar's: `t.blocked` text on `t.blocked` at 15% (`"26"` alpha), 10.5 semibold. Its quota-wait indicator also uses `t.blocked`. These are host bindings, not a new palette; `ansi2` and `ansi5` can change with the theme. Existing panels also use host status roles such as `t.working` and `t.done` in their own contexts.
+Pipeline binds queued tasks to `t.muted`, active tasks to `t.accent`, review and merging to `t.ansi5`, completed tasks to `t.ansi2`, and failures and tasks waiting for your answer to `t.blocked`. A waiting task's **Needs you** pill matches the sidebar's: `t.blocked` text on `t.blocked` at 15% (`"26"` alpha), 11 semibold. Its quota-wait indicator also uses `t.blocked`. These are host bindings, not a new palette; `ansi2` and `ansi5` can change with the theme. Existing panels also use host status roles such as `t.working` and `t.done` in their own contexts.
 
 **The Native Theme Rule.** Resolve colors from Herdr at render time; preserve semantic foreground/background pairs instead of freezing a screenshot's palette.
 
@@ -113,9 +115,9 @@ Use the UI font inherited from Herdr. The inspected mods set size and native wei
 
 The frontmatter's body, label, compact-label and metadata roles describe the recurring scale. Medium and semibold GPUI helpers establish hierarchy within that scale; they do not imply a replacement font or a universal numeric weight override.
 
-Pipeline adds local emphasis: its page title uses semibold (23 logical px), inspector heading semibold (14), task detail title semibold (18), quota figure semibold (29), and stepper value semibold (16). Task identifiers, status lines and repository metadata use smaller type (9–10). Task titles use medium weight at the label size. Descriptions and the planner explanation use a line-height multiplier (1.5).
+Pipeline adds local emphasis: its page title uses semibold (23 logical px), inspector heading semibold (14), task detail title semibold (18), quota figure semibold (29), and stepper value semibold (16). Task identifiers, status lines and repository metadata use the metadata size (11). Task titles use medium weight at the label size. Descriptions and the planner explanation use a line-height multiplier (1.5).
 
-Keep action labels in sentence case. Truncate compact canvas labels and tab titles where the implementation does; the inspector supplies fuller task content. Existing Tasks list titles may occupy two lines. Avoid promoting these surface-specific choices into a new global type scale.
+No readable text goes below 11; only Pipeline's particle glyphs (9) do. Keep action labels in sentence case. Truncate compact canvas labels and tab titles where the implementation does; the inspector supplies fuller task content. Existing Tasks list titles may occupy two lines. Avoid promoting these surface-specific choices into a new global type scale.
 
 ## Layout
 
@@ -170,7 +172,7 @@ Build actions with `gpui-base`'s `Button` and editable fields with `Input` / `In
 
 Compact Loops controls use the compact-button measurements; Tasks controls use task-button measurements. Their quiet default is raised with muted text, selection uses selected with foreground text, and hover uses hover with foreground text. Workspace tab and panel actions use the denser chrome context.
 
-Pipeline actions use the pipeline-action measurements, with narrower horizontal padding for icon-only actions (8). Default actions use surface, border and foreground; selected actions use selected. Primary actions pair accent with accent foreground. Hover uses hover for ordinary actions; primary fill stays accent. Focus changes the border to accent. Disabled actions use the native disabled state and reduced opacity (0.45). Supply accessible names for icon-only actions and a tooltip when its purpose needs explanation.
+Pipeline actions use the pipeline-action measurements, with narrower horizontal padding for icon-only actions (8). Default actions use surface, border and foreground; selected actions use selected. Primary actions pair accent with accent foreground. Hover uses hover for ordinary actions; primary fill stays accent. Focus changes the border to accent. Disabled actions use the native disabled state and reduced opacity (0.45). Supply accessible names for icon-only actions and a tooltip when its purpose needs explanation. Icon and glyph actions everywhere carry both, and clickable targets are at least 24 square.
 
 Pipeline search and Plane capture fields use capture-search-input measurements, input fill and border. Tasks list search is slightly shorter (32 high). Preserve native editing and focus behavior rather than drawing substitute text fields.
 
@@ -202,7 +204,7 @@ All motion is native; the script never renders frames.
 - While intake runs, a moon orbits the planner ring (spin 7000 ms), an electron circles closer (3200 ms) and a corona pulses outwards (3200 ms). Paused, they rest.
 - A starfield (about one star per 11000 square units) and completed stars twinkle with opacity loops; review cards waiting for you pulse an ansi5 halo; active cards spin a small satellite.
 
-Motion runs only when the local motion preference is on, system Reduce Motion is off and the app window is active. The current system preference check is macOS-specific. Turning motion off removes particles and loops, keeps every label and state, and shows progress at the last render.
+Motion runs only when the local motion preference is on, system Reduce Motion is off and the app window is active. Outside Pipeline, working spinners go through `spin()` in `ui.js`, which leaves them still under Reduce Motion. The current system preference check is macOS-specific. Turning motion off removes particles and loops, keeps every label and state, and shows progress at the last render.
 
 ## Do's and Don'ts
 

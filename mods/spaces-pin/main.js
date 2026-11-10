@@ -9,6 +9,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
 import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
+import { ink, watchMotion } from "./ui.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -52,6 +53,7 @@ export function tone(t, status) {
 
 export default class Spaces extends View {
   init(_props, cx) {
+    watchMotion(cx);
     this.agents = new AgentTree();
     this.expanded = JSON.parse(localStorage.getItem("spaces.expanded") ?? "{}");
     this.attention = localStorage.getItem("spaces.attention") === "true";
@@ -522,10 +524,10 @@ export default class Spaces extends View {
               })
               .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11))))
           .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(14).flex_none().text_color(t.muted)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
           .when(Boolean(g), el => el.child(this.gitTail(g, tree, w.name, t).flex_none().max_w(65)))
-          .when(this.hovered === w.id, el => el.child(div().id(`space-focus-${w.id}`).size(22).flex_none().flex().items_center().justify_center()
+          .when(this.hovered === w.id, el => el.child(div().id(`space-focus-${w.id}`).size(24).flex_none().flex().items_center().justify_center()
             .rounded(4).text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
             .accessibility_label(`Focus ${w.name}`).tooltip("Focus this space")
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -538,7 +540,7 @@ export default class Spaces extends View {
               cx.notify();
             })
             .child(svg("mods/menu-pin/focus.svg").size(14))))
-          .when(this.hovered === w.id, el => el.child(div().id(`space-hide-${w.id}`).size(22).flex_none().flex().items_center().justify_center()
+          .when(this.hovered === w.id, el => el.child(div().id(`space-hide-${w.id}`).size(24).flex_none().flex().items_center().justify_center()
             .rounded(4).text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
             .role("button").accessibility_label(`Hide ${w.name}`).tooltip("Hide space until…")
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -550,7 +552,7 @@ export default class Spaces extends View {
             })
             .child(svg("mods/space-hide/eye-off.svg").size(14))))
           .when(isPinned || this.hovered === w.id, el => el.child(
-            div().id(`space-pin-${w.id}`).flex_none().p(2).rounded(4).text_color(t.muted).cursor_pointer()
+            div().id(`space-pin-${w.id}`).size(24).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.muted).cursor_pointer()
               .hover(s => s.bg(t.hover).text_color(t.foreground))
               .tooltip(isPinned ? "Unpin" : "Pin to the top")
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -597,14 +599,14 @@ export default class Spaces extends View {
         .on_click(() => setShared("spaces.focus", null))
         .child(svg("mods/workspace-chrome/chevron-left.svg").size(13).flex_none())
         .when(!collapsed, el => el.child(div().flex_1().child("All spaces")))
-        .when(elsewhere > 0, el => el.child(div().id("spaces-focus-elsewhere").flex_none().text_size(10.5).text_color(t.blocked)
+        .when(elsewhere > 0, el => el.child(div().id("spaces-focus-elsewhere").flex_none().text_size(11).text_color(t.blocked)
           .child(collapsed ? String(elsewhere) : `${elsewhere} elsewhere`))))
       .child(h_flex().id("spaces-focus-title").h(36).px(16).gap(8).flex_none().items_center().min_w(0)
         .when(collapsed, el => el.justify_center())
         .tooltip(`${s.name}${s.machine ? ` · ${s.machine}` : ""} · Click to show this space`)
         .on_click(() => run("space.select", { id: s.id }))
         .on_mouse_down("right", () => this.menu(s))
-        .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...s.name][0]?.toUpperCase() ?? "?"))
+        .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...s.name][0]?.toUpperCase() ?? "?"))
         .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(s.name))
           .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.muted).child(s.machine)))))
       .child(v_flex().id(`spaces-focus-list-${s.id}`).flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
@@ -650,7 +652,7 @@ export default class Spaces extends View {
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child(div().flex_1().child("Spaces")))
         .when(!collapsed && needsYouOn, el => el.child(div().id("spaces-needs-you").h(23).px(6).rounded(5).flex_none().flex().gap(4).items_center().cursor_pointer()
-          .text_size(10.5).text_color(this.attention ? t.blocked : t.muted)
+          .text_size(11).text_color(this.attention ? t.blocked : t.muted)
           .when(this.attention, el => el.bg(t.blocked + "26"))
           .hover(s => s.bg(t.hover).text_color(t.foreground))
           .accessibility_label(this.attention ? "Show all spaces" : `Show agents needing you, ${attentionCount}`)

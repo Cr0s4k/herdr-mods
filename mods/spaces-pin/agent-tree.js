@@ -1,6 +1,7 @@
 import { div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, terminals, focused, run, setAgentOrder } from "herdr";
+import { spin } from "./ui.js";
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -102,9 +103,9 @@ export class AgentTree {
 
   indicator(t, status, compact = false) {
     const color = t[status] ?? t.dim;
-    if (status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(color).spin(900);
+    if (status === "working") return spin(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(color));
     if (status === "blocked") return div().flex_none().px(compact ? 4 : 6).h(18).rounded(4)
-      .bg(color + "26").text_color(color).text_size(10.5).font_semibold()
+      .bg(color + "26").text_color(color).text_size(11).font_semibold()
       .flex().items_center().child(compact ? "!" : "Needs you");
     return div().size(7).mx(3).flex_none().rounded(4)
       .when(status === "idle", el => el.border(1.5).border_color(color))
@@ -144,7 +145,7 @@ export class AgentTree {
       .when(Boolean(pic), el => el.child(pic))
       .when(!compact, el => el.child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(state === "idle" && !on ? t.muted : t.foreground).child(name)))
       .when(!compact && kids.length > 0, el => el.child(div().id(`${prefix}agent-fold-${a.address}`).h(22).px(2).gap(2).flex_none().flex().items_center()
-        .text_size(10.5).text_color(t.muted).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
+        .text_size(11).text_color(t.muted).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
         .accessibility_label(`${open ? "Collapse" : "Expand"} subagents of ${name}`)
         .tooltip(`${open ? "Hide" : "Show"} ${kids.length} subagents`)
         .on_click((_e, cx) => { cx.stop_propagation(); this.toggle(a.address, cx); })

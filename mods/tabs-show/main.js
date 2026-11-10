@@ -8,7 +8,7 @@ import { LaunchTracker } from "./linear-launches.js";
 import { PipelineTracker } from "./pipeline-tracker.js";
 import { STORE as PIPELINES } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
-const brighter = (t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(t.muted.slice(i, i + 2), 16) * 0.65 + parseInt(t.foreground.slice(i, i + 2), 16) * 0.35).toString(16).padStart(2, "0")).join("");
+import { brighter, spin, watchMotion } from "./ui.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -21,6 +21,7 @@ function find(node, id) {
 
 export default class Tabs extends View {
   init(_props, cx) {
+    watchMotion(cx);
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     this.review = new ReviewPanes();
@@ -112,7 +113,7 @@ export default class Tabs extends View {
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
         .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
-        .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
+        .when(c.status === "working", el => el.child(spin(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working))))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])))
         .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.muted).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(12))));
     };
@@ -170,7 +171,7 @@ export default class Tabs extends View {
       .tooltip(questions ? `${questions} simulated ${questions === 1 ? "task needs" : "tasks need"} your answer` : "Open the visual Pipeline prototype in its own tab")
       .hover(el => el.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openPipeline())
       .child(svg("mods/pipeline/pipeline.svg").size(14)).child("Pipeline")
-      .when(questions > 0, el => el.child(div().px(5).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(10.5).font_semibold()
+      .when(questions > 0, el => el.child(div().px(5).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold()
         .flex().items_center().child(`Needs you ${questions}`)));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })

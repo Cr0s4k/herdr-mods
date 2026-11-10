@@ -32,6 +32,16 @@ func color(_ hex: String) -> NSColor {
   return NSColor(srgbRed: r, green: g, blue: b, alpha: a)
 }
 
+func ink(_ fill: NSColor) -> NSColor {
+  func lum(_ c: NSColor) -> Double {
+    let c = c.usingColorSpace(.sRGB) ?? c
+    let f = { (v: CGFloat) -> Double in let v = Double(v); return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * f(c.redComponent) + 0.7152 * f(c.greenComponent) + 0.0722 * f(c.blueComponent)
+  }
+  let dark = color("#111114"), l = lum(fill)
+  return 1.05 / (l + 0.05) >= (l + 0.05) / (lum(dark) + 0.05) ? .white : dark
+}
+
 func fail(_ message: String) -> Never {
   FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
   exit(1)
@@ -90,7 +100,7 @@ for s in spec.shapes {
     let r = CGFloat(s.size ?? 14)
     ctx.fillEllipse(in: CGRect(x: p[0] - r, y: p[1] - r, width: r * 2, height: r * 2))
     let label = NSAttributedString(string: String(s.n ?? 1), attributes: [
-      .font: NSFont.boldSystemFont(ofSize: r * 1.15), .foregroundColor: NSColor.white])
+      .font: NSFont.boldSystemFont(ofSize: r * 1.15), .foregroundColor: ink(col)])
     let size = label.size()
     label.draw(at: CGPoint(x: p[0] - size.width / 2, y: p[1] - size.height / 2))
   case "text":

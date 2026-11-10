@@ -2,7 +2,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, agents, theme, run, window, keys, exec } from "herdr";
 import { parseBranch, remoteGit } from "./sync.js";
-const brighter = (t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(t.muted.slice(i, i + 2), 16) * 0.65 + parseInt(t.foreground.slice(i, i + 2), 16) * 0.35).toString(16).padStart(2, "0")).join("");
+import { brighter } from "./ui.js";
 
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false"];
 const where = () => { const s = spaces().find(s => s.active); return { folder: s?.folder, on: s?.machine ?? null }; };

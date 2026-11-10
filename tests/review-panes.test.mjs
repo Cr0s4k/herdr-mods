@@ -119,8 +119,11 @@ Object.assign(globalThis.__reviewNative, {
   ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
+source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { exec } = globalThis.__reviewNative;\n" + source;
+Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();

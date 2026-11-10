@@ -7,6 +7,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, props, run, theme, home, shared } from "herdr";
+import { spin, watchMotion } from "./ui.js";
 
 function icon(p, size, color) {
   if (!p?.icon) return null;
@@ -22,16 +23,18 @@ function folder(cwd) {
 const PANEL_TITLES = { "review-pane": "Changes", "files-pane": "Files", "show-pane": "Show", "loops-pane": "Loops", "brief-pane": "Since you left" };
 
 export default class Pane extends View {
-  init() { this.hovered = false; }
+  init(_props, cx) { this.hovered = false; watchMotion(cx); }
 
   me() {
     return panes().find((p) => p.pane === props()?.pane);
   }
 
-  button(t, id, icon, command, args) {
+  button(t, id, icon, command, args, name) {
     return div()
       .id(id)
-      .p(3)
+      .p(5)
+      .tooltip(name)
+      .accessibility_label(name)
       .rounded(4)
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -66,18 +69,18 @@ export default class Pane extends View {
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_none().truncate().max_w(260).font_medium().text_color(t.foreground).child(name))
       .when(Boolean(summary), el => el.child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border)
-        .text_size(10).text_color(t.muted).child(`${summary.files} ${summary.files === 1 ? "file" : "files"}`)))
+        .text_size(11).text_color(t.muted).child(`${summary.files} ${summary.files === 1 ? "file" : "files"}`)))
       .child(div().flex_1().truncate().text_color(t.muted).child(folder(p.cwd)))
       .when(Boolean(summary), el => el
         .child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${summary.add}`))
         .child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${summary.del}`)))
-      .when(st === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
-      .when(st === "blocked", el => el.child(div().flex_none().px(6).h(18).flex().items_center().rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).child("Needs you")))
+      .when(st === "working", el => el.child(spin(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working))))
+      .when(st === "blocked", el => el.child(div().flex_none().px(6).h(18).flex().items_center().rounded(5).bg(t.blocked + "26").text_size(11).font_semibold().text_color(t.blocked).child("Needs you")))
       .when(st === "done", el => el.child(div().size(7).flex_none().rounded(4).bg(t.done)))
       .when(this.hovered, el => el
-        .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
-        .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
-        .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
-        .child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane })));
+        .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }, "Split right"))
+        .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }, "Split down"))
+        .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }, p.zoomed ? "Unzoom pane" : "Zoom pane"))
+        .child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane }, "Close pane")));
   }
 }

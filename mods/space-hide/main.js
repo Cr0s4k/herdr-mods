@@ -15,7 +15,13 @@ export default class SpaceHide extends View {
       this.input.on("submit", (_e, cx) => this.submit(cx));
       this.input.focus();
     }
-    cx.timer.every(1000, cx => { expireSpaces(); cx.notify(); });
+    cx.timer.every(1000, cx => {
+      const before = JSON.stringify(hiddenSpaces()), minute = Math.floor(Date.now() / 60000);
+      expireSpaces();
+      if (minute === this.minute && before === JSON.stringify(hiddenSpaces())) return;
+      this.minute = minute;
+      cx.notify();
+    });
   }
 
   list() {

@@ -608,7 +608,7 @@ export default class Pipeline extends View {
     canvas.child(v_flex().absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().border_color(t.accent).bg(t.surface)
       .items_center().justify_center().gap(5).child(icon("pipeline", 24).text_color(t.accent))
       .child(div().font_medium().text_size(13).child("Planner"))
-      .child(div().text_color(t.muted).text_size(10).child(!state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle")));
+      .child(div().text_color(t.muted).text_size(11).child(!state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle")));
     const planLeft = Math.max(30 + CARD.w + 20, c.x - 120);
     const planRight = Math.min(c.x + 90, g.slots[1] ? g.slots[1].x - CARD.w / 2 - 14 : c.x + 90);
     canvas.child(v_flex().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft)).max_h(Math.max(40, c.y - RING - 22)).overflow_hidden().gap(4)
@@ -673,13 +673,13 @@ export default class Pipeline extends View {
       card.child(v_flex().size_full().p(kind === "review" || asking ? 9 : 10).gap(4)
         .child(h_flex().gap(6).items_center()
           .child(busy ? svg("mods/pipeline/satellite.svg").id(`pipeline-sat-${task.id}`).size(11).flex_none().text_color(color).spin(task.status === "testing" ? 800 : 1500) : dot(color))
-          .child(div().text_size(10).font_medium().text_color(t.muted).flex_none().child(task.id))
+          .child(div().text_size(11).font_medium().text_color(t.muted).flex_none().child(task.id))
           .child(div().flex_1())
-          .child(div().text_size(10).text_color(t.muted).truncate().child(task.repos.join(" + "))))
+          .child(div().text_size(11).text_color(t.muted).truncate().child(task.repos.join(" + "))))
         .child(div().text_size(12).font_medium().truncate().child(task.title))
         .child(asking
-          ? h_flex().child(div().px(6).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(10.5).font_semibold().flex().items_center().child(cardStatus(state, task)))
-          : div().text_size(10).text_color(task.status === "failed" ? t.blocked : t.muted).truncate().when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
+          ? h_flex().child(div().px(6).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold().flex().items_center().child(cardStatus(state, task)))
+          : div().text_size(11).text_color(task.status === "failed" ? t.blocked : t.muted).truncate().when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
     if (ACTIVE.includes(task.status) && kind === "card" && !asking && !state.live) wrap.child(div().absolute().left(10).bottom(6).w(CARD.w - 20).h(2).rounded(1).bg(t.raised)
@@ -748,10 +748,10 @@ export default class Pipeline extends View {
       .accessibility_label(`${task.id}: ${task.title}. ${picked ? "Selected" : LABELS[task.status]}`)
       .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent)).on_click((_e, cx) => fn(cx))
       .child(v_flex().w_full().gap(6).child(h_flex().items_center().gap(6).child(dot(stateColor(task, t)))
-        .child(div().text_size(10).text_color(t.muted).child(task.id)).child(div().flex_1())
+        .child(div().text_size(11).text_color(t.muted).child(task.id)).child(div().flex_1())
         .when(picked, el => el.child(icon("check", 13))))
         .child(div().text_size(12).font_medium().child(task.title))
-        .child(div().text_size(10).text_color(t.muted).child(`${task.repos.join(" + ")} · ${task.status === "backlog" ? task.column : cardStatus(state, task)}`)));
+        .child(div().text_size(11).text_color(t.muted).child(`${task.repos.join(" + ")} · ${task.status === "backlog" ? task.column : cardStatus(state, task)}`)));
   }
   picker(body, state, t) {
     const query = this.search.value().trim().toLowerCase();
@@ -913,9 +913,9 @@ export default class Pipeline extends View {
       .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
       .on_click((_e, cx) => { if (inPipeline) return; this.ticketPicked.has(issue.uuid) ? this.ticketPicked.delete(issue.uuid) : this.ticketPicked.add(issue.uuid); cx.notify(); })
       .child(v_flex().w_full().gap(5)
-        .child(h_flex().items_center().gap(6).child(div().text_size(10).font_medium().text_color(t.muted).child(issue.identifier))
-          .child(div().flex_1().min_w(0).text_size(10).text_color(t.muted).truncate().child([issue.status, issue.priority?.name ?? "No priority", provider === "linear" ? issue.team : null].filter(Boolean).join(" · ")))
-          .when(inPipeline, el => el.child(div().text_size(10).text_color(t.muted).child("In Pipeline")))
+        .child(h_flex().items_center().gap(6).child(div().text_size(11).font_medium().text_color(t.muted).child(issue.identifier))
+          .child(div().flex_1().min_w(0).text_size(11).text_color(t.muted).truncate().child([issue.status, issue.priority?.name ?? "No priority", provider === "linear" ? issue.team : null].filter(Boolean).join(" · ")))
+          .when(inPipeline, el => el.child(div().text_size(11).text_color(t.muted).child("In Pipeline")))
           .when(picked, el => el.child(icon("check", 13))))
         .child(div().text_size(12).font_medium().child(issue.title)));
   }

@@ -158,7 +158,7 @@ export default class Changes extends View {
 
   syncBar(t) {
     const s = this.sync, busy = Boolean(this.syncing || this.busy);
-    const action = (id, label, args, name) => div().id(id).h(22).px(8).flex().items_center().rounded(6).text_size(11)
+    const action = (id, label, args, name) => div().id(id).h(24).px(8).flex().items_center().rounded(6).text_size(11)
       .border_1().border_color(t.border).when(!busy, (e) => e.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.runSync(args, name, cx)))
       .text_color(busy ? t.dim : t.foreground).child(label);
     const status = this.syncing ? `${this.syncing === "Push" ? "Pushing" : this.syncing === "Pull" ? "Pulling" : "Publishing"}…`
@@ -171,7 +171,7 @@ export default class Changes extends View {
       .when(!this.syncing && s.behind > 0, (e) => e.child(action("sync-pull", `↓${s.behind} Pull`, ["pull"], "Pull")))
       .when(!this.syncing && s.ahead > 0 && !s.gone, (e) => e.child(action("sync-push", `↑${s.ahead} Push`, ["push"], "Push")))
       .when(!this.syncing && (!s.upstream || s.gone), (e) => e.child(action("sync-publish", "Publish", ["push", "-u", "origin", "HEAD"], "Publish")))
-      .when(!this.syncing && Boolean(s.upstream) && !s.gone, (e) => e.child(div().id("sync-fetch").size(22).flex().items_center().justify_center().rounded(6).text_color(t.muted)
+      .when(!this.syncing && Boolean(s.upstream) && !s.gone, (e) => e.child(div().id("sync-fetch").size(24).tooltip("Check the remote for new commits").accessibility_label("Check the remote for new commits").flex().items_center().justify_center().rounded(6).text_color(t.muted)
         .when(!this.fetching, (e) => e.cursor_pointer().hover((st) => st.bg(t.hover)).on_click((_e, cx) => { this.fetch(cx); cx.notify(); }))
         .child("↻")));
   }
@@ -374,8 +374,8 @@ export default class Changes extends View {
       .child(this.half(r.right, t));
   }
 
-  button(id, label, on, active, t) {
-    return div().id(id).h(26).px(10).flex().items_center().rounded(6).cursor_pointer().text_size(12)
+  button(id, label, on, active, t, name) {
+    return div().id(id).when(Boolean(name), (e) => e.tooltip(name).accessibility_label(name)).h(26).px(10).flex().items_center().rounded(6).cursor_pointer().text_size(12)
       .bg(active ? t.selected : t.background).border_1().border_color(t.border).hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => on(cx)).child(label);
   }
@@ -407,11 +407,11 @@ export default class Changes extends View {
           .child(this.button("cm-unified", "Unified", () => setShared(SPLIT, false), !split, t))
           .child(this.button("cm-split", "Split", () => setShared(SPLIT, true), split, t))))
         .child(div().w(8))
-        .child(this.button("cm-prev", "↑", (cx) => step(-1, cx), false, t))
+        .child(this.button("cm-prev", "↑", (cx) => step(-1, cx), false, t, "Previous file"))
         .child(div().text_size(12).text_color(t.muted).child(`${this.index + 1} / ${this.files.length}`))
-        .child(this.button("cm-next", "↓", (cx) => step(1, cx), false, t))
+        .child(this.button("cm-next", "↓", (cx) => step(1, cx), false, t, "Next file"))
         .child(div().w(8))
-        .child(this.button("cm-close", "✕", () => closeOverlay(props().overlay), false, t)))
+        .child(this.button("cm-close", "✕", () => closeOverlay(props().overlay), false, t, "Close")))
       .when(Boolean(this.pictures), (e) => e.child(imageCompare(this.pictures.before, this.pictures.after, t)))
       .when(!this.pictures, (e) => e.child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
         .when(split, (e) => e.child(v_virtual_list("changes-modal-diff", rows.length, 22, (i) => String(i),
@@ -445,7 +445,7 @@ export default class Changes extends View {
       })
       .when(!this.embedded, el => el.child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Changes"))
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.files.length} files`))
+        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(11).text_color(t.muted).child(`${this.files.length} files`))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
         .child(moveToPaneButton("changes", { message: this.message, context: this.context }, t))))
       // Keep flex sizing on the panel child; the scroll region fills its bounds.

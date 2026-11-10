@@ -39,14 +39,17 @@ let source = (await readFile(new URL("../mods/space-hide/state.js", import.meta.
 source = "const { shared, setShared } = globalThis.__spacesNative;\n" + source;
 const hideState = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, hideState);
+source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { exec } = globalThis.__spacesNative;\n" + source;
+Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/spaces-pin/agent-tree.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { div, image, svg, h_flex, v_flex, agents, terminals, focused, run, setAgentOrder } = globalThis.__spacesNative;\n" + source;
+source = "const { div, image, svg, h_flex, v_flex, agents, terminals, focused, run, setAgentOrder, spin } = globalThis.__spacesNative;\n" + source;
 const { AgentTree, branch } = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;

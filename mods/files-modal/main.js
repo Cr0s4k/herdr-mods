@@ -196,8 +196,8 @@ export default class Files extends View {
     cx.notify();
   }
 
-  button(id, label, on, t) {
-    return div().id(id).h(26).px(10).flex().items_center().rounded(6).cursor_pointer().text_size(12)
+  button(id, label, on, t, name) {
+    return div().id(id).when(Boolean(name), e => e.tooltip(name).accessibility_label(name)).h(26).px(10).flex().items_center().rounded(6).cursor_pointer().text_size(12)
       .bg(t.background).border_1().border_color(t.border).hover(s => s.bg(t.hover))
       .on_click((_e, cx) => on(cx)).child(label);
   }
@@ -220,11 +220,11 @@ export default class Files extends View {
         .child(h_flex().min_w(0).child(div().text_color(t.muted).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().font_semibold().flex_none().child(name)))
         .when(Boolean(mark), el => el.child(div().text_size(12).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark)))
         .child(div().flex_1())
-        .child(this.button("fm-prev", "↑", cx => step(-1, cx), t))
+        .child(this.button("fm-prev", "↑", cx => step(-1, cx), t, "Previous file"))
         .child(div().text_size(12).text_color(t.muted).child(`${this.index + 1} / ${this.files.length}`))
-        .child(this.button("fm-next", "↓", cx => step(1, cx), t))
+        .child(this.button("fm-next", "↓", cx => step(1, cx), t, "Next file"))
         .child(div().w(8))
-        .child(this.button("fm-close", "✕", () => closeOverlay(p.overlay), t)))
+        .child(this.button("fm-close", "✕", () => closeOverlay(p.overlay), t, "Close")))
       .child(this.picture !== undefined ? imageView(this.picture, t) : this.code ? Editor.new(this.code).flex_1().min_h(0) : div().flex_1().p(16).text_color(t.muted).child(this.fileError || "Loading file…"))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child("↑ ↓ file (before clicking into the text)").child("Esc close"));

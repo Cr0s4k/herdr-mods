@@ -1,6 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, shared, setShared, updates, layout } from "herdr";
+import { brighter } from "./ui.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -23,12 +24,11 @@ function toggleSidebar() {
   run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
 }
 
-const brighter = (t) => "#" + [1, 3, 5].map(i => Math.round(parseInt(t.muted.slice(i, i + 2), 16) * 0.65 + parseInt(t.foreground.slice(i, i + 2), 16) * 0.35).toString(16).padStart(2, "0")).join("");
-
 export default class WorkspaceChrome extends View {
-  button(id, label, action) {
+  button(id, label, action, name) {
     const t = theme();
     return div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(name).accessibility_label(name)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click(action).child(label);
   }
   render() {
@@ -50,8 +50,8 @@ export default class WorkspaceChrome extends View {
     return h_flex().size_full().bg(t.chrome).pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13.5)
       .when(window()?.platform === "macos" && !window()?.fullscreen && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(div().flex_1()))
-      .when(!collapsed, el => el.child(this.button("search", svg("mods/workspace-chrome-minimal/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
+      .when(!collapsed, el => el.child(this.button("search", svg("mods/workspace-chrome-minimal/search.svg").size(15), () => run("mod.open", { name: "picker" }), "Search")))
       // On the macOS rail the traffic lights fill the row; the spaces tree unfolds it.
-      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/workspace-chrome-minimal/sidebar.svg").size(15), toggleSidebar)));
+      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/workspace-chrome-minimal/sidebar.svg").size(15), toggleSidebar, "Toggle sidebar")));
   }
 }

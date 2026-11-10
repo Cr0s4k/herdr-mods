@@ -364,7 +364,7 @@ export default class Linear extends View {
         .child(this.button("linear-clear-selection", "Clear", cx => { this.picked.clear(); cx.notify(); }))
         .child(this.button("linear-review-launch", `Launch ${this.picked.size}…`, cx => this.prepareBatch(cx), true)
           .bg(t.solid).text_color(t.solid_foreground))))
-      .child(h_flex().items_center().gap(6).flex_none().px(14).py(8).border_t(1).border_color(t.border).text_size(10.5).text_color(t.muted)
+      .child(h_flex().items_center().gap(6).flex_none().px(14).py(8).border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child(div().flex_1().min_w(0).truncate().tooltip(`${this.source || this.service} · ${this.items.length} loaded${this.hasMore ? "; more available" : ""}`)
           .child(`${visible.length} shown · ${this.items.length}${this.hasMore ? "+" : ""} loaded`))
         .child(this.button("linear-include-done", "Include done", cx => {
@@ -383,7 +383,7 @@ export default class Linear extends View {
       .text_color(t.foreground).hover(s => s.bg(t.hover)).cursor_pointer()
       .accessibility_label(`${issueKey(issue)}: ${issue.title}. ${this.selecting ? this.picked.has(issueId(issue)) ? "Selected" : "Select ticket" : "Open ticket"}`).tooltip(issue.title)
       .child(v_flex().w_full().min_w(0).gap(6)
-        .child(h_flex().gap(7).items_center().text_size(10.5).text_color(t.muted)
+        .child(h_flex().gap(7).items_center().text_size(11).text_color(t.muted)
           .child(div().size(6).rounded(3).flex_none().bg(t[statusColor(issue)]))
           .child(div().flex_none().child(issueKey(issue)))
           .child(div().flex_1().min_w(0).truncate().child(statusName(issue)))
@@ -391,7 +391,7 @@ export default class Linear extends View {
             .when(this.picked.has(issueId(issue)), el => el.child(svg("mods/workspace-chrome/check.svg").size(12).text_color(t.foreground)))))
           .when(priority === "Urgent" || priority === "High", el => el.child(div().flex_none().text_color(priority === "Urgent" ? t.blocked : t.muted).child(priority))))
         .child(div().h(34).max_h(34).overflow_hidden().text_size(12.5).font_medium().whitespace_normal().child(issue.title))
-        .child(div().text_size(10.5).text_color(t.muted).truncate().child(`${projectName(issue)} · ${assigneeName(issue)}`)));
+        .child(div().text_size(11).text_color(t.muted).truncate().child(`${projectName(issue)} · ${assigneeName(issue)}`)));
   }
 
   chooseProject(project, cx) {
@@ -521,14 +521,14 @@ export default class Linear extends View {
                 draft.rows = draft.rows.filter(item => item.id !== row.id); this.picked.delete(row.id); cx.notify();
               }, false, draft.loading)))
             .child(div().text_size(12.5).font_medium().whitespace_normal().child(row.issue.title))
-            .when(Boolean(plan), el => el.child(div().text_size(10.5).text_color(t.muted).whitespace_normal().tooltip(plan?.root || "").child(plan?.branch || "")))
+            .when(Boolean(plan), el => el.child(div().text_size(11).text_color(t.muted).whitespace_normal().tooltip(plan?.root || "").child(plan?.branch || "")))
             .when(Boolean(blockers), el => el.child(div().text_size(11.5).text_color(t.blocked).whitespace_normal().child(`Blocked by ${blockers}`)))
             .when(Boolean(row.error), el => el.child(div().text_size(12).text_color(t.blocked).whitespace_normal().child(row.error)));
         })))
       .child(v_flex().px(14).py(12).gap(8).flex_none().border_t(1).border_color(t.border)
         .child(this.button("linear-batch-launch", draft.loading ? "Preparing…" : `Launch ${draft.rows.length} agents`, cx => this.launchBatch(cx), true, disabled)
           .bg(t.solid).text_color(t.solid_foreground))
-        .child(div().text_size(10.5).text_color(t.muted).whitespace_normal().child(`${this.service} status and assignees stay unchanged.`)));
+        .child(div().text_size(11).text_color(t.muted).whitespace_normal().child(`${this.service} status and assignees stay unchanged.`)));
   }
 
   renderLaunches(t) {
@@ -569,7 +569,7 @@ export default class Linear extends View {
               .child(div().text_color(t[color]).child(row.status === "launched" && !pane && !liveAgent ? "Session closed" : labels[row.status])))
             .child(div().font_medium().text_size(12.5).whitespace_normal().child(row.title))
             .when(Boolean(row.error), el => el.child(div().text_size(11.5).text_color(t.blocked).whitespace_normal().child(row.error)))
-            .when(Boolean(row.workspace), el => el.child(div().text_size(10.5).text_color(t.muted).whitespace_normal()
+            .when(Boolean(row.workspace), el => el.child(div().text_size(11).text_color(t.muted).whitespace_normal()
               .tooltip(row.workspace?.cwd || "").child(row.workspace?.branch || "")))
             .child(h_flex().flex_wrap().gap(6)
               .when(Boolean(pane || liveAgent), el => el.child(this.button(`linear-launch-open-${row.id}`, "Open agent", () => {
@@ -592,7 +592,7 @@ export default class Linear extends View {
           catch (error) { this.retryError = error.message; }
           cx.notify();
         })))
-        .child(div().text_size(10.5).text_color(t.muted).whitespace_normal()
+        .child(div().text_size(11).text_color(t.muted).whitespace_normal()
           .child(pending ? "You can close this panel. Launching continues while Herdr is open." : "Worktrees are kept for review. No changes are merged automatically.")));
   }
 

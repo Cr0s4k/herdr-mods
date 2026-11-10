@@ -168,7 +168,7 @@ export default class Loops extends View {
             (el) => el.child(div().child("Metrics not recorded yet")))
           .when(claude && goal.iterations != null, (el) => el.child(div().child(`${number(goal.iterations)} evaluated turns`))))
         .child(h_flex().items_center().gap(6)
-          .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.muted)
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted)
             .child(goal.updated_at_ms ? `Updated ${new Date(goal.updated_at_ms).toLocaleString()}` : "Saved entry"))
           .when(!claude && Boolean(goal.cwd), (el) => el.child(button(`open-${key}`, "Open session", () => this.open(goal))
             .tooltip("Open this exact thread in a new Codex tab")))
@@ -227,7 +227,7 @@ export default class Loops extends View {
           .child(div().font_medium().child(empty[0]))
           .child(div().text_color(t.muted).whitespace_normal().child(empty[1]))))
         .children(visible.map(goalRow)))
-      .child(div().h(28).flex_none().px(14).flex().items_center().text_size(10.5).text_color(t.muted)
+      .child(div().h(28).flex_none().px(14).flex().items_center().text_size(11).text_color(t.muted)
         .child(this.updated ? "Local loops · refreshes every 10s" : "Local loops"));
   }
 }
