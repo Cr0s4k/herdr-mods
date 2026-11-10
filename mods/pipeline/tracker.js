@@ -22,6 +22,15 @@ export const liveHost = {
   read: async terminal => { const result = await hc(["read", terminal, "--lines", "40"]); return result.code === 0 ? result.stdout : ""; },
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
+  send: async (terminal, text) => { const result = await hc(["send", terminal, text]); if (result.code !== 0) throw new Error(result.stderr); },
+  async check(context, cwd, command) {
+    try {
+      const result = await exec("sh", ["-c", command], { cwd, on: context.on, timeout: 600000 });
+      return { code: result.code, output: [result.stdout, result.stderr].map(part => (part ?? "").trimEnd()).filter(Boolean).join("\n") };
+    } catch (error) {
+      return { code: -1, output: /timeout|timed out/i.test(String(error)) ? "The check ran longer than 10 minutes and was stopped." : String(error?.message ?? error) };
+    }
+  },
   keys: async (terminal, keys) => { const result = await hc(["keys", terminal, ...keys]); if (result.code !== 0) throw new Error(result.stderr); },
   start(context, task, workspace, agent, space) {
     const before = focused(), inSpace = space && spaces().some(row => row.id === space);

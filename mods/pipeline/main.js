@@ -3,11 +3,19 @@ import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } fr
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
-import { trustKeys } from "./pipeline-live.js";
+import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readPlane, openIssue } from "./plane-source.js";
 
 const CHROME = 50 + 46 + 36 + 32;
 const COMET = ["●", "•", "·", "", "", ""];
+const CHECK_HINTS = [
+  "if [ -f package.json ] && grep -q '\"test\"' package.json; then",
+  "  if [ -f pnpm-lock.yaml ]; then echo 'pnpm test'; elif [ -f yarn.lock ]; then echo 'yarn test'; elif [ -f bun.lockb ]; then echo 'bun test'; else echo 'npm test'; fi; fi",
+  "if [ -f Makefile ] && grep -q '^check:' Makefile; then echo 'make check'; elif [ -f Makefile ] && grep -q '^test:' Makefile; then echo 'make test'; fi",
+  "if [ -f Cargo.toml ]; then echo 'cargo test'; fi",
+  "if [ -f go.mod ]; then echo 'go test ./...'; fi",
+  "if [ -f pytest.ini ] || grep -qs pytest pyproject.toml; then echo 'python3 -m pytest'; fi",
+].join("\n");
 const DRAWERS = ["picker", "queue", "review", "done", "activity", "settings", "watch", "quota", "plane"];
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
@@ -16,7 +24,8 @@ const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.bl
   : ["review", "merging"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
 function cardStatus(state, task) {
   if (task.discard) return "Discarding…";
-  if (state.live && task.status === "review") return task.error ? "Not merged · see why" : "Ready for review";
+  if (state.live && task.status === "review") return task.error ? "Not merged · see why" : task.checked === "passed" ? "Checks passed" : task.checked === "failed" ? "Checks failing" : "Ready for review";
+  if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
   if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
   if (task.status === "queued") {
     const waits = dependencies(state, task);
@@ -54,6 +63,11 @@ export default class Pipeline extends View {
     this.message = InputState.new({ placeholder: "Message the agent" });
     this.message.on("change", (_e, cx) => cx.notify());
     this.message.on("submit", (_e, cx) => this.send(this.state()?.tasks.find(task => task.id === this.selected), cx));
+    this.checkInput = InputState.new({ placeholder: "No checks. For example: npm test" });
+    this.checkInput.on("submit", (_e, cx) => this.saveCheck(cx));
+    this.checkInput.on("blur", (_e, cx) => this.saveCheck(cx));
+    this.checkInput.on("change", (_e, cx) => cx.notify());
+    this.checkSuggestions = [];
     this.details = TextareaState.new({ placeholder: "Context, constraints, how to check it…", rows: 4 });
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
@@ -88,7 +102,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.planeSearch.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.planeSearch.release(); this.checkInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -127,6 +141,10 @@ export default class Pipeline extends View {
           : { error: "This folder isn't in a Git repository, so Live can't give agents their own worktrees." };
       } catch { this.repo = { error: "Git couldn't be run for this folder." }; }
       try { this.agentChoices = (await knownAgents({ on })).filter(agent => agent.installed); } catch { this.agentChoices = []; }
+      if (this.repo?.root) {
+        const found = await exec("sh", ["-c", CHECK_HINTS], { cwd: this.repo.root, on }).catch(() => null);
+        this.checkSuggestions = (found?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
+      }
       cx.notify();
     });
   }
@@ -178,7 +196,21 @@ export default class Pipeline extends View {
       if (this.peek.key === key) { this.peek = peek; cx.notify(); }
     });
   }
+  saveCheck(cx) {
+    const state = this.state();
+    if (!state?.live || this.checkInput.value().trim() === (state.check?.command ?? "")) return;
+    this.act({ type: "check", command: this.checkInput.value() }, cx);
+  }
+  fix(task, cx) {
+    const state = this.state();
+    if (!task?.terminal || !state?.check?.command) return;
+    cx.spawn(async cx => {
+      const sent = await hc(["send", task.terminal, fixRequest(state.check.command, task.checkOutput ?? "")]).then(result => result.code === 0, () => false);
+      if (sent) this.act({ type: "fixing", id: task.id }, cx); else { this.focusAgent(task); cx.notify(); }
+    });
+  }
   open(drawer, cx) {
+    if (drawer === "settings" && this.state()?.live) this.checkInput.set_value(this.state().check?.command ?? "");
     if (drawer === "plane" && !this.state()?.live) return;
     if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
     if (drawer !== this.drawer && drawer === "plane") this.planeSearch.set_value("");
@@ -569,7 +601,9 @@ export default class Pipeline extends View {
       { icon: "check", primary: true, small: true, hint: "Answer “Yes, I trust this folder” in its terminal. The worktree is your repository at its current commit." }).absolute().right(8).bottom(8));
     else if (asking) wrap.child(this.button(`answer-${task.id}`, "Answer", cx => { if (state.live) this.focusAgent(task); else { this.inspect(task.id, cx); this.handle.focus(); } }, t,
       { icon: "question", primary: true, small: true, hint: state.live ? "Open its agent's terminal" : task.question?.text ?? "Answer the agent" }).absolute().right(8).bottom(8));
-    if (kind === "review" && task.status === "failed") wrap.child(this.button(`retry-${task.id}`, "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t,
+    if (kind === "review" && task.status === "failed" && task.reason === "checks") wrap.child(this.button(`fix-${task.id}`, "Fix", cx => this.fix(task, cx), t,
+      { icon: "reset", small: true, primary: true, hint: "Send the check output to its agent to fix" }).absolute().right(8).bottom(8));
+    else if (kind === "review" && task.status === "failed") wrap.child(this.button(`retry-${task.id}`, "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t,
       { icon: "reset", small: true, hint: `Return ${task.id} to the queue` }).absolute().right(8).bottom(8));
     return wrap;
   }
@@ -730,6 +764,19 @@ export default class Pipeline extends View {
     body.child(this.button("auto-trust", state.autoTrust ? "Trusting new worktrees automatically" : "Trust new worktrees automatically", cx => this.act({ type: "autoTrust" }, cx), t,
       { icon: state.autoTrust ? "check" : null, selected: Boolean(state.autoTrust), hint: "Answer the agent's “Do you trust this folder?” prompt for worktrees Pipeline made from your repository" }).w_full().justify_start());
     body.child(this.label("Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.", t));
+    body.child(this.heading("Check before review"));
+    body.child(this.label("When an agent finishes, this command runs in its worktree. Passing work moves to review; leave it empty to skip checks.", t));
+    body.child(h_flex().gap(6).items_center()
+      .child(Input.new(this.checkInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Check command"))
+      .child(this.button("check-save", "Save", cx => this.saveCheck(cx), t, { small: true, disabled: this.checkInput.value().trim() === (state.check?.command ?? "") })));
+    const suggestions = this.checkSuggestions.filter(command => command !== state.check?.command);
+    if (suggestions.length) body.child(h_flex().gap(6).flex_wrap().children(suggestions.map(command => this.button(`check-use-${command}`, `Use ${command}`, cx => {
+      this.checkInput.set_value(command); this.act({ type: "check", command }, cx);
+    }, t, { small: true, hint: "Found in this repository" }))));
+    if (state.check?.command) body.child(this.button("check-fix", state.check.fix ? "Failures go back to the agent, up to 2 times" : "Failures wait for you",
+      cx => this.act({ type: "check", fix: !state.check.fix }, cx), t, { icon: state.check.fix ? "check" : null, selected: state.check.fix,
+        hint: state.check.fix ? "Click to stop and wait for you when checks fail" : "Click to send failures back to the agent automatically" }).w_full().justify_start());
     this.stepper(body, "Parallel agents", "Lowering the limit lets running agents finish.", state.parallel, "parallel", 1, 6, t);
     this.stepper(body, "Branches waiting for review", "New agents wait while this many finished branches are unmerged.", state.reviewLimit, "reviewLimit", 1, 10, t);
     body.child(this.heading("Merging"));
@@ -770,14 +817,26 @@ export default class Pipeline extends View {
           { disabled: !this.message.value().trim(), hint: "Types into its terminal and presses Enter" })));
       if (this.sent?.id === task.id) body.child(this.label(this.sent.error ?? (this.sent.pending ? "Sending…" : "Sent. The card follows what the agent does next."), t));
     }
+    if (task.status === "testing") body.child(this.label(`Running ${state.check?.command ?? "checks"} in its worktree…`, t));
+    if (task.status === "failed" && task.reason === "checks" && !task.discard) {
+      body.child(this.heading("Checks failed"));
+      body.child(this.screen((task.checkOutput || "(no output)").split("\n").slice(-16), t, `$ ${state.check?.command ?? ""}`));
+      body.child(h_flex().gap(8).flex_wrap()
+        .child(this.button(`fix-task-${task.id}`, "Ask the agent to fix it", cx => this.fix(task, cx), t, { primary: true, icon: "reset", hint: "Sends this output to its agent" }))
+        .child(this.button(`review-anyway-${task.id}`, "Review anyway", cx => this.act({ type: "reviewAnyway", id: task.id }, cx), t, { hint: "Move it to review with failing checks" }))
+        .child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" })));
+    }
     if (task.status === "review" && !task.discard) {
+      if (task.checked) body.child(div().text_size(12).line_height(1.45).text_color(task.checked === "passed" ? t.muted : t.blocked)
+        .child(task.checked === "passed" ? `Checks passed: ${state.check?.command ?? "checks"}` : "Checks were failing when it moved to review."));
       body.child(this.heading("Changes"));
       body.child(this.peek.diff.length ? this.screen(this.peek.diff, t) : this.label("Reading the branch…", t));
       body.child(this.button(`merge-${task.id}`, `Merge into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
         { icon: "check", primary: true, hint: "Commits anything left, rebases onto it and fast-forwards. Your project folder must have no uncommitted changes." }));
+      if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));
     }
     if (task.status === "merging") body.child(this.label(`Merging into ${target}…`, t));
-    if (task.status === "failed" && !task.discard) body.child(this.button(`retry-task-${task.id}`, task.workspace ? "Retry in the same worktree" : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
+    if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, task.workspace ? "Retry in the same worktree" : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
     if (task.status === "queued" && !task.workspace) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
     else if (!["merging", "done"].includes(task.status) && !task.discard) {
       const sure = this.confirm === task.id;

@@ -179,7 +179,15 @@ task, so parallel agents never touch each other or your checkout.
    for review** when it finishes. A new worktree first asks whether to trust the folder:
    click **Trust** on the card, or turn on **Trust new worktrees automatically** in
    Settings.
-4. Review the change summary in the inspector, send feedback if it needs another pass, then
+4. With a **Check before review** command in Settings (Pipeline suggests one it recognises,
+   such as `npm test`, `make check` or `python3 -m pytest`), a finished agent's worktree is
+   checked first: the card shows **Running checks**, and passing work moves to review marked
+   **Checks passed**. A failure goes back to its agent with the end of the output, up to two
+   times, and is checked again when it finishes; after that (or with **Failures wait for
+   you**) the task stops as **Checks failed** with the output and **Fix**, **Review anyway**
+   and **Run checks again**. Checks run in the worktree with your environment, for up to 10
+   minutes, beside merges and launches rather than in front of them.
+5. Review the change summary in the inspector, send feedback if it needs another pass, then
    **Merge** (or **Merge N tasks**, Y). Merging commits anything the agent left, rebases its
    branch onto the branch your project folder is on and fast-forwards, so history stays
    linear. It refuses, and keeps the task in review with the reason, while your folder has

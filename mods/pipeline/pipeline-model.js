@@ -8,7 +8,7 @@ export const DURATION = { routing: 2200, working: 9500, testing: 5500, merging: 
 export const SPEEDS = [1, 2, 4];
 export const REPOS = ["api", "web", "contracts", "docs"];
 export const LABELS = { backlog: "Backlog", queued: "Queued", routing: "Entering pipeline", working: "Implementing", input: "Needs your input", testing: "Running checks", review: "Awaiting approval", merging: "Merging", done: "Done", failed: "Checks failed" };
-export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Working", input: "Needs you in its terminal", review: "Ready for review", merging: "Merging", done: "Merged", failed: "Stopped" };
+export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Working", input: "Needs you in its terminal", testing: "Running checks", review: "Ready for review", merging: "Merging", done: "Merged", failed: "Stopped" };
 export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[status];
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
@@ -164,6 +164,11 @@ function explain(state, picked) {
 const liveTask = (state, fields, source) => ({ ...fresh({ repos: [state.repo], priority: 2, depends: [], column: "Ready", description: "", ...fields }, "queued", source),
   workspace: null, planned: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
 const PRIORITIES = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
+export const CHECK_FIXES = 2;
+function seat(state, task) {
+  const used = new Set(state.tasks.filter(other => other !== task && ACTIVE.includes(other.status)).map(other => other.slot));
+  task.slot = 0; while (used.has(task.slot)) task.slot++;
+}
 
 const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
 
@@ -275,22 +280,81 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "observe": {
       const task = row(action.id);
-      if (!next.live || !task || task.status === action.status || !["working", "input", "review"].includes(task.status)) return state;
+      const watched = ["working", "input", "review", "testing"].includes(task?.status) || (task?.status === "failed" && task.reason === "checks");
+      if (!next.live || !task || !watched) return state;
+      if (task.status === action.status) {
+        if (action.status !== "working" || task.worked) return state;
+        task.worked = true;
+        break;
+      }
       if (action.status === "failed") {
-        Object.assign(task, { status: "failed", slot: null, error: action.error });
+        Object.assign(task, { status: "failed", slot: null, reason: null, error: action.error });
         event(next, `${task.id} stopped · ${action.error}`, task.id);
         break;
       }
-      if (task.status === "review") {
-        const used = new Set(activeTasks(next).map(other => other.slot));
-        task.slot = 0; while (used.has(task.slot)) task.slot++;
-      }
-      const started = task.worked;
-      task.status = action.status; task.reason = action.reason ?? null;
+      if (action.status === "review" && !["working", "input"].includes(task.status)) return state;
+      const started = task.worked, checks = action.status === "review" && Boolean(next.check?.command);
+      if (task.slot === null || task.slot === undefined) seat(next, task);
+      task.status = checks ? "testing" : action.status; task.reason = action.reason ?? null;
       if (action.status === "working") task.worked = true;
-      if (action.status === "review") task.slot = null;
+      if (checks) { task.checkRun = (task.checkRun ?? 0) + 1; task.checked = null; }
+      if (task.status === "review") task.slot = null;
       event(next, action.reason === "trust" ? `${task.id} · its agent asks whether to trust the new worktree.` : action.status === "input" ? `${task.id} needs you in its terminal.`
-        : action.status === "review" ? `${task.id} finished · ready for your review.` : started ? `${task.id} back to work.` : `${task.id} is working.`, task.id);
+        : checks ? `${task.id} finished · running ${next.check.command}.` : action.status === "review" ? `${task.id} finished · ready for your review.`
+        : started ? `${task.id} back to work.` : `${task.id} is working.`, task.id);
+      break;
+    }
+    case "check": {
+      if (!next.live) return state;
+      const command = String(action.command ?? next.check?.command ?? "").trim().slice(0, 500);
+      const value = command ? { command, fix: action.fix ?? next.check?.fix ?? true } : null;
+      if (JSON.stringify(value) === JSON.stringify(next.check ?? null)) return state;
+      next.check = value;
+      event(next, value ? `Checks before review: ${command}.` : "No checks before review.");
+      break;
+    }
+    case "checkPassed": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "testing" || task.checkRun !== action.run) return state;
+      Object.assign(task, { status: "review", slot: null, checked: "passed", checkOutput: action.output ?? "", reason: null });
+      event(next, `${task.id} checks passed · ready for your review.`, task.id);
+      break;
+    }
+    case "checkFailed": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "testing" || task.checkRun !== action.run) return state;
+      task.checked = "failed"; task.checkOutput = action.output ?? "";
+      if (action.fix) {
+        task.fixes = (task.fixes ?? 0) + 1;
+        Object.assign(task, { status: "working", worked: false, reason: null });
+        event(next, `${task.id} checks failed · sent the output back to its agent (${task.fixes} of ${CHECK_FIXES}).`, task.id);
+      } else {
+        Object.assign(task, { status: "failed", reason: "checks", slot: null });
+        event(next, `${task.id} checks failed · waiting for you.`, task.id);
+      }
+      break;
+    }
+    case "recheck": {
+      const task = row(action.id);
+      if (!next.live || !next.check?.command || !(task?.status === "review" || (task?.status === "failed" && task.reason === "checks")) || !task.workspace) return state;
+      seat(next, task);
+      Object.assign(task, { status: "testing", reason: null, checked: null, checkRun: (task.checkRun ?? 0) + 1, error: null });
+      event(next, `${task.id} · running ${next.check.command} again.`, task.id);
+      break;
+    }
+    case "reviewAnyway": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "failed" || task.reason !== "checks") return state;
+      Object.assign(task, { status: "review", reason: null });
+      event(next, `${task.id} moved to review with failing checks.`, task.id);
+      break;
+    }
+    case "fixing": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "failed" || task.reason !== "checks") return state;
+      seat(next, task);
+      Object.assign(task, { status: "working", reason: null, worked: false });
+      event(next, `${task.id} · sent the check output to its agent.`, task.id);
       break;
     }
     case "autoTrust": if (!next.live) return state; next.autoTrust = !next.autoTrust; break;

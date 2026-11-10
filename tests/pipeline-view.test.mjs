@@ -29,6 +29,7 @@ globalThis.__pipelineView = {
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
   knownAgents: async () => [], exec: async () => ({ code: 0, stdout: "" }), focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
+  fixRequest: (command, output) => `failed: ${command}\n${output}`,
   openIssue: issue => !["completed", "canceled"].includes(issue.statusType),
   readPlane: async payload => { world.planeCalls.push(payload); return world.planeReply?.(payload) ?? { issues: [] }; },
   PathBuilder: { stroke: path }, window: { paint_path: native },
@@ -51,6 +52,7 @@ function find(node, id) {
   if (node?.styles?.id?.[0] === `pipeline-${id}`) return node;
   for (const child of node?.nodes ?? []) { const result = find(child, id); if (result) return result; }
 }
+function text(node) { return typeof node === "string" ? node : (node?.nodes ?? []).map(text).join(" "); }
 function findAll(node, prefix, found = []) {
   if (String(node?.styles?.id?.[0] ?? "").startsWith(`pipeline-${prefix}`)) found.push(node);
   for (const child of node?.nodes ?? []) findAll(child, prefix, found);
@@ -425,4 +427,43 @@ test("an unlinked repository points to the Tasks panel", async () => {
   click(view, "open-tasks");
   assert.deepEqual(world.runs.at(-1), ["tabs-show.plane", undefined]);
   world.planeReply = null;
+});
+
+test("the check command is set in Live settings, from a suggestion or typed", () => {
+  const view = setupLive();
+  view.checkSuggestions = ["npm test"];
+  click(view, "agent");
+  click(view, "check-use-npm test");
+  assert.deepEqual(view.state().check, { command: "npm test", fix: true });
+  view.checkInput.set_value("node --test tests/*.test.mjs");
+  view.checkInput.emit("submit", cx);
+  assert.equal(view.state().check.command, "node --test tests/*.test.mjs");
+  click(view, "check-fix");
+  assert.equal(view.state().check.fix, false);
+  view.checkInput.set_value("");
+  view.checkInput.emit("blur", cx);
+  assert.equal(view.state().check, null);
+});
+
+test("failed checks offer Fix on the card and the full choice in the inspector", async () => {
+  const view = setupLive();
+  view.act({ type: "check", command: "npm test" }, cx);
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "failed", reason: "checks", slot: null, checkOutput: "FAIL one", checked: "failed" });
+  let scene = view.render(cx);
+  assert.equal(find(scene, "retry-T-1"), undefined);
+  assert.ok(find(scene, "fix-T-1"));
+  const spawned = [];
+  view.fix(row(view, "T-1"), { ...cx, spawn: fn => spawned.push(fn) });
+  await spawned[0](cx);
+  assert.deepEqual(world.hc.at(-1), ["send", "t9", "failed: npm test\nFAIL one"]);
+  assert.deepEqual([row(view, "T-1").status, row(view, "T-1").slot], ["working", 0]);
+  agentTask(view, "T-1", { status: "failed", reason: "checks", slot: null });
+  view.inspect("T-1", cx);
+  click(view, "review-anyway-T-1");
+  assert.equal(row(view, "T-1").status, "review");
+  assert.match(text(find(view.render(cx), "card-T-1")), /Checks failing/);
+  click(view, "recheck-T-1");
+  assert.equal(row(view, "T-1").status, "testing");
+  assert.match(text(find(view.render(cx), "card-T-1")), /Running checks/);
 });

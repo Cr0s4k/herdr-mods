@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
 const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, reduce } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
+const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, reduce, CHECK_FIXES } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { STORE, LIVE, createLive, createPipeline, reduce, activeTasks } = model;
 const context = { id: "project", name: "shop", cwd: "/work/shop", on: null };
 const id = `${LIVE}project`;
@@ -122,7 +122,9 @@ test("merging lands the branch, closes the agent's space and removes the worktre
   const world = host(reduce(typed("A"), { type: "run" }, 0));
   const runner = new live.LiveRunner(world.host);
   await step(runner);
-  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "done" }];
+  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "working" }];
+  await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
   await step(runner);
   world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
   assert.equal(row(world.state(), "T-1").status, "merging");
@@ -140,7 +142,9 @@ test("a refused merge returns the task to review with the reason", async () => {
   const world = host(reduce(typed("A"), { type: "run" }, 0), { delivery: async () => { throw new Error("Your project folder has uncommitted changes on main."); } });
   const runner = new live.LiveRunner(world.host);
   await step(runner);
-  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "done" }];
+  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "working" }];
+  await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
   await step(runner);
   world.store = { [id]: reduce(world.state(), { type: "approveAll" }, 0) };
   await step(runner);
@@ -301,4 +305,96 @@ test("the runner polls a watched state about once a minute and reports Plane pro
   now = 62000; await tick();
   assert.equal(calls.at(-1).state, "doing", "a new watch polls at once");
   assert.equal(world.state().planeError, null);
+});
+
+async function finished(world, runner, results) {
+  world.panes = [{ terminal: "t9" }];
+  world.agents = [{ address: "t9", status: "working" }]; await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
+  const spawned = [];
+  runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) });
+  await Promise.all(spawned);
+}
+const checking = (overrides = {}) => {
+  const results = [];
+  const world = host(reduce(reduce(typed("A"), { type: "check", command: "npm test" }, 0), { type: "run" }, 0), {
+    check: async (_context, cwd, command) => { world.checks.push([cwd, command]); return results.shift() ?? { code: 0, output: "ok" }; },
+    send: async (terminal, text) => world.sent.push([terminal, text]), ...overrides });
+  world.checks = []; world.sent = [];
+  return { world, results };
+};
+
+test("a finished agent's work runs the check command in its worktree before review", async () => {
+  const { world } = checking();
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  await finished(world, runner);
+  assert.deepEqual(world.checks, [["/wt/T-1-a", "npm test"]]);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.checked, task.slot], ["review", "passed", null]);
+  assert.match(world.state().events[0].message, /checks passed · ready for your review/);
+});
+
+test("failing checks go back to the agent twice, then stop and wait with the output", async () => {
+  const { world, results } = checking();
+  results.push({ code: 1, output: "\u001b[31mFAIL\u001b[0m one" }, { code: 1, output: "FAIL two" }, { code: 1, output: "FAIL three" });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  await finished(world, runner);
+  let task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.fixes, task.worked], ["working", 1, false]);
+  assert.match(world.sent[0][1], /^The check command failed after your change:\n\$ npm test\nFAIL one\n/);
+  world.agents = [{ address: "t9", status: "done" }];
+  await step(runner);
+  assert.equal(row(world.state(), "T-1").status, "working", "the stale done from before the message does not count");
+  await finished(world, runner);
+  await finished(world, runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.reason, task.checkOutput, task.slot], ["failed", "checks", "FAIL three", null]);
+  assert.equal(world.sent.length, 2);
+  world.store = { [id]: reduce(world.state(), { type: "reviewAnyway", id: "T-1" }, 0) };
+  assert.equal(row(world.state(), "T-1").status, "review");
+  world.store = { [id]: reduce(world.state(), { type: "recheck", id: "T-1" }, 0) };
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").slot], ["testing", 0]);
+});
+
+test("with automatic fixing off, a failing check waits for you, and the agent can still be asked to fix it", async () => {
+  const { world, results } = checking();
+  world.store = { [id]: reduce(world.state(), { type: "check", fix: false }, 0) };
+  results.push({ code: 2, output: "boom" });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  await finished(world, runner);
+  assert.equal(row(world.state(), "T-1").reason, "checks");
+  assert.equal(world.sent.length, 0);
+  world.store = { [id]: reduce(world.state(), { type: "fixing", id: "T-1" }, 0) };
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").slot], ["working", 0]);
+});
+
+test("a check result is dropped when the agent went back to work meanwhile", async () => {
+  let release;
+  const { world } = checking({ check: () => new Promise(resolve => { release = resolve; }) });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.panes = [{ terminal: "t9" }];
+  world.agents = [{ address: "t9", status: "working" }]; await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
+  const spawned = [];
+  runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) });
+  assert.equal(row(world.state(), "T-1").status, "testing");
+  world.agents = [{ address: "t9", status: "working" }];
+  runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) });
+  release({ code: 0, output: "ok" });
+  await Promise.all(spawned);
+  assert.equal(row(world.state(), "T-1").status, "working");
+});
+
+test("check settings are per project and an empty command turns checks off", () => {
+  let state = reduce(createLive(context, 0), { type: "check", command: "  make check  " }, 0);
+  assert.deepEqual(state.check, { command: "make check", fix: true });
+  assert.equal(reduce(state, { type: "check", command: "make check" }, 0), state);
+  state = reduce(state, { type: "check", fix: false }, 0);
+  assert.deepEqual(state.check, { command: "make check", fix: false });
+  assert.equal(reduce(state, { type: "check", command: "" }, 0).check, null);
+  assert.equal(live.tail("a\nb\nc", 2), "b\nc");
 });

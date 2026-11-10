@@ -38,8 +38,9 @@ approval and merge. Live mode runs real agents on one repository: typed tasks or
 from the repository's Plane project (picked, or queued from a watched state), an isolated
 worktree and branch per task, agent tabs in the project's space, Herdr's agent status as
 the task state, and an approved branch rebased and fast-forwarded into the project's
-current branch. Pipeline only reads Plane. Linear as a live source, multi-repository
-tasks, checks, pull requests and agent planning are follow-up work. Agents keep running in herdr-core while Herdr is
+current branch, after an optional check command passes (failures go back to the agent).
+Pipeline only reads Plane. Linear as a live source, multi-repository tasks, pull requests
+and agent planning are follow-up work. Agents keep running in herdr-core while Herdr is
 closed; the tab-bar tracker catches up when it opens.
 
 The user wants to capture and plan work while away from the development machine. Plane's

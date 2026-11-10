@@ -1,4 +1,4 @@
-import { STORE, reduce } from "./pipeline-model.js";
+import { STORE, reduce, CHECK_FIXES } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -24,18 +24,24 @@ export function trustKeys(screen) {
 }
 
 export function observe(task, host) {
-  if (!task.terminal || task.discard || !["working", "input", "review"].includes(task.status)) return null;
+  const watched = ["working", "input", "review", "testing"].includes(task.status) || (task.status === "failed" && task.reason === "checks");
+  if (!task.terminal || task.discard || !watched) return null;
   const agent = host.agents().find(row => row.address === task.terminal);
   const alive = agent || host.terminals().some(row => row.address === task.terminal && row.state === "live") || host.panes().some(row => row.terminal === task.terminal);
   if (!alive) return { status: "failed", error: "Its terminal closed. Retry to start a new agent in the same worktree, or discard the task." };
+  // A finished turn only counts once the agent was seen working, so a stale "done" never ends the next turn early.
   const status = agent?.status === "working" ? "working" : agent?.status === "blocked" ? "input"
-    : agent?.status === "done" || (agent?.status === "idle" && task.worked) ? "review" : null;
-  return status && status !== task.status ? { status } : null;
+    : ["done", "idle"].includes(agent?.status) && task.worked && ["working", "input"].includes(task.status) ? "review" : null;
+  return status && (status !== task.status || (status === "working" && !task.worked)) ? { status } : null;
 }
+
+export const tail = (text, lines = 40) => String(text ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").trimEnd().split("\n").slice(-lines).join("\n").slice(-4000);
+export const fixRequest = (command, output) => ["The check command failed after your change:", `$ ${command}`, output || "(no output)", "",
+  "Fix the problem, commit on this branch, and stop when the check passes."].join("\n");
 
 // Starts, merges and discards real agents' work, one job at a time, and maps agent status onto tasks.
 export class LiveRunner {
-  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); }
+  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); }
 
   pipelines() { return Object.entries(this.host.shared(STORE) ?? {}).filter(([, state]) => state?.live); }
   task(id, taskId) { return this.host.shared(STORE)?.[id]?.tasks.find(task => task.id === taskId); }
@@ -81,6 +87,7 @@ export class LiveRunner {
       if (change) this.apply(id, { type: "observe", id: task.id, ...change });
       else this.watchStartup(id, task, cx);
     }
+    for (const [id, state] of this.pipelines()) for (const task of state.tasks) if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
     if (this.busy) return;
     for (const [id, state] of this.pipelines()) {
       const task = state.tasks.find(task => task.discard) ?? state.tasks.find(task => task.status === "merging" && task.merge)
@@ -111,6 +118,27 @@ export class LiveRunner {
       const keys = this.host.shared(STORE)?.[id]?.autoTrust && trustKeys(screen);
       if (keys && await this.host.keys(task.terminal, keys).then(() => true, () => false)) this.apply(id, { type: "trusted", id: task.id });
       else this.apply(id, { type: "observe", id: task.id, status: "input", reason: "trust" });
+    });
+  }
+
+  // Checks run beside the Git queue so a slow suite never holds up launches or merges.
+  runCheck(id, task, cx) {
+    const key = `${id}/${task.id}/${task.checkRun}`;
+    if (this.checking.has(key)) return;
+    this.checking.add(key);
+    cx.spawn(async () => {
+      try {
+        const state = this.host.shared(STORE)?.[id], command = state?.check?.command;
+        if (!command || !task.workspace?.cwd) { this.apply(id, { type: "checkPassed", id: task.id, run: task.checkRun, output: "" }); return; }
+        const result = await this.host.check(state.context, task.workspace.cwd, command)
+          .catch(error => ({ code: -1, output: error?.message || String(error) }));
+        const now = this.task(id, task.id), output = tail(result.output);
+        if (now?.status !== "testing" || now.checkRun !== task.checkRun) return;
+        if (result.code === 0) { this.apply(id, { type: "checkPassed", id: task.id, run: task.checkRun, output }); return; }
+        const fix = state.check.fix && (now.fixes ?? 0) < CHECK_FIXES && now.terminal
+          && await this.host.send(now.terminal, fixRequest(command, output)).then(() => true, () => false);
+        this.apply(id, { type: "checkFailed", id: task.id, run: task.checkRun, output, fix: Boolean(fix) });
+      } finally { this.checking.delete(key); }
     });
   }
 
