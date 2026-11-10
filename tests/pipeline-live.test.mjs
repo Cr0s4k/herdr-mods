@@ -1149,3 +1149,20 @@ test("saved version 4 live pipelines key their worktrees and pull requests by re
   const simulation = model.migrate({ ...createPipeline(context, 0), version: 4 }, 0);
   assert.deepEqual([simulation.version, simulation.repositories], [model.VERSION, undefined]);
 });
+
+test("a start interrupted after its worktree was planned retries with the same branch and adopts the worktree", async () => {
+  const state = reduce(typed("Add a dark mode toggle"), { type: "run" }, 0);
+  const planned = { root: "/wt/old", branch: "pipeline/T-1-old", base: "b".repeat(40), target: "main", source: "/work/shop", run: "abcdefabcdef" };
+  Object.assign(row(state, "T-1"), { planned: { shop: planned }, launch: null });
+  const world = host(state, { async worktree(_context, payload) {
+    world.scripts.push(["worktree", payload]);
+    if (payload.op === "inspect") return { base: "c".repeat(40), branch: "main", runId: payload.runId, workspaces: [{ root: "/wt/old", branch: "pipeline/T-1-old" }] };
+    return { root: "/wt/old", cwd: "/wt/old", branch: "pipeline/T-1-old", base: "b".repeat(40), adopted: true };
+  } });
+  await step(new live.LiveRunner(world.host));
+  assert.equal(world.scripts[0][1].runId, "abcdefabcdef");
+  assert.equal(world.scripts[1][1].adopt, true);
+  const task = row(world.state(), "T-1");
+  assert.equal(task.status, "working");
+  assert.equal(task.workspaces.shop.base, "b".repeat(40), "the adopted worktree keeps the commit it started from");
+});

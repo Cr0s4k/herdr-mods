@@ -255,8 +255,8 @@ export class LiveRunner {
           const planned = { root: plan.workspaces[0].root, branch: plan.workspaces[0].branch, base: plan.base, target: plan.branch, source, ...(plan.runId ? { run: plan.runId } : {}) };
           this.apply(id, { type: "launch", id: task.id, phase: "creating", repo: name, planned });
           if (!still()) return;
-          const made = await host.worktree(at, { op: "create", plan, ticket });
-          this.apply(id, { type: "launch", id: task.id, phase: "creating", repo: name, workspace: { ...planned, root: made.root, cwd: made.cwd, branch: made.branch } });
+          const made = await host.worktree(at, { op: "create", plan, ticket, adopt: true });
+          this.apply(id, { type: "launch", id: task.id, phase: "creating", repo: name, workspace: { ...planned, root: made.root, cwd: made.cwd, branch: made.branch, ...(made.base ? { base: made.base } : {}) } });
         }
       }
       const current = still();

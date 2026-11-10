@@ -73,6 +73,23 @@ class WorktreeTest(unittest.TestCase):
             helper.create(self.repo, plan, self.tickets[0])
         self.assertEqual((Path(workspace["root"]) / "file.txt").read_text(), "keep these changes\n")
 
+    def test_an_interrupted_start_adopts_its_own_worktree_and_nothing_else(self):
+        plan = helper.inspect(self.repo, self.tickets, "pipeline")
+        made = helper.create(self.repo, plan, self.tickets[0])
+        self.git("commit", "--allow-empty", "-qm", "Source moved on")
+        again = helper.inspect(self.repo, self.tickets, "pipeline", run_id=plan["runId"])
+        adopted = helper.create(self.repo, again, self.tickets[0], adopt=True)
+        self.assertEqual((adopted["root"], adopted["branch"], adopted["cwd"]), (made["root"], made["branch"], made["cwd"]))
+        self.assertEqual(adopted["base"], plan["base"], "the worktree's own commit, not the moved source")
+        self.git("branch", "-q", "stray")
+        helper.git(made["root"], "checkout", "-q", "stray")
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            helper.create(self.repo, again, self.tickets[0], adopt=True)
+        other = helper.inspect(self.repo, [self.tickets[1]], "pipeline", run_id=plan["runId"])
+        Path(other["workspaces"][0]["root"]).mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            helper.create(self.repo, other, self.tickets[1], adopt=True)
+
     def test_non_repository_and_invalid_commit_do_not_create_worktrees(self):
         with self.assertRaises(ValueError):
             helper.inspect(self.home, self.tickets)

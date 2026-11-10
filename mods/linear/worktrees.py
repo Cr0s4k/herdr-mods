@@ -54,7 +54,14 @@ def inspect(cwd, tickets, provider="linear", remote=False, run_id=None):
             "workspaces": workspaces, "provider": provider}
 
 
-def create(cwd, plan, ticket):
+def adoptable(path, common, branch):
+    if not path.is_dir():
+        return False
+    found = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir", optional=True)
+    return bool(found) and Path(found).resolve() == common and git(path, "symbolic-ref", "--short", "HEAD", optional=True) == branch
+
+
+def create(cwd, plan, ticket, adopt=False):
     provider = plan.get("provider", "linear")
     root, common, relative, base = repository(cwd, provider)
     if str(root) != plan["root"] or str(common) != plan["common"]:
@@ -65,6 +72,12 @@ def create(cwd, plan, ticket):
     git(root, "cat-file", "-e", commit + "^{commit}")
     item = workspace(base, plan["runId"], ticket, provider)
     path = Path(item["root"])
+    # A start interrupted after this worktree was made retries with the same plan; it takes the worktree as it is.
+    if adopt and adoptable(path, common, item["branch"]):
+        folder = path / relative
+        if not folder.is_dir():
+            raise ValueError("The working folder is missing from the base commit. The new worktree was kept at " + str(path))
+        return {**item, "cwd": str(folder), "base": git(path, "rev-parse", "HEAD"), "adopted": True}
     if path.exists() or git(root, "show-ref", "--verify", "--quiet", "refs/heads/" + item["branch"], optional=True) is not None:
         raise ValueError("This worktree or branch already exists. It was kept; check the previous launch before retrying.")
     # Every ticket starts at the same reviewed commit, even if the source HEAD later moves.
@@ -82,7 +95,7 @@ def main():
         if payload["op"] == "inspect":
             result = inspect(payload["cwd"], payload["tickets"], payload.get("provider", "linear"), bool(payload.get("remote")), payload.get("runId"))
         elif payload["op"] == "create":
-            result = create(payload["cwd"], payload["plan"], payload["ticket"])
+            result = create(payload["cwd"], payload["plan"], payload["ticket"], bool(payload.get("adopt")))
         else:
             raise ValueError("Unknown worktree operation.")
         print(json.dumps({"data": result}))
