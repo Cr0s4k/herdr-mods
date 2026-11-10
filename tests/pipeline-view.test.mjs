@@ -575,3 +575,11 @@ test("a missing Linear connection points to the Linear panel", async () => {
   assert.deepEqual(world.runs.at(-1), ["tabs-show.linear", undefined]);
   world.planeReply = null;
 });
+
+test("a newer save shows an explanation instead of the scene and is not overwritten", () => {
+  world.data = { [model.STORE]: { project: { ...model.createPipeline({ id: "project", name: "Project" }, 0), version: model.VERSION + 1 } } };
+  const saved = world.data[model.STORE].project;
+  const view = new Pipeline(); view.init({}, cx);
+  assert.equal(world.data[model.STORE].project, saved);
+  assert.match(text(view.render(cx)), /saved by a newer Pipeline/);
+});

@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitingReason, needsApproval, needsInput, quotaHeld, progress, duration } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, samples } from "./geometry.js";
 import { trustKeys, fixRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -95,7 +95,7 @@ export default class Pipeline extends View {
     this.motion = localStorage.getItem("motion") !== "false";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
-    if (saved?.version !== VERSION) setShared(STORE, { ...all, [this.id]: saved ? migrate(saved) : createPipeline(this.context) });
+    if (saved?.version !== VERSION && !newer(saved)) setShared(STORE, { ...all, [this.id]: saved ? migrate(saved) : createPipeline(this.context) });
     if (this.mode === "live") this.enterLive(cx);
     if (appWindow()?.platform === "macos") cx.spawn(async cx => {
       try {
@@ -358,6 +358,9 @@ export default class Pipeline extends View {
   render(cx) {
     const state = this.state(), t = theme();
     if (!state) return div().p(24).text_color(t.foreground).child("Loading Pipeline…");
+    if (newer(state)) return v_flex().p(24).gap(8).text_color(t.foreground)
+      .child(div().text_size(14).font_semibold().child("This pipeline was saved by a newer Pipeline"))
+      .child(div().text_size(12).line_height(1.5).text_color(t.muted).child("It stays untouched until the newer version is installed again. Run ./install.sh from the herdr-mods checkout that has it."));
     this.seen = new Set();
     const now = Date.now(), motion = this.animated();
     const info = {

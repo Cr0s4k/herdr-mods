@@ -2,6 +2,8 @@
 export const STORE = "pipeline.prototype.v1";
 export const LIVE = "live:";
 export const VERSION = 4;
+// A save from a newer Pipeline is left alone: another worktree may have installed an older one meanwhile.
+export const newer = state => Number(state?.version) > VERSION;
 export const SOURCES = { plane: "Plane", linear: "Linear" };
 export const openIssue = issue => !["completed", "canceled", "duplicate"].includes(issue.statusType);
 export const ACTIVE = ["routing", "working", "input", "testing"];
@@ -68,6 +70,7 @@ function ticketed({ watchPlane, planeError, ...state }) {
 }
 
 export function migrate(state, now = Date.now()) {
+  if (newer(state)) return state;
   if (state?.live && state.tasks?.some(task => task.status === "merging" && task.pr && !task.merge))
     state = { ...state, tasks: state.tasks.map(task => task.status === "merging" && task.pr && !task.merge ? { ...task, status: "pr" } : task) };
   if (!state || state.version === VERSION) return state;
@@ -209,6 +212,7 @@ function reviewed(state, task) {
 const SIMULATED = ["add", "addAll", "generate", "repos", "watch", "column", "arrival", "delivery", "speed", "quota", "reserve", "fail", "ask", "answer"];
 
 export function reduce(state, action, now = Date.now()) {
+  if (newer(state)) return state;
   if (state.live && SIMULATED.includes(action.type)) return state;
   const next = JSON.parse(JSON.stringify(state));
   const row = id => next.tasks.find(task => task.id === id);

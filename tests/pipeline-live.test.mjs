@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
 const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, reduce, CHECK_FIXES } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
+const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, CHECK_FIXES } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { STORE, LIVE, createLive, createPipeline, reduce, activeTasks } = model;
 const context = { id: "project", name: "shop", cwd: "/work/shop", on: null };
 const id = `${LIVE}project`;
@@ -565,4 +565,15 @@ test("saved version 3 live pipelines move Plane fields onto the ticket", () => {
   old.tasks.push({ id: "T-2", title: "Open", status: "merging", merge: false, pr: { number: 2 } });
   const both = model.migrate(old, 0);
   assert.deepEqual([both.version, row(both, "T-2").status, row(both, "HMOD-1").ticket.provider], [model.VERSION, "pr", "plane"], "both changes land in one pass");
+});
+
+test("a save from a newer Pipeline is never reset, changed or run", async () => {
+  const future = { ...typed("Keep me"), version: model.VERSION + 1, running: true };
+  assert.equal(model.migrate(future, 0), future);
+  assert.equal(reduce(future, { type: "create", title: "Another" }, 0), future);
+  const world = host(future);
+  const runner = new live.LiveRunner(world.host);
+  runner.step({ spawn: () => assert.fail("nothing runs for a newer save") });
+  assert.equal(world.state(), future);
+  assert.deepEqual(world.started, []);
 });

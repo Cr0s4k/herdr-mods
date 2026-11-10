@@ -1,4 +1,4 @@
-import { STORE, SOURCES, reduce, CHECK_FIXES } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, CHECK_FIXES } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -68,7 +68,7 @@ export class LiveRunner {
     });
   }
 
-  pipelines() { return Object.entries(this.host.shared(STORE) ?? {}).filter(([, state]) => state?.live); }
+  pipelines() { return Object.entries(this.host.shared(STORE) ?? {}).filter(([, state]) => state?.live && !newer(state)); }
   task(id, taskId) { return this.host.shared(STORE)?.[id]?.tasks.find(task => task.id === taskId); }
   apply(id, action) {
     const all = this.host.shared(STORE) ?? {}, state = all[id];
