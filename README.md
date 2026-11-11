@@ -689,7 +689,8 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 
 Switches live in Herdr's shared state (`features`), so they survive restarts. To add one,
 add a row to `FEATURES` in `mods/toggles/main.js` and check
-`shared("features")?.<key> !== false` where the feature is drawn.
+`shared("features")?.<key> !== false` where the feature is drawn. The popup grows to fit
+the new row.
 
 ## What's in here
 
@@ -715,7 +716,7 @@ add a row to `FEATURES` in `mods/toggles/main.js` and check
 | `mods/companion/` | Pixel Companion companion reacting to live agent starts, turns and requests for input |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
-| `mods/toggles/` | Feature toggles popup, opened from the tab bar |
+| `mods/toggles/` | Feature toggles popup, opened from the tab bar; it sizes itself to its rows (`mods/tabs-show/toggles.js` is a symlink) |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
 | `mods/workspace-status-git/` | Herdr's bottom status bar, cloned, with commits to push and pull beside the branch |
 | `mods/changes-modal/sync.js` | Reads the branch's ahead/behind counts, shared with the status bar and review pane through symlinks |

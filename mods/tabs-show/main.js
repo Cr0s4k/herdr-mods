@@ -9,6 +9,7 @@ import { PipelineTracker } from "./pipeline-tracker.js";
 import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 import { brighter, spin, watchMotion } from "./ui.js";
+import { popupSize as togglesSize } from "./toggles.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -174,7 +175,7 @@ export default class Tabs extends View {
     const togglesButton = Button.new("open-toggles").h(26).px(8).flex_none().flex().items_center().rounded(6)
       .text_color(t.muted).tooltip("Feature toggles").accessibility_label("Feature toggles")
       .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
-      .on_click(() => openOverlay({ mod: "toggles", kind: "popup", width: 340, height: 320 }))
+      .on_click(() => openOverlay({ mod: "toggles", kind: "popup", ...togglesSize() }))
       .child(svg("mods/toggles/toggles.svg").size(14));
     const questions = Object.values(shared(PIPELINES) ?? {}).reduce((n, state) => n + (state?.tasks ?? []).filter(task => task.status === "input").length, 0);
     const pipelineButton = Button.new("open-pipeline").h(26).px(8).gap(5).flex_none().flex().items_center().rounded(6)
