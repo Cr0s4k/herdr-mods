@@ -47,9 +47,10 @@ source = (await readFile(new URL("../mods/spaces-pin/agent-tree.js", import.meta
 source = "const { div, image, svg, h_flex, v_flex, agents, terminals, focused, run, setAgentOrder, spin } = globalThis.__spacesNative;\n" + source;
 const { AgentTree, branch } = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
-const { STORE, LIVE } = await import("../mods/pipeline/pipeline-model.js");
+const { STORE, LIVE, spaceKey } = await import("../mods/pipeline/pipeline-model.js");
+globalThis.__spacesNative.spaceKey = spaceKey;
 source = (await readFile(new URL("../mods/spaces-pin/pipeline-row.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = `const { div, svg, h_flex, run, shared, openOverlay } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, LIVE = ${JSON.stringify(LIVE)};\n` + source;
+source = `const { div, svg, h_flex, run, shared, openOverlay, spaceKey } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)};\n` + source;
 Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
@@ -532,13 +533,27 @@ test("a space lists its pipeline once it is in use, a still dot while started, a
   assert.equal(row.nodes.at(-1).styles.spin, undefined);
   assert.ok(row.nodes.at(-1).styles.bg);
   row.handlers.click({}, cx);
-  assert.deepEqual(world.calls, [["space.select", { id: "app" }], ["tab.new", { space: "app", name: "Pipeline", mod: "pipeline", props: { context } }]]);
+  assert.deepEqual(world.calls, [["space.select", { id: "app" }], ["tab.new", { space: "app", name: "Pipeline", mod: "pipeline", props: { context: { ...context, space: "app" } } }]]);
   world.calls = [];
   world.panes = [{ pane: "pipe", mod: "pipeline", tab: "other-tab", terminal: null, cwd: null }];
   click(view.render(), "pipeline-other");
   assert.deepEqual(world.calls, [["space.select", { id: "other" }], ["tab.select", { id: "other-tab" }], ["pane.focus", { pane: "pipe" }]]);
   click(view.render(), "spaces-needs-you");
   assert.equal(find(view.render(), "pipeline-app"), undefined);
+});
+
+test("two spaces in one folder each have their own pipeline; an older shared one stays with the space that started it", () => {
+  const view = setup(), all = {};
+  world.panes = [{ pane: "o", mod: null, tab: "other-tab", terminal: null, cwd: "/work/app" }];
+  const own = (space, running) => all[LIVE + JSON.stringify([null, "/work/app", space])] = { live: true, running, tasks: [{ status: "queued" }], context: { id: JSON.stringify([null, "/work/app", space]), cwd: "/work/app", on: null, name: "app", space } };
+  own("app", true); own("other", false);
+  sharedState.set(STORE, all);
+  assert.match(find(view.render(), "pipeline-app").styles.tooltip[0], /Started/);
+  assert.match(find(view.render(), "pipeline-other").styles.tooltip[0], /Not started/);
+  const older = { live: true, running: true, space: "app", tasks: [], context: { id: JSON.stringify([null, "/work/app"]), cwd: "/work/app", on: null, name: "app" } };
+  sharedState.set(STORE, { [LIVE + JSON.stringify([null, "/work/app"])]: older });
+  assert.ok(find(view.render(), "pipeline-app"));
+  assert.equal(find(view.render(), "pipeline-other"), undefined);
 });
 
 test("closing a space's pipeline asks first, then stops it, discards its work and closes its tab", () => {

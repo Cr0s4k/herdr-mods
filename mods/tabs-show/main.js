@@ -6,7 +6,7 @@ import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
 import { LaunchTracker } from "./linear-launches.js";
 import { PipelineTracker } from "./pipeline-tracker.js";
-import { STORE as PIPELINES } from "./pipeline-model.js";
+import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 import { brighter, spin, watchMotion } from "./ui.js";
 
@@ -57,9 +57,11 @@ export default class Tabs extends View {
     const existing = panes().find(pane => pane.mod === "pipeline" && space.tabs.some(tab => tab.id === pane.tab));
     if (existing) { run("tab.select", { id: existing.tab }); run("pane.focus", { pane: existing.pane }); return; }
     const context = repositoryContext(spaces(), panes(), focused());
-    const cwd = context.cwd || space.folder || "";
+    const cwd = context.cwd || space.folder || "", on = context.on || null;
+    const all = shared(PIPELINES) ?? {}, key = spaceKey(all, on, cwd, space.id);
     run("tab.new", { space: space.id, name: "Pipeline", mod: "pipeline", props: {
-      context: { id: JSON.stringify([context.on || null, cwd]), cwd, on: context.on || null, name: cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || space.name },
+      context: key ? { ...all[key].context, space: space.id }
+        : { id: pipelineId(on, cwd, space.id), cwd, on, name: cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || space.name, space: space.id },
     } });
   }
 

@@ -154,7 +154,7 @@ export default class Pipeline extends View {
     if (next !== state) setShared(STORE, { ...all, [key]: next });
     cx.notify();
   }
-  toggleRun(cx) { this.act({ type: "run", space: focused()?.space ?? null }, cx); }
+  toggleRun(cx) { this.act({ type: "run", space: this.context.space ?? focused()?.space ?? null }, cx); }
   trust(task, cx) {
     if (!task?.terminal) return;
     cx.spawn(async cx => {
@@ -175,6 +175,7 @@ export default class Pipeline extends View {
     const all = shared(STORE) ?? {}, key = LIVE + this.id, saved = all[key];
     if (!saved) setShared(STORE, { ...all, [key]: createLive(this.context) });
     else if (saved.version !== VERSION && !newer(saved)) setShared(STORE, { ...all, [key]: migrate(saved) });
+    else if (!saved.space && this.context.space && !newer(saved)) setShared(STORE, { ...all, [key]: { ...saved, space: this.context.space } });
     const { cwd, on } = this.context;
     cx.spawn(async cx => {
       try {
@@ -302,7 +303,7 @@ export default class Pipeline extends View {
       : time && time === state.schedule?.[kind === "start" ? "pause" : "start"] ? { kind, text: "Start and pause need different times." } : null;
     if (this.timeError) { cx.notify(); return; }
     this.times[kind].set_value(time ?? "");
-    this.act({ type: "schedule", [kind]: time, space: focused()?.space ?? null }, cx);
+    this.act({ type: "schedule", [kind]: time, space: this.context.space ?? focused()?.space ?? null }, cx);
   }
   saveModel(cx) {
     const state = this.state(), key = this.agentKey(state ?? {});

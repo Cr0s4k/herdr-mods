@@ -2,6 +2,12 @@
 export const STORE = "pipeline.prototype.v1";
 export const LIVE = "live:";
 export const VERSION = 5;
+// Pipelines saved before they were per space are keyed by machine and folder alone; one belongs to the space that started it.
+export const pipelineId = (on, cwd, space) => JSON.stringify([on ?? null, cwd, space]);
+export function spaceKey(all, on, cwd, space) {
+  const own = LIVE + pipelineId(on, cwd, space), old = LIVE + JSON.stringify([on ?? null, cwd]);
+  return all[own] ? own : all[old] && (all[old].space ?? space) === space ? old : null;
+}
 // A save from a newer Pipeline is left alone: another worktree may have installed an older one meanwhile.
 export const newer = state => Number(state?.version) > VERSION;
 export const SOURCES = { plane: "Plane", linear: "Linear" };

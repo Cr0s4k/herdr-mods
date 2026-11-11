@@ -1,7 +1,7 @@
 import { svg, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { run, shared, openOverlay } from "herdr";
-import { STORE, LIVE } from "./pipeline-model.js";
+import { STORE, spaceKey } from "./pipeline-model.js";
 
 const unfinished = state => state.running || (state.tasks ?? []).some(task => task.status !== "done" && !task.discard);
 
@@ -11,7 +11,7 @@ export function spacePipeline(s, folders, ps) {
   const tabs = new Set((s.tabs ?? []).map(tab => tab.id));
   const pane = ps.find(p => p.mod === "pipeline" && tabs.has(p.tab)) ?? null;
   const all = shared(STORE) ?? {};
-  const keyed = [...new Set(folders.filter(Boolean))].map(cwd => LIVE + JSON.stringify([s.machine ?? null, cwd])).filter(key => all[key]);
+  const keyed = [...new Set(folders.filter(Boolean))].map(cwd => spaceKey(all, s.machine, cwd, s.id)).filter(Boolean);
   const key = keyed.find(key => all[key].running) ?? keyed.find(key => unfinished(all[key])) ?? null;
   return pane || key ? { pane, state: key ? all[key] : null, key } : null;
 }
@@ -26,7 +26,7 @@ export function pipelineSummary(state) {
 export function openPipeline(s, { pane, state }) {
   run("space.select", { id: s.id });
   if (pane) { run("tab.select", { id: pane.tab }); run("pane.focus", { pane: pane.pane }); }
-  else run("tab.new", { space: s.id, name: "Pipeline", mod: "pipeline", props: { context: state.context } });
+  else run("tab.new", { space: s.id, name: "Pipeline", mod: "pipeline", props: { context: { ...state.context, space: s.id } } });
 }
 
 export function closePipeline(s, { pane, key }) {

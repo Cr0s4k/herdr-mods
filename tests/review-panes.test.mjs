@@ -116,7 +116,7 @@ Object.assign(globalThis.__reviewNative, {
   theme: () => new Proxy({}, { get: (_, key) => key }),
   BriefTracker: class { start() {} observe() {} },
   LaunchTracker: class { start() {} },
-  PipelineTracker: class { start() {} }, PIPELINES: "pipeline.prototype.v1",
+  PipelineTracker: class { start() {} }, PIPELINES: "pipeline.prototype.v1", ...await import("../mods/pipeline/pipeline-model.js").then(({ pipelineId, spaceKey }) => ({ pipelineId, spaceKey })),
   ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
@@ -124,7 +124,7 @@ source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "u
 source = "const { exec } = globalThis.__reviewNative;\n" + source;
 Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -197,7 +197,16 @@ test("Pipeline opens as a mod-only tab and focuses an existing view without dupl
   assert.equal(world.calls.at(-1)[0], "tab.new");
   assert.equal(world.calls.at(-1)[1].mod, "pipeline");
   assert.equal(world.calls.at(-1)[1].props.context.cwd, "/stale");
+  assert.equal(world.calls.at(-1)[1].props.context.id, JSON.stringify([null, "/stale", "space"]));
+  assert.equal(world.calls.at(-1)[1].props.context.space, "space");
   assert.ok(!world.calls.at(-1)[1].argv);
+  const older = { context: { id: JSON.stringify([null, "/stale"]), cwd: "/stale", on: null, name: "stale" } };
+  for (const owner of [undefined, "elsewhere"]) {
+    preferences.set("pipeline.prototype.v1", { ["live:" + older.context.id]: { ...older, space: owner } });
+    find(tabs.render(), "open-pipeline").handlers.click({}, cx);
+    assert.equal(world.calls.at(-1)[1].props.context.id, owner ? JSON.stringify([null, "/stale", "space"]) : older.context.id);
+  }
+  preferences.delete("pipeline.prototype.v1");
   world.spaces[0].tabs.push({ id: "pipeline-tab", active: false });
   world.panes.push({ pane: "pipeline-pane", mod: "pipeline", tab: "pipeline-tab" });
   world.calls = [];
