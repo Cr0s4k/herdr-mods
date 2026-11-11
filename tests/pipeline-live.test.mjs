@@ -477,7 +477,8 @@ test("with pull request delivery, approving pushes the branch and opens a PR int
   await step(runner);
   const publish = world.scripts[0][1];
   assert.deepEqual([publish.op, publish.target, publish.title, publish.branch], ["publish", "main", "Add a dark mode toggle", "pipeline/T-1-add-a-dark-mode-toggle-abc"]);
-  assert.match(publish.body, /^Add a dark mode toggle\n\nOpened by Herdr Pipeline from pipeline\//);
+  assert.equal(publish.body, "Add a dark mode toggle", "without a ticket or a description from the agent, the body is just the title");
+  assert.equal(publish.commit, false, "leftovers are never committed unless asked");
   const task = row(world.state(), "T-1");
   assert.deepEqual([task.status, task.merge, task.prs], ["pr", false, { shop: { url: "https://github.com/me/shop/pull/12", number: 12 } }]);
   assert.ok(task.workspaces && task.terminal, "nothing is cleaned up while the PR is open");
@@ -562,6 +563,41 @@ test("a refused publish stays in review with gh's reason", async () => {
   assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").error], ["review", "The GitHub CLI (gh) isn't installed here."]);
 });
 
+test("leftovers stop a publish; Commit them anyway retries with committing allowed, once", async () => {
+  const world = prHost(), refused = "The task's worktree has uncommitted changes, so its agent may still be working. Ask it to commit them, or commit them anyway.";
+  const publishes = [];
+  world.host.delivery = async (_context, payload) => {
+    if (payload.op !== "publish") return {};
+    publishes.push(payload.commit);
+    if (!payload.commit) throw new Error(refused);
+    return { url: "https://github.com/me/shop/pull/12", number: 12 };
+  };
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").error], ["review", refused]);
+  const asked = reduce(world.state(), { type: "resolving", id: "T-1", ask: "commit" }, 0);
+  assert.equal(row(asked, "T-1").error, null);
+  assert.match(asked.events[0].message, /asked its agent to commit what it left/);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1", commit: true }, 0) };
+  await step(runner);
+  assert.deepEqual(publishes, [false, true]);
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").commit], ["pr", false], "the permission is spent once the PR opens");
+});
+
+test("in pull request mode the prompt hands the branch name and description to the repository's conventions", () => {
+  const state = reduce(createLive(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(7)] }, 0), task = row(state, "HMOD-7");
+  const ws = { cwd: "/wt", branch: "hmod-7-ticket-7", target: "main", base: "a".repeat(40), prBody: "/repo/.git/worktrees/hmod-7/herdr-pr.md" };
+  const text = live.prompt(task, ws, "pr");
+  assert.match(text, /Don't push or open a pull request: once the person approves in Pipeline, it pushes the branch and opens one into main\./);
+  assert.match(text, /rename the branch with `git branch -m`/);
+  assert.match(text, /\/repo\/\.git\/worktrees\/hmod-7\/herdr-pr\.md/);
+  assert.match(text, /a few bullets of what changed, and the ticket link\./);
+  assert.doesNotMatch(live.prompt(task, ws, "merge"), /herdr-pr\.md|git branch -m/, "a local merge needs neither");
+  assert.match(live.prompt(task, { ...ws, prBody: undefined }, "pr"), /git rev-parse --git-path herdr-pr\.md/, "a worktree made before this asks Git for the path");
+});
+
 test("Plane tasks title their PR with the ticket key and link the ticket", async () => {
   const world = prHost();
   world.store = { [id]: reduce(reduce(createLive(context, 0), { type: "deliver", value: "pr" }, 0), { type: "addTickets", provider: "plane", issues: [{ uuid: "plane:p:4", identifier: "HMOD-4", title: "Fix login", description: "Details.", url: "https://plane.test/HMOD-4/", status: "Ready", priority: { name: "High" } }] }, 0) };
@@ -572,7 +608,7 @@ test("Plane tasks title their PR with the ticket key and link the ticket", async
   world.scripts = [];
   await step(runner);
   assert.equal(world.scripts[0][1].title, "HMOD-4: Fix login");
-  assert.match(world.scripts[0][1].body, /^Details\.\n\nPlane: https:\/\/plane\.test\/HMOD-4\//);
+  assert.equal(world.scripts[0][1].body, "Plane: https://plane.test/HMOD-4/", "the fallback body is the ticket link, not the whole ticket");
   assert.equal(reduce(world.state(), { type: "deliver", value: "pr" }, 0), world.state());
 });
 
@@ -1043,8 +1079,8 @@ test("pull requests open one per repository, each body linking the others", asyn
   const calls = world.scripts.map(([, payload]) => payload);
   assert.deepEqual(calls.map(payload => [payload.op, payload.at, payload.optional ?? payload.url]),
     [["publish", "/work/shop", true], ["publish", "/work/api", true], ["pr_edit", "/work/shop", "https://github.com/me/shop/pull/12"], ["pr_edit", "/work/api", "https://github.com/me/api/pull/13"]]);
-  assert.match(calls[2].body, /^Add checkout\n\nOpened by Herdr Pipeline from pipeline\/T-1-add-checkout-abc123abc123\.\n\nThis change spans 2 repositories\. Merge these too:\n- api: https:\/\/github\.com\/me\/api\/pull\/13$/);
-  assert.match(calls[3].body, /- shop: https:\/\/github\.com\/me\/shop\/pull\/12$/);
+  assert.equal(calls[2].note, "2 repositories. Merge these too:\n- api: https://github.com/me/api/pull/13");
+  assert.match(calls[3].note, /- shop: https:\/\/github\.com\/me\/shop\/pull\/12$/);
   const task = row(world.state(), "T-1");
   assert.deepEqual([task.status, task.prs], ["pr", { shop: { url: "https://github.com/me/shop/pull/12", number: 12 }, api: { url: "https://github.com/me/api/pull/13", number: 13 } }]);
   assert.equal(model.prNeeds(task).label, "2 PRs open");

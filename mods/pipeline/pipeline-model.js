@@ -669,7 +669,8 @@ export function reduce(state, action, now = Date.now()) {
       const task = row(action.id);
       if (!next.live || task?.status !== "review" || !task.error) return state;
       task.error = null; task.approvals = [];
-      event(next, `${task.id} · asked its agent to rebase onto ${targetOf(task) ?? "your branch"} and resolve the conflicts.`, task.id);
+      event(next, action.ask === "commit" ? `${task.id} · asked its agent to commit what it left.`
+        : `${task.id} · asked its agent to rebase onto ${targetOf(task) ?? "your branch"} and resolve the conflicts.`, task.id);
       break;
     }
     case "usage": {
@@ -928,7 +929,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "merging" || !opened.length) return state;
       const prs = { ...task.prs };
       for (const [name, pr] of opened) prs[name] = { url: pr.url, number: pr.number };
-      Object.assign(task, { status: "pr", merge: false, error: null, prs });
+      Object.assign(task, { status: "pr", merge: false, commit: false, error: null, prs });
       event(next, task.repos.length > 1 ? `${task.id} · pull requests open: ${prList(prs)}. It finishes when every one is merged on GitHub.`
         : `${task.id} · pull request #${opened[0][1].number} opened. It finishes when it's merged on GitHub.`, task.id);
       ticketUpdate(next, task, "link");
@@ -966,7 +967,7 @@ export function reduce(state, action, now = Date.now()) {
     case "merged": {
       const task = row(action.id);
       if (!next.live || task?.status !== "merging") return state;
-      Object.assign(task, { status: "done", merge: false, finished: ++next.sequence, error: null, target: action.target ?? null });
+      Object.assign(task, { status: "done", merge: false, commit: false, finished: ++next.sequence, error: null, target: action.target ?? null });
       recordPushes(next, task, action.pushes);
       event(next, `${task.id} merged into ${action.target}${pushEvent(action.pushes?.length ? pushNote(task) : null)}`.replace(/\.*$/, "."), task.id);
       ticketUpdate(next, task, "merge");
@@ -975,7 +976,7 @@ export function reduce(state, action, now = Date.now()) {
     case "mergeFailed": {
       const task = row(action.id);
       if (!next.live || task?.status !== "merging") return state;
-      Object.assign(task, { status: "review", merge: false, approvals: [], error: action.error });
+      Object.assign(task, { status: "review", merge: false, commit: false, approvals: [], error: action.error });
       event(next, `${task.id} not merged · ${action.error}`, task.id);
       break;
     }
@@ -1090,7 +1091,12 @@ export function reduce(state, action, now = Date.now()) {
       event(next, `${task.id} · you answered “${value}”. Back to work.`, task.id);
       break;
     }
-    case "approve": if (!approve(next, row(action.id), action.repo ? [action.repo] : row(action.id)?.repos ?? [])) return state; break;
+    case "approve": {
+      const task = row(action.id);
+      if (!approve(next, task, action.repo ? [action.repo] : task?.repos ?? [])) return state;
+      if (next.live && action.commit) task.commit = true;
+      break;
+    }
     case "approveAll": if (!next.tasks.reduce((count, task) => count + approve(next, task, task.repos), 0)) return state; break;
     case "retry":
       if (action.id) retry(next, row(action.id));

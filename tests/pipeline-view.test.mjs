@@ -34,7 +34,7 @@ globalThis.__pipelineView = {
   knownAgents: async () => [], exec: async (...args) => world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
-  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, changedFiles: live.changedFiles,
+  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
   fullTickets: async (provider, issues) => { world.fullCalls = [...(world.fullCalls ?? []), [provider, issues.map(issue => issue.identifier)]];
@@ -931,6 +931,23 @@ test("a merge refused for conflicts offers to send its agent to rebase", async (
   assert.equal(tint("merge-T-1"), tint("approve-T-1"));
   agentTask(view, "T-1", { status: "review", slot: null, error: "Your project folder has uncommitted changes on main. Commit or stash them, then merge again." });
   assert.equal(find(view.render(cx), "resolve-T-1"), undefined, "an agent can't fix your own uncommitted changes");
+});
+
+test("work the agent left uncommitted offers to ask it to commit, or to commit it anyway", async () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null, error: "The task's worktree has uncommitted changes, so its agent may still be working. Ask it to commit them, or commit them anyway." });
+  view.inspect("T-1", cx);
+  const tint = id => find(view.render(cx), id).styles.bg[0];
+  assert.notEqual(tint("merge-T-1"), tint("ask-commit-T-1"), "approving again would only be refused again");
+  world.hc = [];
+  await settle(view, "ask-commit-T-1");
+  assert.deepEqual(world.hc.at(-1), ["send", "t9", "commit what you left"]);
+  assert.equal(row(view, "T-1").error, null);
+  assert.equal(find(view.render(cx), "commit-anyway-T-1"), undefined);
+  agentTask(view, "T-1", { status: "review", slot: null, error: "The task's worktree has uncommitted changes, so its agent may still be working. Ask it to commit them, or commit them anyway." });
+  click(view, "commit-anyway-T-1");
+  assert.deepEqual([row(view, "T-1").commit, row(view, "T-1").error], [true, null]);
 });
 
 test("a narrow Pipeline keeps Start in reach, and wide windows give cards room for titles", () => {

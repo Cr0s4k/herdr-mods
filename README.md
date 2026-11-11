@@ -257,24 +257,29 @@ task, so parallel agents never touch each other or your checkout.
    lines added and removed. Click a file, or **Read the changes** (D), to read the full diff
    in the changes dialog, file by file. The list is there while the agent works too; the
    round arrow reads it again. Send feedback if it needs another pass, then
-   **Merge** (or **Merge N tasks**, Y). Merging commits anything the agent left, rebases its
-   branch onto the branch your project folder is on and fast-forwards, so history stays
-   linear. It refuses, and keeps the task in review with the reason, while your folder has
-   uncommitted changes or the branch conflicts. Afterwards the agent's tab closes and its
-   worktree and branch are removed. **Discard** (asked twice) stops the agent and deletes the
-   worktree and branch. When a merge is refused because the branch conflicts, **Ask the agent
-   to rebase** sends the refusal to its agent, which rebases, resolves the conflicts and
-   comes back to review.
+   **Merge** (or **Merge N tasks**, Y). Merging rebases its branch onto the branch your project
+   folder is on and fast-forwards, so history stays linear. It refuses, and keeps the task in
+   review with the reason, while your folder or the agent's worktree has uncommitted changes,
+   or the branch conflicts. Pipeline never commits for the agent on its own: **Ask the agent
+   to commit** sends it back to commit (or finish first), **Commit them anyway** commits
+   everything as one commit. Afterwards the agent's tab closes and its worktree and branch are
+   removed. **Discard** (asked twice) stops the agent and deletes the worktree and branch. When
+   a merge is refused because the branch conflicts, **Ask the agent to rebase** sends the
+   refusal to its agent, which rebases, resolves the conflicts and comes back to review.
 
    Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
    finishes with passing checks (or with no check set) merges straight away. Work you sent
    on with **Review anyway**, and a merge that was refused, still wait for you.
 
    To review on GitHub instead, set **Delivery** to **Open a pull request** in Settings. The
-   approve action becomes **Open PR**: Pipeline commits anything the agent left, pushes the
-   branch to `origin` and runs `gh pr create` into the branch the worktree started from, with
-   the task details, the ticket link and the check result in the description (a Plane or
-   Linear task's PR is titled with its key). The card then moves to its own **Pull requests**
+   approve action becomes **Open PR**: Pipeline pushes the branch to `origin` and runs
+   `gh pr create` into the branch the worktree started from (a Plane or Linear task's PR is
+   titled with its key). The branch is named after the task (`hmod-7-fix-login`, no
+   prefix), and the agent is told to follow the repository's conventions: it renames the
+   branch if the repository names them differently, and writes the description from the
+   repository's PR template or rules, or one summary line, a few bullets and the ticket link.
+   It writes it to `herdr-pr.md` in the worktree's Git folder, so it is never committed;
+   without one the description is just the ticket link. The card then moves to its own **Pull requests**
    section under Review, with a link. Pipeline asks GitHub once a minute what the PR waits for and
    puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
    **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by

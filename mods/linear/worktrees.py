@@ -31,7 +31,18 @@ def workspace(base, run_id, ticket, provider="linear"):
     if not key or not re.fullmatch(r"[a-f0-9]{12}", run_id):
         raise ValueError("Invalid ticket or launch identifier.")
     leaf = key + "-" + run_id
-    return {"id": ticket["id"], "key": ticket["key"], "branch": provider + "/" + leaf, "root": str(base / leaf)}
+    # Pipeline branches end up on GitHub, so they carry the plain ticket name; the run id only keeps folders apart.
+    branch = key if provider == "pipeline" else provider + "/" + leaf
+    return {"id": ticket["id"], "key": ticket["key"], "branch": branch, "root": str(base / leaf)}
+
+
+def taken(root, branch):
+    return any(git(root, "show-ref", "--verify", "--quiet", ref + branch, optional=True) is not None
+               for ref in ("refs/heads/", "refs/remotes/origin/"))
+
+
+def names(item, provider):
+    return [item["branch"]] + ([item["branch"] + "-" + str(n) for n in range(2, 10)] if provider == "pipeline" else [])
 
 
 def inspect(cwd, tickets, provider="linear", remote=False, run_id=None):
@@ -54,11 +65,12 @@ def inspect(cwd, tickets, provider="linear", remote=False, run_id=None):
             "workspaces": workspaces, "provider": provider}
 
 
-def adoptable(path, common, branch):
+def adoptable(path, common, branches):
     if not path.is_dir():
-        return False
+        return None
     found = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir", optional=True)
-    return bool(found) and Path(found).resolve() == common and git(path, "symbolic-ref", "--short", "HEAD", optional=True) == branch
+    current = git(path, "symbolic-ref", "--short", "HEAD", optional=True)
+    return current if found and Path(found).resolve() == common and current in branches else None
 
 
 def create(cwd, plan, ticket, adopt=False):
@@ -71,22 +83,30 @@ def create(cwd, plan, ticket, adopt=False):
         raise ValueError("Invalid base commit. Review this launch again.")
     git(root, "cat-file", "-e", commit + "^{commit}")
     item = workspace(base, plan["runId"], ticket, provider)
-    path = Path(item["root"])
+    path, candidates = Path(item["root"]), names(item, provider)
     # A start interrupted after this worktree was made retries with the same plan; it takes the worktree as it is.
-    if adopt and adoptable(path, common, item["branch"]):
+    adopted = adopt and adoptable(path, common, candidates)
+    if adopted:
         folder = path / relative
         if not folder.is_dir():
             raise ValueError("The working folder is missing from the base commit. The new worktree was kept at " + str(path))
-        return {**item, "cwd": str(folder), "base": git(path, "rev-parse", "HEAD"), "adopted": True}
-    if path.exists() or git(root, "show-ref", "--verify", "--quiet", "refs/heads/" + item["branch"], optional=True) is not None:
+        return {**item, "branch": adopted, "cwd": str(folder), "base": git(path, "rev-parse", "HEAD"), "adopted": True, **notes(path, provider)}
+    free = next((name for name in candidates if not taken(root, name)), None)
+    if path.exists() or not free:
         raise ValueError("This worktree or branch already exists. It was kept; check the previous launch before retrying.")
+    item["branch"] = free
     # Every ticket starts at the same reviewed commit, even if the source HEAD later moves.
     path.parent.mkdir(parents=True, exist_ok=True)
     git(root, "worktree", "add", "--no-track", "-b", item["branch"], "--", str(path), commit)
     folder = path / relative
     if not folder.is_dir():
         raise ValueError("The working folder is missing from the base commit. The new worktree was kept at " + str(path))
-    return {**item, "cwd": str(folder)}
+    return {**item, "cwd": str(folder), **notes(path, provider)}
+
+
+def notes(path, provider):
+    found = provider == "pipeline" and git(path, "rev-parse", "--path-format=absolute", "--git-path", "herdr-pr.md", optional=True)
+    return {"prBody": found} if found else {}
 
 
 def main():

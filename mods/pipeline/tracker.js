@@ -45,9 +45,9 @@ export const liveHost = {
     }
   },
   keys: async (terminal, keys) => { const result = await hc(["keys", terminal, ...keys]); if (result.code !== 0) throw new Error(result.stderr); },
-  start(context, task, workspaces, agent, space) {
+  start(context, task, workspaces, agent, space, delivery) {
     const before = focused(), inSpace = space && spaces().some(row => row.id === space);
-    const opening = { folder: workspaces[0].cwd, argv: agent.run, task: prompt(task, workspaces) };
+    const opening = { folder: workspaces[0].cwd, argv: agent.run, task: prompt(task, workspaces, delivery) };
     if (inSpace) run("tab.new", { ...opening, space, name: task.id });
     else run("space.new", { ...opening, machine: context.on || "", tab: task.id });
     const own = inSpace ? "tab" : "space";

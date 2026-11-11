@@ -3,7 +3,7 @@ import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Swi
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, fixRequest, rebaseRequest, changedFiles } from "./pipeline-live.js";
+import { trustKeys, fixRequest, rebaseRequest, commitRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
@@ -22,6 +22,7 @@ const CHECK_HINTS = [
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
 const conflicted = task => task.status === "review" && task.error && task.terminal && !task.discard && /rebase|conflict/i.test(task.error);
+const uncommitted = task => task.status === "review" && !task.discard && /task's worktree has uncommitted changes/.test(task.error ?? "");
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
@@ -257,12 +258,12 @@ export default class Pipeline extends View {
     openOverlay({ mod: "changes-modal", kind: "dialog", width: 0.9, height: 0.9,
       props: { root: repo.root, on: this.context.on ?? null, hasHead: true, base: repo.base, files: repo.files, index } });
   }
-  resolve(task, cx) {
+  resolve(task, cx, ask = "rebase") {
     if (!task?.terminal || !task.error) return;
     const target = targetOf(task) ?? this.repo?.branch ?? "your branch";
     cx.spawn(async cx => {
-      const sent = await hc(["send", task.terminal, rebaseRequest(target, task.error)]).then(result => result.code === 0, () => false);
-      if (sent) this.act({ type: "resolving", id: task.id }, cx); else { this.focusAgent(task); cx.notify(); }
+      const sent = await hc(["send", task.terminal, ask === "commit" ? commitRequest() : rebaseRequest(target, task.error)]).then(result => result.code === 0, () => false);
+      if (sent) this.act({ type: "resolving", id: task.id, ask }, cx); else { this.focusAgent(task); cx.notify(); }
     });
   }
   step(delta, cx) {
@@ -1155,8 +1156,8 @@ export default class Pipeline extends View {
     if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
       Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
     body.child(this.label(state.delivery === "pr"
-      ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} commits anything the agent left, pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
-      : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} commits anything the agent left, rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while your project folder has uncommitted changes or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
+      ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh, described by the agent. It waits while the agent has uncommitted changes. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
+      : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while the agent or your project folder has uncommitted changes, or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
     this.ticketUpdates(body, state, t);
     body.child(div().h(1).bg(t.border));
     body.child(this.switchRow("notify", "Notify me", "When checks fail, a merge is refused, a pull request needs you or finished work is ready, while you're looking elsewhere",
@@ -1283,6 +1284,11 @@ export default class Pipeline extends View {
     if (task.stalled) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Its terminal has shown nothing new for ${elapsed(Date.now() - task.stalled)}. Open its agent to see whether it is stuck.`));
     if (conflicted(task)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${target}`, cx => this.resolve(task, cx), t,
       { icon: "reset", primary: true, hint: "Sends the refusal to its agent, which rebases, resolves the conflicts and stops for review again" }));
+    if (uncommitted(task)) body.child(h_flex().gap(8).flex_wrap()
+      .when(Boolean(task.terminal), el => el.child(this.button(`ask-commit-${task.id}`, "Ask the agent to commit", cx => this.resolve(task, cx, "commit"), t,
+        { icon: "reset", primary: true, hint: "Asks its agent to commit what belongs to the task, or to finish first if it is still working" })))
+      .child(this.button(`commit-anyway-${task.id}`, "Commit them anyway", cx => this.act({ type: "approve", id: task.id, commit: true }, cx), t,
+        { icon: "check", hint: `Commits everything in its worktree as one commit, then ${state.delivery === "pr" ? "opens the pull request" : "merges"}` })));
     const ticket = task.ticket, service = SOURCES[ticket?.provider];
     if (service) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${service} ${ticket.key} · ${ticket.status} · ${task.source}`))
       .when(Boolean(ticket.url), el => el.child(this.button(`${ticket.provider}-link-${task.id}`, `Open in ${service}`, () => this.openLink(ticket.url), t, { small: true, icon: ticket.provider, hint: ticket.url }))));
@@ -1330,10 +1336,10 @@ export default class Pipeline extends View {
       if (!needsApproval(task)) body.child(this.label(`Approved. It ${state.delivery === "pr" ? "opens its pull requests" : "merges"} once another task finishes merging in ${task.repos.join(" + ")}.`, t));
       else body.child(state.delivery === "pr"
         ? this.button(`merge-${task.id}`, several ? `Open pull requests into ${target}` : `Open a pull request into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
-          { icon: "check", primary: true, hint: `Commits anything left, pushes the branch to origin and opens a pull request with gh${several ? " in each repository the agent changed; each one links the others" : ""}.` })
+          { icon: "check", primary: !uncommitted(task), hint: `Pushes the branch to origin and opens a pull request with gh${several ? " in each repository the agent changed; each one links the others" : ""}. Refuses while the agent has uncommitted changes.` })
         : this.button(`merge-${task.id}`, several ? `Merge into ${target} in all ${task.repos.length}` : `Merge into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
-          { icon: "check", primary: !conflicted(task), hint: several ? "Commits anything left, rebases every repository's branch, and fast-forwards them only if all rebased cleanly. Your project folders must have no uncommitted changes."
-            : "Commits anything left, rebases onto it and fast-forwards. Your project folder must have no uncommitted changes." }));
+          { icon: "check", primary: !conflicted(task) && !uncommitted(task), hint: several ? "Rebases every repository's branch, and fast-forwards them only if all rebased cleanly. Its worktrees and your project folders must have no uncommitted changes."
+            : "Rebases onto it and fast-forwards. Its worktree and your project folder must have no uncommitted changes." }));
       if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));
     }
     if (task.status === "pr" && task.prs) {

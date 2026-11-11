@@ -18,9 +18,28 @@ def branch_exists(top, branch):
     return git(top, "show-ref", "--verify", "--quiet", "refs/heads/" + branch, optional=True) is not None
 
 
-def prepare(repo, title):
+UNCOMMITTED = "The task's worktree has uncommitted changes, so its agent may still be working. Ask it to commit them, or commit them anyway."
+
+
+# The agent may rename its branch to fit the repository's conventions.
+def branch_of(worktree, stored):
+    current = worktree.is_dir() and git(worktree, "symbolic-ref", "--short", "-q", "HEAD", optional=True)
+    return current or stored
+
+
+def commit_leftovers(worktree, title, allowed):
+    if not (worktree.is_dir() and git(worktree, "status", "--porcelain")):
+        return
+    if not allowed:
+        raise ValueError(UNCOMMITTED)
+    git(worktree, "add", "-A")
+    git(worktree, "commit", "-q", "-m", title)
+
+
+def prepare(repo, title, allowed=False):
     top = git(repo["root"], "rev-parse", "--show-toplevel")
-    worktree, branch = Path(repo["worktree"]), repo["branch"]
+    worktree = Path(repo["worktree"])
+    branch = branch_of(worktree, repo["branch"])
     target = git(top, "symbolic-ref", "--short", "HEAD", optional=True)
     if not target:
         raise ValueError("Your project folder is on a detached HEAD. Check out a branch, then merge again.")
@@ -28,9 +47,7 @@ def prepare(repo, title):
         raise ValueError("The task branch " + branch + " no longer exists.")
     if git(top, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("Your project folder has uncommitted changes on " + target + ". Commit or stash them, then merge again.")
-    if worktree.is_dir() and git(worktree, "status", "--porcelain"):
-        git(worktree, "add", "-A")
-        git(worktree, "commit", "-q", "-m", title)
+    commit_leftovers(worktree, title, allowed)
     tip = git(top, "rev-parse", "refs/heads/" + branch)
     changed = tip != repo.get("base")
     already = changed and git(top, "merge-base", "--is-ancestor", tip, "HEAD", optional=True) is not None
@@ -59,7 +76,7 @@ def merge(payload):
         except ValueError as error:
             raise ValueError((item.get("name") + ": " if several else "") + str(error))
 
-    items = [named(repo, lambda repo: prepare(repo, payload["title"])) for repo in repos]
+    items = [named(repo, lambda repo: prepare(repo, payload["title"], bool(payload.get("commit")))) for repo in repos]
     if not any(item["changed"] for item in items):
         raise ValueError("The agent made no changes to merge. Send it feedback, or discard the task.")
     pending = [item for item in items if item["changed"] and not item["already"]]
@@ -136,27 +153,36 @@ def pull_request(text):
 
 def publish(payload):
     top = git(payload["root"], "rev-parse", "--show-toplevel")
-    worktree, branch, title = Path(payload["worktree"]), payload["branch"], payload["title"]
+    worktree, title = Path(payload["worktree"]), payload["title"]
+    branch = branch_of(worktree, payload["branch"])
     if not branch_exists(top, branch):
         raise ValueError("The task branch " + branch + " no longer exists.")
     if git(top, "remote", "get-url", "origin", optional=True) is None:
         raise ValueError("This repository has no origin remote to push the branch to. Add one, or deliver by merging locally.")
-    if worktree.is_dir() and git(worktree, "status", "--porcelain"):
-        git(worktree, "add", "-A")
-        git(worktree, "commit", "-q", "-m", title)
+    commit_leftovers(worktree, title, bool(payload.get("commit")))
     if git(top, "rev-parse", "refs/heads/" + branch) == payload.get("base"):
         if payload.get("optional"):
             return {"skipped": True}
         raise ValueError("The agent made no changes to open a pull request for. Send it feedback, or discard the task.")
     git(top, "push", "-q", "-u", "origin", branch + ":" + branch)
     where = worktree if worktree.is_dir() else top
-    created = gh(where, "pr", "create", "--head", branch, "--base", payload["target"], "--title", title, "--body", payload.get("body") or title)
+    body = written(worktree) or payload.get("body") or title
+    created = gh(where, "pr", "create", "--head", branch, "--base", payload["target"], "--title", title, "--body", body)
     found = pull_request(created.stdout)
     if created.returncode and "already exists" in created.stderr:
         found = pull_request(created.stderr) or pull_request(gh(where, "pr", "view", branch, "--json", "url", "--jq", ".url").stdout)
     if not found:
         raise ValueError((created.stderr or created.stdout).strip() or "GitHub didn't return a pull request.")
     return found
+
+
+# The agent writes the description inside the worktree's Git folder, so it is never committed.
+def written(worktree):
+    path = worktree.is_dir() and git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-pr.md", optional=True)
+    try:
+        return Path(path).read_text().strip() if path else None
+    except OSError:
+        return None
 
 
 FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
@@ -193,8 +219,15 @@ def pr_state(payload):
     return {"state": pr.get("state", "OPEN"), "status": status}
 
 
+SPANS = "\n\nThis change spans "
+
+
 def pr_edit(payload):
-    edited = gh(payload["root"], "pr", "edit", payload["url"], "--body", payload["body"])
+    viewed = gh(payload["root"], "pr", "view", payload["url"], "--json", "body", "--jq", ".body")
+    if viewed.returncode:
+        raise ValueError(viewed.stderr.strip() or "GitHub didn't answer about the pull request.")
+    body = viewed.stdout.rstrip("\n").split(SPANS)[0] + SPANS + payload["note"]
+    edited = gh(payload["root"], "pr", "edit", payload["url"], "--body", body)
     if edited.returncode:
         raise ValueError(edited.stderr.strip() or "GitHub didn't update the pull request.")
     return {"edited": True}
@@ -202,7 +235,8 @@ def pr_edit(payload):
 
 def remove(payload):
     top = git(payload["root"], "rev-parse", "--show-toplevel")
-    worktree, branch, force = Path(payload["worktree"]), payload["branch"], bool(payload.get("force"))
+    worktree, force = Path(payload["worktree"]), bool(payload.get("force"))
+    branch = branch_of(worktree, payload["branch"])
     if worktree.exists():
         git(top, "worktree", "remove", *(["--force"] if force else []), str(worktree))
     git(top, "worktree", "prune", optional=True)

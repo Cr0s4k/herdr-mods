@@ -48,6 +48,10 @@ class DeliveryTest(unittest.TestCase):
     def git(self, cwd, *args):
         return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
 
+    def git_optional(self, cwd, *args):
+        result = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+        return result.stdout.strip() if result.returncode == 0 else None
+
     def payload(self, op, **extra):
         return {"op": op, "root": str(self.repo), "worktree": str(self.tree), "branch": self.workspace["branch"],
                 "base": self.base, "title": "T-1 Add notes", **extra}
@@ -57,9 +61,36 @@ class DeliveryTest(unittest.TestCase):
         self.git(self.tree, "add", ".")
         self.git(self.tree, "commit", "-qm", "Agent work")
 
-    def test_pipeline_worktrees_use_their_own_namespace(self):
-        self.assertTrue(self.workspace["branch"].startswith("pipeline/t-1-add-notes-"))
+    def test_pipeline_branches_carry_the_plain_ticket_name_and_worktrees_their_own_folder(self):
+        self.assertEqual(self.workspace["branch"], "t-1-add-notes")
         self.assertEqual(self.tree.parent.name, "pipeline")
+        self.assertTrue(self.tree.name.startswith("t-1-add-notes-"))
+
+    def test_a_taken_branch_name_gets_a_number(self):
+        plan = worktrees.inspect(self.repo, [{"id": "T-1", "key": "T-1-add-notes"}], "pipeline")
+        again = worktrees.create(self.repo, plan, {"id": "T-1", "key": "T-1-add-notes"})
+        self.assertEqual(again["branch"], "t-1-add-notes-2")
+        self.with_origin()
+        self.git(self.repo, "push", "-q", "origin", "main:t-1-add-notes-3")
+        self.git(self.repo, "fetch", "-q", "origin")
+        plan = worktrees.inspect(self.repo, [{"id": "T-1", "key": "T-1-add-notes"}], "pipeline")
+        self.assertEqual(worktrees.create(self.repo, plan, {"id": "T-1", "key": "T-1-add-notes"})["branch"], "t-1-add-notes-4", "a branch on origin counts as taken")
+
+    def test_the_pull_request_description_file_lives_in_the_worktree_git_folder(self):
+        path = Path(self.workspace["prBody"])
+        self.assertEqual(path.name, "herdr-pr.md")
+        self.assertNotIn(self.tree, path.parents)
+        path.write_text("Summary\n")
+        self.assertEqual(self.git(self.tree, "status", "--porcelain"), "")
+        self.assertEqual(delivery.written(self.tree), "Summary")
+
+    def test_delivery_follows_a_branch_the_agent_renamed(self):
+        self.git(self.tree, "branch", "-m", "fix/t-1-add-notes")
+        self.agent_commits()
+        delivery.merge(self.payload("merge"))
+        self.assertEqual((self.repo / "notes.txt").read_text(), "notes\n")
+        delivery.remove(self.payload("remove"))
+        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/t-1-add-notes"), "")
 
     def test_merge_fast_forwards_the_project_branch(self):
         self.agent_commits()
@@ -68,9 +99,14 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual((self.repo / "notes.txt").read_text(), "notes\n")
         self.assertEqual(self.git(self.repo, "rev-list", "--merges", "--count", "HEAD"), "0")
 
-    def test_uncommitted_agent_work_is_committed_with_the_task_title(self):
+    def test_uncommitted_agent_work_is_refused_unless_committing_is_asked_for(self):
         (self.tree / "notes.txt").write_text("left over\n")
-        delivery.merge(self.payload("merge"))
+        head = self.git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "uncommitted changes, so its agent may still be working"):
+            delivery.merge(self.payload("merge"))
+        self.assertEqual(self.git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertEqual(self.git(self.tree, "status", "--porcelain"), "?? notes.txt", "nothing was committed for the agent")
+        delivery.merge(self.payload("merge", commit=True))
         self.assertEqual(self.git(self.repo, "log", "-1", "--format=%s"), "T-1 Add notes")
         self.assertEqual((self.repo / "notes.txt").read_text(), "left over\n")
 
@@ -156,13 +192,25 @@ class DeliveryTest(unittest.TestCase):
     def test_publish_pushes_the_branch_and_opens_a_pull_request_into_the_start_branch(self):
         remote = self.with_origin()
         log = self.stub_gh('echo "https://github.com/me/project/pull/12"\n')
-        (self.tree / "notes.txt").write_text("left over\n")
+        self.agent_commits()
         result = delivery.publish(self.payload("publish", target="main", body="Details"))
         self.assertEqual(result, {"url": "https://github.com/me/project/pull/12", "number": 12})
-        self.assertEqual(self.git(remote, "log", "-1", "--format=%s", self.workspace["branch"]), "T-1 Add notes")
+        self.assertEqual(self.git(remote, "log", "-1", "--format=%s", self.workspace["branch"]), "Agent work")
         args = log.read_text()
         self.assertIn("pr create --head " + self.workspace["branch"] + " --base main --title T-1 Add notes --body Details", args)
         self.assertFalse((self.repo / "notes.txt").exists(), "the project folder is never touched")
+
+    def test_publish_uses_the_description_the_agent_wrote_and_refuses_uncommitted_work(self):
+        remote = self.with_origin()
+        log = self.stub_gh('echo "https://github.com/me/project/pull/12"\n')
+        Path(self.workspace["prBody"]).write_text("Sorts absences by date.\n\n- Sorted the list\n")
+        (self.tree / "notes.txt").write_text("left over\n")
+        with self.assertRaisesRegex(ValueError, "uncommitted changes"):
+            delivery.publish(self.payload("publish", target="main", body="Fallback"))
+        self.assertIsNone(self.git_optional(remote, "rev-parse", "--verify", "-q", self.workspace["branch"]), "nothing was pushed")
+        delivery.publish(self.payload("publish", target="main", body="Fallback", commit=True))
+        self.assertEqual(self.git(remote, "log", "-1", "--format=%s", self.workspace["branch"]), "T-1 Add notes")
+        self.assertIn("--body Sorts absences by date.\n\n- Sorted the list\n", log.read_text())
 
     def test_publishing_again_reuses_the_open_pull_request(self):
         self.with_origin()
@@ -284,7 +332,7 @@ class DeliveryTest(unittest.TestCase):
         (repo / "page.txt").write_text("page\n")
         self.git(repo, "add", ".")
         self.git(repo, "commit", "-qm", "Web base")
-        run = self.workspace["branch"].rsplit("-", 1)[1]
+        run = self.tree.name.rsplit("-", 1)[1]
         plan = worktrees.inspect(repo, [{"id": "T-1", "key": "T-1-add-notes"}], "pipeline", run_id=run)
         workspace = worktrees.create(repo, plan, {"id": "T-1", "key": "T-1-add-notes"})
         self.assertEqual(workspace["branch"], self.workspace["branch"], "every repository gets the same branch name")
@@ -294,10 +342,14 @@ class DeliveryTest(unittest.TestCase):
         project = {"name": "project", "root": str(self.repo), "worktree": str(self.tree), "branch": self.workspace["branch"], "base": self.base}
         return {"op": "merge", "title": "T-1 Add notes", "repos": [project, web]}
 
+    def web_commits(self, web, text="agent page\n"):
+        (Path(web["worktree"]) / "page.txt").write_text(text)
+        self.git(web["worktree"], "commit", "-qam", "Agent page")
+
     def test_merging_several_repositories_lands_each_changed_one(self):
         web = self.second_repository()
         self.agent_commits()
-        (Path(web["worktree"]) / "page.txt").write_text("agent page\n")
+        self.web_commits(web)
         result = delivery.merge(self.both(web))
         self.assertEqual([result["merged"], result["failed"], result["targets"]], [["project", "web"], None, {"project": "main", "web": "main"}])
         self.assertEqual((self.repo / "notes.txt").read_text(), "notes\n")
@@ -329,7 +381,7 @@ class DeliveryTest(unittest.TestCase):
     def test_a_fast_forward_that_fails_after_others_landed_says_which_merged(self):
         web = self.second_repository()
         self.agent_commits()
-        (Path(web["worktree"]) / "page.txt").write_text("agent page\n")
+        self.web_commits(web)
         real = delivery.land
 
         def land(item):
@@ -347,10 +399,10 @@ class DeliveryTest(unittest.TestCase):
         self.with_origin()
         self.assertEqual(delivery.publish(self.payload("publish", target="main", optional=True)), {"skipped": True})
 
-    def test_pull_request_bodies_are_edited_with_gh(self):
-        log = self.stub_gh("exit 0\n")
-        delivery.pr_edit({"root": str(self.repo), "url": "https://github.com/me/project/pull/12", "body": "Also web #3"})
-        self.assertIn("pr edit https://github.com/me/project/pull/12 --body Also web #3", log.read_text())
+    def test_linking_other_pull_requests_keeps_the_description_and_replaces_an_older_note(self):
+        log = self.stub_gh('[ "$2" = view ] && printf "Summary\\n\\nThis change spans 2 repositories. Old\\n"\nexit 0\n')
+        delivery.pr_edit({"root": str(self.repo), "url": "https://github.com/me/project/pull/12", "note": "3 repositories. New"})
+        self.assertIn("pr edit https://github.com/me/project/pull/12 --body Summary\n\nThis change spans 3 repositories. New\n", log.read_text())
 
     def test_command_line_reports_errors_as_json(self):
         run = subprocess.run([sys.executable, str(ROOT / "mods/pipeline/delivery.py"), json.dumps(self.payload("merge"))], capture_output=True, text=True)
