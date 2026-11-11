@@ -159,7 +159,10 @@ own tab. The header switches between **Simulation** (example tasks and pretend a
 
 In the sidebar, a space lists its **Pipeline** above its agents while the Pipeline tab is open
 there, the live pipeline is started, or it has tasks that aren't merged yet. It spins while the
-pipeline is started; click it to open the pipeline in that space.
+pipeline is started; click it to open the pipeline in that space. The × that appears on hover
+closes the pipeline after a confirmation that lists what goes: it stops intake and clears the
+schedule and ticket watches, removes queued tasks, stops the agents still at work and deletes their
+worktrees and branches, and closes the Pipeline tab. Tasks merging or waiting on a pull request stay.
 
 ### Live
 

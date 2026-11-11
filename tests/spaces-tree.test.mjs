@@ -49,12 +49,17 @@ const { AgentTree, branch } = await import("data:text/javascript," + encodeURICo
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
 const { STORE, LIVE } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/spaces-pin/pipeline-row.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = `const { div, svg, h_flex, run, shared } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, LIVE = ${JSON.stringify(LIVE)};\n` + source;
+source = `const { div, svg, h_flex, run, shared, openOverlay } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, LIVE = ${JSON.stringify(LIVE)};\n` + source;
 Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
+const { reduce } = await import("../mods/pipeline/pipeline-model.js");
+source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = `const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, theme } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, reduce = globalThis.__pipelineReduce;\n` + source;
+globalThis.__pipelineReduce = reduce;
+const { default: PipelineClose, closeDetail } = await import("data:text/javascript," + encodeURIComponent(source));
 source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;
 const { default: Menu } = await import("data:text/javascript," + encodeURIComponent(source));
@@ -532,5 +537,37 @@ test("a space lists its pipeline once it is in use, spinning while started, and 
   click(view.render(), "pipeline-other");
   assert.deepEqual(world.calls, [["space.select", { id: "other" }], ["tab.select", { id: "other-tab" }], ["pane.focus", { pane: "pipe" }]]);
   click(view.render(), "spaces-needs-you");
+  assert.equal(find(view.render(), "pipeline-app"), undefined);
+});
+
+test("closing a space's pipeline asks first, then stops it, discards its work and closes its tab", () => {
+  const view = setup(), key = LIVE + JSON.stringify([null, "/work/app"]);
+  const context = { id: JSON.stringify([null, "/work/app"]), cwd: "/work/app", on: null, name: "app" };
+  sharedState.set(STORE, { [key]: { live: true, version: 5, context, running: true, schedule: null, events: [], tasks: [
+    { id: "T-1", status: "working", depends: [], workspaces: { app: {} }, discard: false },
+    { id: "T-2", status: "queued", depends: [], workspaces: null, discard: false },
+    { id: "T-3", status: "pr", depends: [], workspaces: { app: {} }, discard: false }] } });
+  world.panes = [{ pane: "pipe", mod: "pipeline", tab: "app-tab", terminal: null, cwd: null }];
+  assert.equal(find(view.render(), "pipeline-close-app"), undefined);
+  find(view.render(), "pipeline-app").handlers.hover(true, cx);
+  click(view.render(), "pipeline-close-app");
+  assert.equal(world.calls.length, 0);
+  assert.deepEqual(world.opened.map(o => [o.mod, o.kind, o.props]), [["pipeline-close", "dialog", { space: "app", key, tab: "app-tab" }]]);
+  assert.deepEqual(closeDetail(sharedState.get(STORE)[key]), ["Stops the pipeline, so no new task starts.",
+    "Stops 1 agent and deletes its worktrees and branches. Unmerged work is lost.", "Removes 1 queued task.",
+    "Leaves 1 task that is merging or waiting on a pull request."]);
+  world.menu = { ...world.opened[0].props, overlay: "o1" };
+  const dialog = new PipelineClose(); dialog.init({}, cx);
+  click(dialog.render(), "no");
+  assert.deepEqual(world.closed, ["o1"]);
+  assert.equal(sharedState.get(STORE)[key].running, true);
+  click(dialog.render(), "yes");
+  const state = sharedState.get(STORE)[key];
+  assert.equal(state.running, false);
+  assert.deepEqual(state.tasks.map(task => [task.id, task.discard]), [["T-1", true], ["T-3", false]]);
+  assert.deepEqual(world.calls, [["tab.close", { id: "app-tab", confirmed: true }]]);
+  world.panes = [];
+  assert.ok(find(view.render(), "pipeline-app"), "an open pull request keeps it listed");
+  state.tasks = state.tasks.filter(task => task.id !== "T-3");
   assert.equal(find(view.render(), "pipeline-app"), undefined);
 });

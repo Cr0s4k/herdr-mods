@@ -190,6 +190,28 @@ test("discarding stops the agent and force-removes its worktree and branch", asy
   assert.deepEqual(world.calls.at(-1), ["space.close", { id: "s9", confirmed: true }]);
 });
 
+test("closing a pipeline stops intake, removes the queue and discards started work, leaving open PRs", async () => {
+  let state = reduce(typed("A", "B", "C", "D"), { type: "run" }, 0);
+  state = reduce(state, { type: "schedule", start: "9:00" }, 0);
+  const world = host(state);
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  state = world.state();
+  row(state, "T-2").status = "pr";
+  state = reduce(state, { type: "close" }, 0);
+  assert.equal(state.running, false);
+  assert.equal(state.schedule, null);
+  assert.deepEqual(state.tasks.map(task => [task.id, task.discard]), [["T-1", true], ["T-2", false]]);
+  assert.equal(reduce(state, { type: "close" }, 0).tasks.length, 2);
+  world.store = { [id]: state };
+  world.scripts = [];
+  await step(runner);
+  assert.deepEqual(world.state().tasks.map(task => task.id), ["T-2"]);
+  assert.deepEqual(world.scripts.map(([, payload]) => [payload.op, payload.force]), [["remove", true]]);
+  const example = reduce(createPipeline(context, 0), { type: "run" }, 0);
+  assert.equal(reduce(example, { type: "close" }, 0), example);
+});
+
 test("a task discarded while its worktree is being made never starts an agent", async () => {
   let world;
   world = host(reduce(typed("A"), { type: "run" }, 0), {

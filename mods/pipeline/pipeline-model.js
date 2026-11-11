@@ -976,6 +976,17 @@ export function reduce(state, action, now = Date.now()) {
       event(next, `${task.id} · stopping its agent and deleting its worktree and branch.`, task.id);
       break;
     }
+    case "close": {
+      if (!next.live) return state;
+      next.running = false; next.schedule = null; next.watching = {};
+      for (const task of [...next.tasks]) {
+        if (task.discard || ["merging", "pr", "done"].includes(task.status)) continue;
+        if (task.status === "queued" && !started(task)) { next.tasks = next.tasks.filter(other => other !== task); unlink(next, task.id); }
+        else task.discard = true;
+      }
+      event(next, "Pipeline closed. Stopping its agents and deleting their worktrees and branches.");
+      break;
+    }
     case "discarded": {
       if (!next.live || !row(action.id)) return state;
       next.tasks = next.tasks.filter(task => task.id !== action.id);
