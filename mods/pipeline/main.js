@@ -757,7 +757,7 @@ export default class Pipeline extends View {
   }
 
   scene(state, t, info, motion, now, cx) {
-    const drawerWidth = this.drawer && this.size.width > 1180 ? 330 : 0;
+    const drawerWidth = this.drawer && this.drawer !== "settings" && this.size.width > 1180 ? 330 : 0;
     const cw = this.cardW = cardWidth(this.size.width);
     const g = layoutScene(state, this.size.width - drawerWidth, this.size.height - BAR - STATUS - (this.size.width >= ONE_ROW ? 0 : CONTROLS), cw);
     const c = g.center;

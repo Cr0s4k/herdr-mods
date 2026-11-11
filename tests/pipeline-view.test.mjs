@@ -1275,6 +1275,11 @@ test("Settings opens as a modal over the whole view, by section, and closes from
   scene = view.render(cx);
   assert.ok(find(scene, "deliver-pr"));
   assert.equal(find(scene, "parallel-more"), undefined);
+  view.size = { width: 2000, height: 900 };
+  const settingsWidth = find(view.render(cx), "scene").styles.w[0];
+  view.open(null, cx);
+  assert.equal(settingsWidth, find(view.render(cx), "scene").styles.w[0], "the modal leaves the canvas its full width");
+  view.open("settings", cx, "delivery");
   const running = view.state().running;
   press(view, "space");
   assert.equal(view.state().running, running, "scene keys wait while settings are open");
