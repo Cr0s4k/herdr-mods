@@ -108,6 +108,7 @@ function element() {
 Object.assign(globalThis.__reviewNative, {
   View: class {}, div: element, svg: element, image: element, h_flex: element, ReviewPanes,
   Button: { new: id => element().id(id) },
+  ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   GitHubRepo: class { constructor() { this.opening = false; } }, repositoryContext: () => ({ cwd: null }),
   shared: key => preferences.get(key),
   layout: () => world.layout,
@@ -123,7 +124,7 @@ source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "u
 source = "const { exec } = globalThis.__reviewNative;\n" + source;
 Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
