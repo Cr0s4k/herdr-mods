@@ -748,9 +748,8 @@ export default class Pipeline extends View {
           .child(div().text_color(t.muted).text_size(11).child(resting))));
     }
     const planLeft = Math.max(30 + cw + 20, c.x - 120);
-    const planRight = Math.min(c.x + 90, g.slots[1] ? g.slots[1].x - cw / 2 - 14 : c.x + 90);
     const heading = planner ? `The plan · ${planner}` : "The plan";
-    canvas.child(div().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft))
+    canvas.child(div().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(200, Math.min(420, g.w - 30 - cw - 20 - planLeft)))
       .child(Button.new("pipeline-plan-open").w_full().px(10).py(7).rounded(7).border_1().border_color(this.drawer === "planner" ? t.accent : t.border).bg(t.surface).text_color(t.foreground).tab_index(0)
         .accessibility_label(`${heading}: ${state.plan}. Read the plan`).tooltip("Read the plan").hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
         .on_click((_e, cx) => this.open(this.drawer === "planner" ? null : "planner", cx))
