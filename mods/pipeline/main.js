@@ -35,6 +35,10 @@ const uncommitted = task => task.status === "review" && !task.discard && /task's
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
+const SECTIONS = {
+  live: { agent: "Agent", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
+  simulation: { pipeline: "Pipeline", simulation: "Simulation", general: "General" },
+};
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
 const filterLabel = filter => [SCOPES[filter.scope], filter.team?.name, filter.project?.name].filter(Boolean).join(" · ");
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
@@ -387,7 +391,8 @@ export default class Pipeline extends View {
       if (sent) this.act({ type: "fixing", id: task.id }, cx); else { this.focusAgent(task); cx.notify(); }
     });
   }
-  open(drawer, cx) {
+  open(drawer, cx, section) {
+    if (section) this.section = section;
     if (drawer === "settings" && this.state()?.live) {
       this.checkInput.set_value(this.state().check?.command ?? "");
       this.tryInput.set_value(this.state().tryout ?? "");
@@ -604,11 +609,13 @@ export default class Pipeline extends View {
       .child(h_flex().relative().flex_1().min_h(0).min_w(0)
         .child(div().id("pipeline-viewport").flex_1().min_w(0).h_full().overflow_scrollbar()
           .child(this.scene(state, t, info, motion, now, cx)))
-        .when(Boolean(this.drawer), el => el.child(this.inspector(state, t, cx)
+        .when(Boolean(this.drawer) && this.drawer !== "settings", el => el.child(this.inspector(state, t, cx)
           .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))
           .when(this.size.width > 1180, node => node.relative())
           .when(this.size.width <= 1180, node => node.absolute().right(0).top(0).bottom(0)))))
-      .child(this.status(state, t, info, motion));
+      .child(this.status(state, t, info, motion))
+      .when(this.drawer === "settings", el => el.child(this.settingsModal(state, t)
+        .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))));
     for (const key of [...this.bars.keys()]) if (!this.seen.has(key)) this.bars.delete(key);
     return root;
   }
@@ -618,7 +625,7 @@ export default class Pipeline extends View {
       if (this.drawer) this.open(null, cx); else { this.handle.focus(); cx.notify(); }
       cx.stop_propagation(); return;
     }
-    if (!this.handle.is_focused() || (this.state()?.live && ["a", "s"].includes(e.keystroke))) return;
+    if (!this.handle.is_focused() || this.drawer === "settings" || (this.state()?.live && ["a", "s"].includes(e.keystroke))) return;
     const move = { down: 1, right: 1, j: 1, up: -1, left: -1, k: -1 }[e.keystroke];
     if (move) { this.step(move, cx); cx.stop_propagation(); return; }
     const source = { p: "plane", l: "linear" }[e.keystroke];
@@ -682,12 +689,12 @@ export default class Pipeline extends View {
         .when(typed.length > TITLE, el => el.child(div().id("pipeline-create-long").flex_none().text_size(11).text_color(t.muted).child("Title + details")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true,
           hint: typed.length > TITLE ? "Add to the queue (Enter). The title is its first sentence or opening words; the whole text goes in its details" : "Add to the queue (Enter)" }))),
-      ...(state.live ? [this.button("agent", this.agentLabel(state), toggle("settings"), t, { icon: "terminal", hint: `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}: the agent, model and effort each task starts with, in its own worktree` }),
+      ...(state.live ? [this.button("agent", this.agentLabel(state), cx => this.open("settings", cx, "agent"), t, { icon: "terminal", hint: `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}: the agent, model and effort each task starts with, in its own worktree` }),
         this.sourceButton("plane", state, t, "Queue tickets from the Plane project linked to this repository (P)"),
         this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")]
         : [this.button("add", "Examples", toggle("picker"), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }),
           this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", toggle("watch"), t, { icon: "eye", selected: state.watch })]),
-      this.button("parallel", `${state.parallel} parallel`, toggle("settings"), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }),
+      this.button("parallel", `${state.parallel} parallel`, cx => this.open("settings", cx, state.live ? "agent" : "pipeline"), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }),
       state.live ? this.button("quota", this.limitLabel(state), toggle("quota"), t, { icon: "gauge", selected: this.drawer === "quota", hint: "How full Claude's and Codex's usage limits are, and when new agents wait for them" })
         : this.button("quota", `Quota ${state.quota}%`, toggle("quota"), t, { icon: "gauge", hint: "Example quota and reserve controls" })];
   }
@@ -954,7 +961,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: state.live ? "Usage limits" : "Quota", planner: "Plan", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: state.live ? "Usage limits" : "Quota", planner: "Plan", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -988,7 +995,6 @@ export default class Pipeline extends View {
           .on_click((_e, cx) => this.inspect(item.task, cx)).child(item.message)
         : this.label(item.message, t));
     }
-    else if (this.drawer === "settings") state.live ? this.liveSettings(body, state, t) : this.settings(body, state, t);
     else if (this.drawer === "quota") state.live ? this.limits(body, state, t) : this.quota(body, state, t);
     else if (this.drawer === "planner") this.plannerView(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
@@ -1028,21 +1034,55 @@ export default class Pipeline extends View {
         .child(div().min_w(24).text_size(16).font_semibold().child(`${value}${unit}`))
         .child(this.button(`${type}-more`, `Increase ${title}`, cx => this.act({ type, value: value + step }, cx), t, { icon: "plus", iconOnly: true, disabled: value >= max }))));
   }
-  settings(body, state, t) {
-    this.stepper(body, "Parallel tasks", "Lowering the limit lets active work finish.", state.parallel, "parallel", 1, 6, t);
-    this.stepper(body, "Outstanding PRs", "Reserves one PR per repository, including active work.", state.reviewLimit, "reviewLimit", 1, 10, t);
-    body.child(this.heading("Delivery for new changes"));
-    for (const [value, label] of [["pr", "Create PRs · wait for approval"], ["direct", "Merge after checks pass"]]) body.child(this.button(`delivery-${value}`, label, cx => this.act({ type: "delivery", value }, cx), t, { selected: state.delivery === value }));
-    body.child(this.label("Changes already in review keep their delivery policy. Multi-repository tasks complete after every repository merges.", t));
-    body.child(this.heading("Simulation speed"));
-    body.child(h_flex().gap(8).children(SPEEDS.map(value => this.button(`speed-${value}`, `${value}×`, cx => this.act({ type: "speed", value }, cx), t, { selected: state.speed === value }))));
-    body.child(div().h(1).bg(t.border));
-    body.child(this.button("ask", state.askNext ? "Next working task will ask" : "Simulate a question", cx => this.act({ type: "ask" }, cx), t, { disabled: state.askNext, icon: "question" }));
-    body.child(this.button("fail-check", state.failNext ? "Next check will fail" : "Simulate a failed check", cx => this.act({ type: "fail" }, cx), t, { disabled: state.failNext }));
-    body.child(this.motionSwitch(t));
-    body.child(this.button("reset", "Reset example pipeline", cx => { this.act({ type: "reset" }, cx); this.picked.clear(); this.selected = null; }, t, { icon: "reset" }));
-    body.child(this.label("Runs while Herdr is open. You can close this tab; the pipeline keeps going.", t));
-    body.child(this.heading("Keys")).child(this.label(KEYS.simulation, t));
+  settingsModal(state, t) {
+    const sections = SECTIONS[state.live ? "live" : "simulation"], keys = Object.keys(sections);
+    const section = keys.includes(this.section) ? this.section : keys[0];
+    const width = Math.min(880, this.size.width - 32), height = Math.min(680, this.size.height - 32), stacked = width < 620;
+    const body = v_flex().w_full().max_w(640).px(stacked ? 18 : 28).py(stacked ? 18 : 24).gap(14)
+      .child(div().text_size(16).font_semibold().child(sections[section]));
+    if (state.live) this.liveSettings(section, body, state, t); else this.settings(section, body, state, t);
+    const tab = key => Button.new(`pipeline-settings-${key}`).h(30).px(10).flex_none().flex().items_center().justify_start().rounded(6).text_size(12).tab_index(0)
+      .text_color(key === section ? t.foreground : t.muted).when(key === section, el => el.bg(t.selected).font_medium()).when(!stacked, el => el.w_full())
+      .accessibility_label(`${sections[key]} settings`).hover(el => el.bg(key === section ? t.selected : t.hover)).focus(el => el.text_color(t.foreground).border_1().border_color(t.accent))
+      .on_click((_e, cx) => { this.section = key; cx.notify(); }).child(sections[key]);
+    const nav = stacked ? h_flex().id("pipeline-settings-nav").px(12).py(8).gap(4).flex_none().overflow_x_scrollbar().border_b(1).border_color(t.border).children(keys.map(tab))
+      : v_flex().id("pipeline-settings-nav").w(180).h_full().p(10).gap(2).flex_none().border_r(1).border_color(t.border).bg(t.canvas).children(keys.map(tab));
+    const page = div().id(`pipeline-settings-scroll-${section}`).flex_1().min_w(0).min_h(0).overflow_y_scrollbar().child(body);
+    return div().id("pipeline-settings-modal").absolute().inset_0().flex().items_center().justify_center().bg("#00000080")
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.open(null, cx); })
+      .on_scroll_wheel((_e, cx) => cx.stop_propagation())
+      .child(v_flex().id("pipeline-settings-panel").w(width).h(height).rounded(10).overflow_hidden().bg(t.surface).border_1().border_color(t.border).text_color(t.foreground)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(h_flex().px(18).py(12).gap(10).items_center().flex_none().border_b(1).border_color(t.border)
+          .child(icon("settings", 16).text_color(t.muted))
+          .child(div().flex_none().font_semibold().text_size(14).child("Pipeline settings"))
+          .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
+            ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}` : `${state.context.name} · simulation`))
+          .child(this.button("close-settings", "Close settings", cx => this.open(null, cx), t, { icon: "x", iconOnly: true, hint: "Close (Esc)" })))
+        .child(stacked ? v_flex().flex_1().min_h(0).child(nav).child(page) : h_flex().flex_1().min_h(0).child(nav).child(page)));
+  }
+  settings(section, body, state, t) {
+    if (section === "pipeline") {
+      this.stepper(body, "Parallel tasks", "Lowering the limit lets active work finish.", state.parallel, "parallel", 1, 6, t);
+      this.stepper(body, "Outstanding PRs", "Reserves one PR per repository, including active work.", state.reviewLimit, "reviewLimit", 1, 10, t);
+      body.child(this.heading("Delivery for new changes"));
+      body.child(h_flex().gap(6).flex_wrap().children([["pr", "Create PRs · wait for approval"], ["direct", "Merge after checks pass"]].map(([value, label]) =>
+        this.button(`delivery-${value}`, label, cx => this.act({ type: "delivery", value }, cx), t, { selected: state.delivery === value }))));
+      body.child(this.label("Changes already in review keep their delivery policy. Multi-repository tasks complete after every repository merges.", t));
+    } else if (section === "simulation") {
+      body.child(this.heading("Simulation speed"));
+      body.child(h_flex().gap(8).children(SPEEDS.map(value => this.button(`speed-${value}`, `${value}×`, cx => this.act({ type: "speed", value }, cx), t, { selected: state.speed === value }))));
+      body.child(this.heading("Try what happens"));
+      body.child(h_flex().gap(8).flex_wrap()
+        .child(this.button("ask", state.askNext ? "Next working task will ask" : "Simulate a question", cx => this.act({ type: "ask" }, cx), t, { disabled: state.askNext, icon: "question" }))
+        .child(this.button("fail-check", state.failNext ? "Next check will fail" : "Simulate a failed check", cx => this.act({ type: "fail" }, cx), t, { disabled: state.failNext })));
+      body.child(div().h(1).bg(t.border));
+      body.child(h_flex().child(this.button("reset", "Reset example pipeline", cx => { this.act({ type: "reset" }, cx); this.picked.clear(); this.selected = null; }, t, { icon: "reset" })));
+    } else {
+      body.child(this.motionSwitch(t));
+      body.child(this.label("Runs while Herdr is open. You can close this tab; the pipeline keeps going.", t));
+      body.child(this.heading("Keys")).child(this.label(KEYS.simulation, t));
+    }
   }
   quota(body, state, t) {
     body.child(div().text_size(29).font_semibold().child(`${state.quota}%`)).child(this.label("Example quota remaining", t));
@@ -1227,70 +1267,73 @@ export default class Pipeline extends View {
           .when(picked, el => el.child(icon("check", 13))))
         .child(div().text_size(12).font_medium().child(issue.title)));
   }
-  liveSettings(body, state, t) {
-    const chosen = state.agent?.name ?? this.agentChoices[0]?.name;
-    body.child(this.heading("Agent"));
-    body.child(this.label("Each task starts this agent in its own worktree, with the task as its first message.", t));
-    if (!this.agentChoices.length) body.child(this.label(this.repo ? "No installed coding agent was found on this machine." : "Looking for installed agents…", t));
-    for (const agent of this.agentChoices) body.child(this.button(`agent-${agent.key ?? agent.name}`, agent.name, cx => {
-      this.act({ type: "agent", value: { key: agent.key, name: agent.name, run: agent.run } }, cx);
-      this.modelInput.set_value(tuningFor(this.state(), agent.key).model ?? "");
-    }, t, { selected: chosen === agent.name, icon: chosen === agent.name ? "check" : null, hint: agentRun(state, agent).join(" ") }).w_full().justify_start());
-    this.tuning(body, state, t);
-    this.plannerSettings(body, state, t);
-    body.child(this.button("auto-trust", state.autoTrust ? "Trusting new worktrees automatically" : "Trust new worktrees automatically", cx => this.act({ type: "autoTrust" }, cx), t,
-      { icon: state.autoTrust ? "check" : null, selected: Boolean(state.autoTrust), hint: "Answer the agent's “Do you trust this folder?” prompt for worktrees Pipeline made from your repository" }).w_full().justify_start());
-    body.child(this.label("Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.", t));
-    this.repositories(body, state, t);
-    body.child(this.heading("Check before review"));
-    body.child(this.label("When an agent finishes, this command runs in its worktree, in each repository the task touches. Passing work moves to review; leave it empty to skip checks.", t));
-    body.child(h_flex().gap(6).items_center()
-      .child(Input.new(this.checkInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
-        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Check command"))
-      .child(this.button("check-save", "Save", cx => this.saveCheck(cx), t, { small: true, disabled: this.checkInput.value().trim() === (state.check?.command ?? "") })));
-    const suggestions = this.checkSuggestions.filter(command => command !== state.check?.command);
-    if (suggestions.length) body.child(h_flex().gap(6).flex_wrap().children(suggestions.map(command => this.button(`check-use-${command}`, `Use ${command}`, cx => {
-      this.checkInput.set_value(command); this.act({ type: "check", command }, cx);
-    }, t, { small: true, hint: "Found in this repository" }))));
-    if (state.check?.command) body.child(this.button("check-fix", state.check.fix ? "Failures go back to the agent, up to 2 times" : "Failures wait for you",
-      cx => this.act({ type: "check", fix: !state.check.fix }, cx), t, { icon: state.check.fix ? "check" : null, selected: state.check.fix,
-        hint: state.check.fix ? "Click to stop and wait for you when checks fail" : "Click to send failures back to the agent automatically" }).w_full().justify_start());
-    body.child(this.heading("Try it"));
-    body.child(this.label("Runs a task's branch from its worktree, in a tab of its own, so you can use the change before merging: a dev server, a preview build, a second app window. Its task id is in $PIPELINE_TASK. The tab closes when the task merges or is discarded.", t));
-    body.child(h_flex().gap(6).items_center()
-      .child(Input.new(this.tryInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
-        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Try it command"))
-      .child(this.button("try-save", "Save", cx => this.saveTry(cx), t, { small: true, disabled: this.tryInput.value().trim() === (state.tryout ?? "") })));
-    const runs = this.trySuggestions.filter(command => command !== state.tryout);
-    if (runs.length) body.child(h_flex().gap(6).flex_wrap().children(runs.map(command => this.button(`try-use-${command}`, `Use ${command}`, cx => {
-      this.tryInput.set_value(command); this.act({ type: "tryout", command }, cx);
-    }, t, { small: true, hint: "Found in this repository" }))));
-    this.stepper(body, "Parallel agents", "Lowering the limit lets running agents finish.", state.parallel, "parallel", 1, 6, t);
-    this.stepper(body, "Branches waiting for review", "New agents wait while this many finished branches are unmerged.", state.reviewLimit, "reviewLimit", 1, 10, t);
-    body.child(this.heading("Delivery"));
-    body.child(h_flex().gap(6).flex_wrap()
-      .child(this.button("deliver-merge", "Merge locally", cx => this.act({ type: "deliver", value: "merge" }, cx), t, { small: true, selected: state.delivery !== "pr" }))
-      .child(this.button("deliver-pr", "Open a pull request", cx => this.act({ type: "deliver", value: "pr" }, cx), t, { small: true, selected: state.delivery === "pr" })));
-    if (state.delivery === "pr") body.child(this.button("auto-pr", state.autoPr ? "Opening pull requests automatically" : "Open pull requests automatically", cx => this.act({ type: "autoPr" }, cx), t,
-      { icon: state.autoPr ? "check" : null, selected: Boolean(state.autoPr), hint: state.autoPr ? "Click to wait for you before pushing" : "Push and open the PR as soon as the agent finishes and checks pass, so you review on GitHub" }).w_full().justify_start());
-    else body.child(this.button("auto-merge", state.autoMerge ? "Merging automatically" : "Merge automatically", cx => this.act({ type: "autoMerge" }, cx), t,
-      { icon: state.autoMerge ? "check" : null, selected: Boolean(state.autoMerge), hint: state.autoMerge ? "Click to wait for you before merging" : "Merge as soon as the agent finishes and checks pass, without waiting for you" }).w_full().justify_start());
-    if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
-      Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
-    body.child(this.label(state.delivery === "pr"
-      ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh, described by the agent. It waits while the agent has uncommitted changes. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
-      : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while the agent or your project folder has uncommitted changes, or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
-    this.ticketUpdates(body, state, t);
-    body.child(div().h(1).bg(t.border));
-    body.child(this.switchRow("notify", "Notify me", "When checks fail, a merge is refused, a pull request needs you or finished work is ready, while you're looking elsewhere",
-      !state.quiet, cx => this.act({ type: "quiet" }, cx), t));
-    body.child(this.motionSwitch(t));
-    body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
-    body.child(this.heading("Keys")).child(this.label(KEYS.live, t));
+  liveSettings(section, body, state, t) {
+    if (section === "agent") {
+      const chosen = state.agent?.name ?? this.agentChoices[0]?.name;
+      body.child(this.label("Each task starts this agent in its own worktree, with the task as its first message.", t));
+      if (!this.agentChoices.length) body.child(this.label(this.repo ? "No installed coding agent was found on this machine." : "Looking for installed agents…", t));
+      if (this.agentChoices.length) body.child(h_flex().gap(6).flex_wrap().children(this.agentChoices.map(agent => this.button(`agent-${agent.key ?? agent.name}`, agent.name, cx => {
+        this.act({ type: "agent", value: { key: agent.key, name: agent.name, run: agent.run } }, cx);
+        this.modelInput.set_value(tuningFor(this.state(), agent.key).model ?? "");
+      }, t, { selected: chosen === agent.name, icon: chosen === agent.name ? "check" : null, hint: agentRun(state, agent).join(" ") }))));
+      this.tuning(body, state, t);
+      body.child(div().h(1).bg(t.border));
+      this.stepper(body, "Parallel agents", "Lowering the limit lets running agents finish.", state.parallel, "parallel", 1, 6, t);
+      body.child(div().h(1).bg(t.border));
+      body.child(this.switchRow("auto-trust", "Trust new worktrees automatically", "Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.",
+        Boolean(state.autoTrust), cx => this.act({ type: "autoTrust" }, cx), t));
+    } else if (section === "planner") this.plannerSettings(body, state, t);
+    else if (section === "repositories") this.repositories(body, state, t);
+    else if (section === "checks") {
+      body.child(this.heading("Check before review"));
+      body.child(this.label("When an agent finishes, this command runs in its worktree, in each repository the task touches. Passing work moves to review; leave it empty to skip checks.", t));
+      body.child(h_flex().gap(6).items_center()
+        .child(Input.new(this.checkInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+          .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Check command"))
+        .child(this.button("check-save", "Save", cx => this.saveCheck(cx), t, { small: true, disabled: this.checkInput.value().trim() === (state.check?.command ?? "") })));
+      const suggestions = this.checkSuggestions.filter(command => command !== state.check?.command);
+      if (suggestions.length) body.child(h_flex().gap(6).flex_wrap().children(suggestions.map(command => this.button(`check-use-${command}`, `Use ${command}`, cx => {
+        this.checkInput.set_value(command); this.act({ type: "check", command }, cx);
+      }, t, { small: true, hint: "Found in this repository" }))));
+      if (state.check?.command) body.child(this.switchRow("check-fix", "Send failures back to the agent", state.check.fix ? "Up to 2 times, then the task waits for you" : "Failures wait for you",
+        Boolean(state.check.fix), cx => this.act({ type: "check", fix: !state.check.fix }, cx), t));
+      body.child(div().h(1).bg(t.border));
+      body.child(this.heading("Try it"));
+      body.child(this.label("Runs a task's branch from its worktree, in a tab of its own, so you can use the change before merging: a dev server, a preview build, a second app window. Its task id is in $PIPELINE_TASK. The tab closes when the task merges or is discarded.", t));
+      body.child(h_flex().gap(6).items_center()
+        .child(Input.new(this.tryInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+          .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Try it command"))
+        .child(this.button("try-save", "Save", cx => this.saveTry(cx), t, { small: true, disabled: this.tryInput.value().trim() === (state.tryout ?? "") })));
+      const runs = this.trySuggestions.filter(command => command !== state.tryout);
+      if (runs.length) body.child(h_flex().gap(6).flex_wrap().children(runs.map(command => this.button(`try-use-${command}`, `Use ${command}`, cx => {
+        this.tryInput.set_value(command); this.act({ type: "tryout", command }, cx);
+      }, t, { small: true, hint: "Found in this repository" }))));
+    } else if (section === "delivery") {
+      body.child(h_flex().gap(6).flex_wrap()
+        .child(this.button("deliver-merge", "Merge locally", cx => this.act({ type: "deliver", value: "merge" }, cx), t, { selected: state.delivery !== "pr" }))
+        .child(this.button("deliver-pr", "Open a pull request", cx => this.act({ type: "deliver", value: "pr" }, cx), t, { selected: state.delivery === "pr" })));
+      if (state.delivery === "pr") body.child(this.switchRow("auto-pr", "Open pull requests automatically", state.autoPr ? "As soon as the agent finishes and checks pass, so you review on GitHub" : "Each pull request waits for you to approve it",
+        Boolean(state.autoPr), cx => this.act({ type: "autoPr" }, cx), t));
+      else body.child(this.switchRow("auto-merge", "Merge automatically", state.autoMerge ? "As soon as the agent finishes and checks pass, without waiting for you" : "Each merge waits for you",
+        Boolean(state.autoMerge), cx => this.act({ type: "autoMerge" }, cx), t));
+      if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
+        Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
+      body.child(this.label(state.delivery === "pr"
+        ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh, described by the agent. It waits while the agent has uncommitted changes. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
+        : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while the agent or your project folder has uncommitted changes, or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
+      body.child(div().h(1).bg(t.border));
+      this.stepper(body, "Branches waiting for review", "New agents wait while this many finished branches are unmerged.", state.reviewLimit, "reviewLimit", 1, 10, t);
+    } else if (section === "tickets") this.ticketUpdates(body, state, t);
+    else {
+      body.child(this.switchRow("notify", "Notify me", "When checks fail, a merge is refused, a pull request needs you or finished work is ready, while you're looking elsewhere",
+        !state.quiet, cx => this.act({ type: "quiet" }, cx), t));
+      body.child(this.motionSwitch(t));
+      body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
+      body.child(this.heading("Keys")).child(this.label(KEYS.live, t));
+    }
   }
   repositories(body, state, t) {
     const repos = state.repositories ?? [{ name: state.repo, path: this.context.cwd }];
-    body.child(this.heading("Repositories"));
     body.child(this.label("Tasks start in the project's repository. Add others a task may change too, then pick them per task in its inspector. Each task gets its own worktree and branch in every repository it touches.", t));
     repos.forEach((repo, i) => body.child(h_flex().id(`pipeline-repository-${repo.name}`).gap(8).items_center()
       .child(v_flex().flex_1().min_w(0).gap(2)
@@ -1306,7 +1349,6 @@ export default class Pipeline extends View {
     if (this.repoError) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(this.repoError));
   }
   ticketUpdates(body, state, t) {
-    body.child(this.heading("Ticket updates"));
     body.child(this.label("Pipeline can move a ticket as its work goes and link its pull request. Updates never hold up a task: one that fails waits in the task's inspector for Try again.", t));
     for (const [provider, service] of Object.entries(SOURCES)) {
       const setup = state.ticketUpdates?.[provider] ?? {}, source = this.updateStates[provider];
@@ -1516,7 +1558,7 @@ export default class Pipeline extends View {
     body.child(div().h(1).bg(t.border));
     if (!state.planner?.on) {
       body.child(this.label("The planner agent is off: tasks start by Start first, then priority, then arrival. With Plan with an agent on, Claude Code or Codex orders the queue and says which task waits for which.", t));
-      body.child(this.button("planner-settings", "Open Settings", cx => this.open("settings", cx), t, { icon: "settings" }));
+      body.child(this.button("planner-settings", "Open Settings", cx => this.open("settings", cx, "planner"), t, { icon: "settings" }));
       if (!planning) return;
     }
     const watching = Boolean(state.planner?.watch);

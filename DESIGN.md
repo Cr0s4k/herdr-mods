@@ -146,6 +146,8 @@ Below width 820, the header hides its standalone Motion action; motion remains a
 
 The inspector is 330 wide, capped at the pane width minus 16. Above width 1180 it sits beside the scene and its width is subtracted from the available canvas width. At or below that threshold it overlays the scene's right edge. Its body owns vertical scrolling; task rows must retain their content height so every queue entry stays reachable.
 
+Settings is a modal, not an inspector drawer: a panel up to 880 × 680 (the pane minus 32 each way), centred over the whole view on a 50% black backdrop, with the panel rounding and a fixed header naming the repository and branch. A 180-wide section list (Live: Agent, Planner, Repositories, Checks and Try it, Delivery, Ticket updates, General; Simulation: Pipeline, Simulation, General) sits left of a scrolling page whose content is capped at 640 wide; below a 620-wide panel the sections become a scrolling row above the page. The Agent and Parallel controls open it on the section that holds them. Pressing the backdrop or Escape closes it, and scene shortcuts wait while it is open. On/off settings use switch rows.
+
 Herdr reports painted bounds while builder lengths are zoomed by the host. Pipeline divides measured width and height by `Number(settings().zoom) || 1` before computing geometry and breakpoints. Keep all scene, drawer and breakpoint calculations in this same logical coordinate space. Native `loop()` lengths are the exception: they are not zoomed, so multiply any looped `left`, `top`, `width` or `height` by the zoom.
 
 ### Live mode

@@ -73,6 +73,11 @@ function click(view, id) {
   assert.equal(Boolean(node.styles.disabled?.[0]), false, `${id} is enabled`);
   node.handlers.on_click({}, cx);
 }
+function flip(view, id) {
+  const node = find(view.render(cx), id);
+  assert.ok(node, `switch ${id} exists`);
+  node.handlers.on_change(!node.styles.checked[0], cx);
+}
 async function settle(view, id) {
   const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
   const node = find(view.render(cx), id);
@@ -231,7 +236,7 @@ test("busy dispatch paths carry comet particles only while motion is on", () => 
 
 test("the settings drawer turns animation off with a switch", () => {
   const view = setup();
-  view.open("settings", cx);
+  view.open("settings", cx, "general");
   const toggle = find(view.render(cx), "motion-setting");
   assert.equal(toggle.styles.checked[0], true);
   assert.match(text(toggle), /Animation/);
@@ -331,7 +336,7 @@ test("questions can be answered with a number key, a typed reply, or Q to jump b
 
 test("Settings can make the next working task ask a question", () => {
   const view = setup();
-  click(view, "settings"); click(view, "ask");
+  click(view, "settings"); click(view, "settings-simulation"); click(view, "ask");
   assert.equal(view.state().askNext, true);
   assert.equal(find(view.render(cx), "ask").styles.disabled[0], true);
 });
@@ -535,7 +540,7 @@ test("Start records the space it was pressed in, and Trust answers the prompt fr
   assert.ok(find(scene, "trust-T-1"));
   assert.deepEqual(world.hc.at(-1), ["keys", "t9", "down", "enter"]);
   assert.deepEqual([row(view, "T-1").status, row(view, "T-1").reason], ["working", null]);
-  click(view, "settings"); click(view, "auto-trust");
+  click(view, "settings"); flip(view, "auto-trust");
   assert.equal(view.state().autoTrust, true);
 });
 
@@ -580,13 +585,13 @@ test("an unlinked repository points to the Tasks panel", async () => {
 test("the check command is set in Live settings, from a suggestion or typed", () => {
   const view = setupLive();
   view.checkSuggestions = ["npm test"];
-  click(view, "agent");
+  click(view, "agent"); click(view, "settings-checks");
   click(view, "check-use-npm test");
   assert.deepEqual(view.state().check, { command: "npm test", fix: true });
   view.checkInput.set_value("node --test tests/*.test.mjs");
   view.checkInput.emit("submit", cx);
   assert.equal(view.state().check.command, "node --test tests/*.test.mjs");
-  click(view, "check-fix");
+  flip(view, "check-fix");
   assert.equal(view.state().check.fix, false);
   view.checkInput.set_value("");
   view.checkInput.emit("blur", cx);
@@ -641,7 +646,7 @@ test("failed checks offer Fix on the card and the full choice in the inspector",
 test("Try it runs the project's command in the task's worktree, once, in a tab beside its agent", async () => {
   const view = setupLive();
   view.trySuggestions = ["./preview.sh", "npm run dev"];
-  view.open("settings", cx);
+  view.open("settings", cx, "checks");
   click(view, "try-use-./preview.sh");
   assert.equal(view.state().tryout, "./preview.sh");
   assert.equal(find(view.render(cx), "try-use-./preview.sh"), undefined);
@@ -665,7 +670,7 @@ test("Try it runs the project's command in the task's worktree, once, in a tab b
 
 test("pull request delivery changes the approve wording and links the open PR", () => {
   const view = setupLive();
-  click(view, "agent"); click(view, "deliver-pr");
+  click(view, "agent"); click(view, "settings-delivery"); click(view, "deliver-pr");
   assert.equal(view.state().delivery, "pr");
   view.act({ type: "create", title: "A" }, cx);
   view.act({ type: "create", title: "B" }, cx);
@@ -698,13 +703,13 @@ test("pull request delivery changes the approve wording and links the open PR", 
   click(view, "approve-T-1");
   assert.match(text(find(view.render(cx), "card-T-1")), /Opening PR/);
   view.open("settings", cx);
-  click(view, "auto-pr");
+  flip(view, "auto-pr");
   assert.equal(view.state().autoPr, true);
   click(view, "deliver-merge");
   assert.equal(find(view.render(cx), "auto-pr"), undefined, "only pull requests open on their own");
-  click(view, "auto-merge");
+  flip(view, "auto-merge");
   assert.equal(view.state().autoMerge, true);
-  assert.match(text(find(view.render(cx), "auto-merge")), /Merging automatically/);
+  assert.equal(find(view.render(cx), "auto-merge").styles.checked[0], true);
 });
 
 test("the Schedule drawer saves, rejects and clears daily times", () => {
@@ -828,7 +833,7 @@ test("Live settings choose ticket updates per tracker from its states, off by de
   world.planeReply = (payload, provider) => provider === "plane" ? { states: [{ id: "doing", name: "In Progress", group: "started" }, { id: "done", name: "Done", group: "completed" }] }
     : { states: [{ id: "In Review", name: "In Review", type: "started" }] };
   const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
-  view.open("settings", spawning);
+  view.open("settings", spawning, "tickets");
   while (spawned.length) await spawned.shift()(spawning);
   assert.deepEqual(world.planeCalls.map(call => [call.provider, call.op, call.context?.cwd ?? call.teams.join()]), [["plane", "states", "/work/shop"], ["linear", "states", "Core"]]);
   let scene = view.render(cx);
@@ -898,7 +903,7 @@ test("Live settings add repositories by path on the project's machine, refuse du
   };
   const add = async path => { view.repoInput.set_value(path); await settle(view, "repository-add"); };
   try {
-    click(view, "settings");
+    click(view, "settings"); click(view, "settings-repositories");
     let scene = view.render(cx);
     assert.match(text(find(scene, "repository-shop")), /shop · project.*\/work\/shop/);
     assert.equal(find(scene, "repository-remove-shop"), undefined, "the project repository can't be removed");
@@ -914,7 +919,7 @@ test("Live settings add repositories by path on the project's machine, refuse du
     await add("/nowhere");
     assert.match(view.repoError, /There's no folder at \/nowhere on this computer/);
     await add("/tmp");
-    assert.match(text(find(view.render(cx), "inspector")), /\/tmp isn't in a Git repository/);
+    assert.match(text(find(view.render(cx), "settings-modal")), /\/tmp isn't in a Git repository/);
     assert.equal(view.state().repositories.length, 3);
     click(view, "repository-remove-web");
     assert.deepEqual(view.state().repositories.map(repo => repo.name), ["shop", "api"]);
@@ -960,7 +965,7 @@ test("a queued task picks its repositories as chips, and cards name them only wh
 
 test("a task across repositories shows a checklist per pull request and its most pressing need on the card", () => {
   const view = setupLive();
-  click(view, "agent"); click(view, "deliver-pr");
+  click(view, "agent"); click(view, "settings-delivery"); click(view, "deliver-pr");
   view.act({ type: "addRepository", path: "/work/api" }, cx);
   view.act({ type: "create", title: "A" }, cx);
   view.act({ type: "repos", id: "T-1", repo: "api" }, cx);
@@ -1135,8 +1140,8 @@ test("a wide Pipeline has one bar of controls and one status bar; a narrower one
   assert.match(text(find(scene, "status")), /Paused .*5 queued .*Start the pipeline to watch your first tasks enter/);
   click(view, "activity");
   assert.equal(view.drawer, "activity");
-  click(view, "settings");
-  assert.match(text(find(view.render(cx), "inspector")), /Keys Space start or pause/);
+  click(view, "settings"); click(view, "settings-general");
+  assert.match(text(find(view.render(cx), "settings-modal")), /Keys Space start or pause/);
   view.size = { width: 1200, height: 800 };
   scene = view.render(cx);
   assert.ok(find(find(scene, "controls"), "add"));
@@ -1171,7 +1176,7 @@ test("after a rebase a task's changes start where it now leaves its target branc
 test("the planner is switched on in Settings and shows its plan, its reasons and its state", () => {
   const view = setupLive();
   for (const title of ["A", "B"]) view.act({ type: "create", title }, cx);
-  click(view, "settings");
+  click(view, "settings"); click(view, "settings-planner");
   find(view.render(cx), "planner").handlers.on_change(true, cx);
   assert.equal(view.state().planner.on, true);
   click(view, "planner-model-sonnet");
@@ -1195,13 +1200,13 @@ test("the planner is switched on in Settings and shows its plan, its reasons and
 test("the planner's settings offer Claude Code or Codex when both are installed, with their own models and efforts", () => {
   const view = setupLive();
   view.codexModels = [{ slug: "gpt-5", name: "GPT-5", efforts: ["low", "high"] }];
-  click(view, "settings");
+  click(view, "settings"); click(view, "settings-planner");
   find(view.render(cx), "planner").handlers.on_change(true, cx);
-  let inspector = find(view.render(cx), "inspector");
+  let inspector = find(view.render(cx), "settings-modal");
   assert.match(text(find(inspector, "planner")), /Claude Code reads the queue, ticket blockers and the repository/);
   assert.ok(find(inspector, "planner-model-fable") && find(inspector, "planner-effort-max"));
   click(view, "planner-agent-codex");
-  inspector = find(view.render(cx), "inspector");
+  inspector = find(view.render(cx), "settings-modal");
   assert.match(text(find(inspector, "planner")), /Codex reads the queue/);
   assert.equal(find(inspector, "planner-model-fable"), undefined);
   click(view, "planner-model-gpt-5");
@@ -1256,4 +1261,26 @@ test("the map shows the plan as one clickable line, and the Plan pane has all of
   live.act({ type: "create", title: "A" }, cx);
   click(live, "plan-open");
   assert.match(text(find(live.render(cx), "inspector")), /Right now .*The planner agent is off: tasks start by Start first, then priority, then arrival\./);
+});
+
+test("Settings opens as a modal over the whole view, by section, and closes from its backdrop", () => {
+  const view = setupLive();
+  click(view, "parallel");
+  let scene = view.render(cx);
+  assert.equal(find(scene, "inspector"), undefined, "settings no longer use the side inspector");
+  assert.ok(find(scene, "settings-modal").styles.inset_0);
+  assert.equal(find(scene, "settings-agent").styles.bg[0], "selected", "Parallel opens the section that holds it");
+  assert.ok(find(scene, "parallel-more"));
+  click(view, "settings-delivery");
+  scene = view.render(cx);
+  assert.ok(find(scene, "deliver-pr"));
+  assert.equal(find(scene, "parallel-more"), undefined);
+  const running = view.state().running;
+  press(view, "space");
+  assert.equal(view.state().running, running, "scene keys wait while settings are open");
+  find(view.render(cx), "settings-modal").handlers.on_mouse_down({}, cx);
+  assert.equal(view.drawer, null);
+  view.size = { width: 500, height: 600 };
+  view.open("settings", cx);
+  assert.ok(find(find(view.render(cx), "settings-nav"), "settings-general"), "a narrow modal lists its sections in a row");
 });
