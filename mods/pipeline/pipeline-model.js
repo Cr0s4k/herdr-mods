@@ -149,6 +149,9 @@ export const queueOrder = state => state.tasks.filter(task => task.status === "q
 export const planSig = task => JSON.stringify([task.title, task.description ?? "", task.repos, task.priority, task.depends, (task.blockers ?? []).map(blocker => [blocker.key, blocker.closed])]);
 // The planner runs as Claude Code or Codex: the one you pick, else the one tasks start with when it is one of them.
 export const PLANNERS = { claude: "Claude Code", codex: "Codex" };
+// How a planner run went, kept beside its plan: what it read, how long it took, what it cost.
+const ran = action => ({ trace: (Array.isArray(action.trace) ? action.trace : []).map(line => String(line).slice(0, 200)).slice(-80),
+  ms: Number(action.ms) || null, cost: typeof action.cost === "number" ? action.cost : null, tokens: Number(action.tokens) || null });
 export const plannerAgent = state => PLANNERS[state.planner?.agent] ? state.planner.agent : state.agent?.key === "codex" ? "codex" : "claude";
 export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
 export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
@@ -465,7 +468,7 @@ export function reduce(state, action, now = Date.now()) {
     case "run":
       next.running = !next.running;
       if (next.live && action.space) next.space = action.space;
-      event(next, next.running ? "Planner started. Looking for independent work." : "Intake paused. Active work will finish.");
+      event(next, next.running ? (next.live ? "Started. Agents start for queued tasks, up to the parallel limit." : "Planner started. Looking for independent work.") : "Intake paused. Active work will finish.");
       break;
     case "schedule": {
       const value = { ...(next.schedule ?? { start: null, pause: null }) };
@@ -690,7 +693,9 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "planning": {
       if (!next.live || !next.planner?.on || action.key !== planKey(next)) return state;
-      next.planning = { key: action.key, status: "running", at: now, agent: plannerAgent(next), model: next.planner.model ?? null };
+      next.planning = { key: action.key, status: "running", at: now, agent: plannerAgent(next), model: next.planner.model ?? null, effort: next.planner.effort ?? null,
+        prompt: String(action.prompt ?? "").slice(0, 20000), watch: Boolean(next.planner.watch) };
+      if (next.planner.watch) next.planner = { ...next.planner, watch: false };
       break;
     }
     case "planned": {
@@ -705,15 +710,21 @@ export function reduce(state, action, now = Date.now()) {
         if (!other || other === task || other.status === "done" || task.depends.includes(id) || (other.status === "queued" && other.plan.n > task.plan.n)) continue;
         if (canWaitFor(next, task, other)) task.plan.waits.push(id);
       }
-      next.planning = { ...next.planning, status: "done", at: now, summary: String(action.summary ?? "").replace(/\s+/g, " ").trim().slice(0, 400) || "The planner ordered the queue." };
+      next.planning = { ...next.planning, ...ran(action), status: "done", at: now, summary: String(action.summary ?? "").replace(/\s+/g, " ").trim().slice(0, 400) || "The planner ordered the queue.",
+        tasks: queued.sort((a, b) => a.plan.n - b.plan.n).map(task => ({ id: task.id, title: task.title, reason: task.plan.reason, waits: task.plan.waits })) };
       const waiting = queued.filter(task => task.plan.waits.length);
       event(next, `The planner ordered the queue: ${order.join(", ")}.${waiting.length ? ` ${waiting.map(task => `${task.id} waits for ${task.plan.waits.join(", ")}`).join("; ")}.` : ""}`);
       break;
     }
     case "planFailed": {
       if (!next.live || next.planning?.key !== action.key || next.planning.status !== "running") return state;
-      next.planning = { ...next.planning, status: "failed", at: now, error: String(action.error || "The planner gave no plan.").replace(/\s+/g, " ").slice(0, 300) };
+      next.planning = { ...next.planning, ...ran(action), status: "failed", at: now, error: String(action.error || "The planner gave no plan.").replace(/\s+/g, " ").slice(0, 300) };
       event(next, `The planner couldn't plan · ${next.planning.error}`);
+      break;
+    }
+    case "watchPlan": {
+      if (!next.live || !next.planner?.on) return state;
+      next.planner = { ...next.planner, watch: !next.planner.watch };
       break;
     }
     case "replan": {

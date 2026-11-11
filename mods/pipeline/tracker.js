@@ -1,21 +1,14 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
-import { STORE, MOVING, PLANNERS, reduce, migrate } from "./pipeline-model.js";
-import { LiveRunner, prompt, readPlan } from "./pipeline-live.js";
+import { STORE, MOVING, reduce, migrate } from "./pipeline-model.js";
+import { LiveRunner, prompt } from "./pipeline-live.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
 const watching = () => panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline";
-// Codex reads its schema from a file and writes its last message to one; only the plan reaches stdout.
-const PLANNER_RUN = {
-  claude: 'command -v claude >/dev/null || exit 127; exec claude "$@" < /dev/null',
-  codex: 'command -v codex >/dev/null || exit 127; d=$(mktemp -d) || exit 1; printf %s "$1" > "$d/schema.json"; shift; '
-    + 'codex exec --output-schema "$d/schema.json" -o "$d/plan.json" "$@" < /dev/null > "$d/log" 2>&1; code=$?; '
-    + 'if [ -s "$d/plan.json" ]; then cat "$d/plan.json"; else tail -c 300 "$d/log" >&2; fi; rm -rf "$d"; exit $code',
-};
 const scripts = {};
-async function python(file, context, payload) {
+async function python(file, context, payload, timeout = 120000) {
   scripts[file] ??= await readTextFile(`${appHome()}/mods/${file}`);
   if (!scripts[file]) throw new Error("A Pipeline helper is missing. Reinstall the mods.");
-  const result = await exec("python3", ["-c", scripts[file], JSON.stringify(payload)], { cwd: context.cwd, on: context.on, timeout: 120000 });
+  const result = await exec("python3", ["-c", scripts[file], JSON.stringify(payload)], { cwd: context.cwd, on: context.on, timeout });
   let response;
   try { response = JSON.parse(result.stdout); }
   catch { throw new Error("Pipeline could not run Git there. Check Python 3 and Git on that machine."); }
@@ -32,12 +25,15 @@ export const liveHost = {
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
   usage: (context, cwds) => python("pipeline/usage.py", context, { cwds }),
-  async plan(context, { agent, args }) {
-    const result = await exec("sh", ["-c", PLANNER_RUN[agent], "sh", ...args], { cwd: context.cwd, on: context.on, timeout: 300000 })
-      .catch(error => { throw new Error(/timeout|timed out/i.test(String(error)) ? "The planner took longer than 5 minutes." : String(error?.message ?? error)); });
-    if (result.code === 127) throw new Error(`The planner needs ${PLANNERS[agent]}, and it isn't installed on that machine.`);
-    if (result.code !== 0 && !result.stdout.trim()) throw new Error((result.stderr || `${PLANNERS[agent]} stopped without a plan.`).trim().slice(-300));
-    return readPlan(result.stdout, agent);
+  // A watched plan runs in a tab of its own, so you see what it reads; the runner waits for its result file.
+  async plan(context, job) {
+    if (!job.watch) return python("pipeline/planner.py", context, { ...job, cwd: context.cwd }, 320000);
+    scripts["pipeline/planner.py"] ??= await readTextFile(`${appHome()}/mods/pipeline/planner.py`);
+    const out = `/tmp/herdr-pipeline-plan-${Date.now()}`, opening = { folder: context.cwd, argv: ["python3", "-c", scripts["pipeline/planner.py"], JSON.stringify({ ...job, cwd: context.cwd, out })] };
+    if (job.space && spaces().some(row => row.id === job.space)) run("tab.new", { ...opening, space: job.space, name: "Planner" });
+    else run("space.new", { ...opening, machine: context.on || "", tab: "Planner" });
+    const waited = await exec("sh", ["-c", 'i=0; while [ ! -s "$1/result.json" ] && [ $i -lt 320 ]; do sleep 1; i=$((i+1)); done; cat "$1/result.json" && rm -rf "$1"', "sh", out], { on: context.on, timeout: 330000 });
+    try { return JSON.parse(waited.stdout); } catch { throw new Error("The planner's tab closed before it gave a plan."); }
   },
   send: async (terminal, text) => { const result = await hc(["send", terminal, text]); if (result.code !== 0) throw new Error(result.stderr); },
   async check(context, cwd, command) {

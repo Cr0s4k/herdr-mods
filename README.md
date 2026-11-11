@@ -221,7 +221,13 @@ task, so parallel agents never touch each other or your checkout.
    show the waits. New agents wait for the plan; if planning fails, tasks start by priority
    and only a new or changed task asks again. Pipeline still keeps its own rules: the
    parallel and review limits, waits you set, no circles, and a wait that contradicts the
-   plan's own order is dropped. Ticket blockers hold a task whether the planner is on or
+   plan's own order is dropped. Click **The plan · by …** (or the centre while it says
+   **Planning**, or **See what the planner did** in Settings) for the **Planner** view: who
+   planned and with what model and effort, how long it took, its tokens and (for Claude
+   Code) cost, its summary, its order with every task's reason and waits (kept after the
+   tasks start), the files it read and the searches and commands it ran, and what it was
+   asked. **Watch the next plan** runs the next one in a terminal tab, so you see it read as
+   it goes. Ticket blockers hold a task whether the planner is on or
    not; the planner sees them so it can plan around them. **Start first** and **Start
    anyway** still win. Pick its model and effort there (Default is the agent's own); a plan
    takes seconds on a small model.

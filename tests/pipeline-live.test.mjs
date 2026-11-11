@@ -1400,7 +1400,8 @@ test("the planner's order yields to Start first and Start anyway, and a failed p
 test("the runner asks the planner once the queue settles, read-only, and applies the answer", async () => {
   let state = reduce(reduce(typed("A", "B"), { type: "plannerSetup", on: true, model: "sonnet" }, 0), { type: "addRepository", path: "/work/api" }, 0);
   let clock = 0, calls = [];
-  const world = host(state, { now: () => clock, plan: async (_context, job) => { calls.push(job.args); return { summary: "B first.", order: ["T-2", "T-1"], waits: {}, reasons: { "T-1": "After B." } }; } });
+  const world = host(state, { now: () => clock, plan: async (_context, job) => { calls.push(job); return { plan: { summary: "B first.", order: ["T-2", "T-1"], tasks: [{ id: "T-1", waits: [], reason: "After B." }] },
+    trace: ["Reads src/a.js"], ms: 9000, cost: 0.004, tokens: 35000 }; } });
   const runner = new live.LiveRunner(world.host);
   const tick = async ms => { clock += ms; const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
   await tick(0); await tick(1000);
@@ -1410,19 +1411,22 @@ test("the runner asks the planner once the queue settles, read-only, and applies
   assert.equal(calls.length, 0, "a new task restarts the wait");
   await tick(4000);
   assert.equal(calls.length, 1);
-  const args = calls[0];
+  const { args, prompt, schema, watch } = calls[0];
   assert.deepEqual(args.slice(0, 5), ["-p", "--model", "sonnet", "--tools", "Read,Grep,Glob"]);
-  assert.ok(args.includes("--add-dir=/work/api") && args.includes("--strict-mcp-config") && args.includes("--json-schema"));
-  assert.match(args.at(-1), /- T-3: C\n  repositories: shop · priority 2/);
-  assert.match(args.at(-1), /- api: \/work\/api/);
-  assert.equal(world.state().planning.status, "done");
+  assert.ok(args.includes("--add-dir=/work/api") && args.includes("--strict-mcp-config"));
+  assert.deepEqual([schema, watch], [live.PLAN_SCHEMA, false]);
+  assert.match(prompt, /- T-3: C\n  repositories: shop · priority 2/);
+  assert.match(prompt, /- api: \/work\/api/);
+  const planning = world.state().planning;
+  assert.deepEqual([planning.status, planning.prompt, planning.trace, planning.ms, planning.cost, planning.tokens], ["done", prompt, ["Reads src/a.js"], 9000, 0.004, 35000]);
+  assert.deepEqual(planning.tasks, [{ id: "T-2", title: "B", reason: "", waits: [] }, { id: "T-1", title: "A", reason: "After B.", waits: [] }, { id: "T-3", title: "C", reason: "", waits: [] }],
+    "the plan is kept as it was, after its tasks start");
   assert.equal(row(world.state(), "T-1").plan.reason, "After B.");
   await tick(10000);
   assert.equal(calls.length, 1, "the same queue isn't planned twice");
-  assert.deepEqual(live.readPlan(JSON.stringify({ structured_output: { summary: "s", order: ["T-1"], tasks: [{ id: "T-1", waits: ["T-2"], reason: "r" }] } })),
-    { summary: "s", order: ["T-1"], waits: { "T-1": ["T-2"] }, reasons: { "T-1": "r" } });
-  assert.throws(() => live.readPlan(JSON.stringify({ is_error: true, result: "Credit balance is too low" })), /Credit balance is too low/);
-  assert.throws(() => live.readPlan("not json"), /wasn't readable/);
+  assert.deepEqual(live.readPlan({ plan: { summary: "s", order: ["T-1"], tasks: [{ id: "T-1", waits: ["T-2"], reason: "r" }] }, trace: ["x"], ms: 5 }),
+    { summary: "s", order: ["T-1"], waits: { "T-1": ["T-2"] }, reasons: { "T-1": "r" }, trace: ["x"], ms: 5, cost: null, tokens: null });
+  assert.throws(() => live.readPlan({ plan: null, error: "Credit balance is too low", trace: ["Reads a"] }), error => /Credit balance is too low/.test(error.message) && error.trace[0] === "Reads a");
 });
 
 test("a plan that was running when Herdr restarted fails, so the queue isn't held", () => {
@@ -1447,10 +1451,9 @@ test("the planner can be Codex: read-only, schema first, with its own model and 
   state = reduce(state, { type: "plannerSetup", agent: "codex", model: "gpt-5", effort: "low" }, 0);
   const job = live.planArgs(state);
   assert.equal(job.agent, "codex");
-  assert.deepEqual(JSON.parse(job.args[0]), live.PLAN_SCHEMA);
-  assert.deepEqual(job.args.slice(1, -1), ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", "-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "--add-dir=/work/api"]);
-  assert.match(job.args.at(-1), /^You plan the work queue of Herdr Pipeline/);
-  assert.deepEqual(live.readPlan(JSON.stringify({ summary: "s", order: ["T-1"], tasks: [] }), "codex"), { summary: "s", order: ["T-1"], waits: {}, reasons: {} });
+  assert.deepEqual(job.args, ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", "-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "--add-dir=/work/api"]);
+  assert.deepEqual(job.tuning, ["gpt-5", "low effort"]);
+  assert.match(job.prompt, /^You plan the work queue of Herdr Pipeline/);
   state = reduce(reduce(state, { type: "planning", key: model.planKey(state) }, 0), { type: "planned", key: model.planKey(state), order: ["T-1"], summary: "s" }, 0);
   assert.equal(state.planning.agent, "codex");
 });
@@ -1470,4 +1473,19 @@ test("the planner reads each ticket's blockers, and a blocker that changes asks 
   state = reduce(state, { type: "blockers", id: "ENG-2", blockers: [{ key: "ENG-1", title: "Schema" }, { key: "OPS-9", title: "Provision the database", closed: true }] }, 0);
   assert.equal(model.plannerHolds(state), true, "a blocker that closed asks for a new plan");
   assert.deepEqual(model.dependencies(state, row(state, "ENG-2")), ["ENG-1"]);
+});
+
+test("a watched plan is asked for once, and the plan keeps what it read even when it fails", async () => {
+  let state = reduce(reduce(typed("A"), { type: "plannerSetup", on: true }, 0), { type: "watchPlan" }, 0);
+  assert.equal(state.planner.watch, true);
+  let clock = 0;
+  const jobs = [], world = host(state, { now: () => clock, plan: async (_context, job) => { jobs.push(job); return { plan: null, error: "Codex stopped with an error.", trace: ["Runs rg add"], ms: 4000 }; } });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async ms => { clock += ms; const spawned = []; runner.step({ spawn: fn => spawned.push(fn({ sleep: async () => {} })) }); await Promise.all(spawned); };
+  await tick(0); await tick(5000);
+  assert.equal(jobs[0].watch, true);
+  assert.equal(world.state().planner.watch, false, "only the next plan is watched");
+  assert.deepEqual([world.state().planning.status, world.state().planning.trace, world.state().planning.watch], ["failed", ["Runs rg add"], true]);
+  assert.equal(world.state().events.some(item => /Planner started/.test(item.message)), false);
+  assert.ok(reduce(world.state(), { type: "run" }, 0).events.some(item => /^Started\. Agents start for queued tasks/.test(item.message)));
 });

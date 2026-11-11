@@ -23,7 +23,7 @@ const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esa
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
-const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule"];
+const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
 const filterLabel = filter => [SCOPES[filter.scope], filter.project?.name].filter(Boolean).join(" · ");
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
@@ -739,7 +739,7 @@ export default class Pipeline extends View {
       const need = info.questions ? { text: `${info.questions} need${info.questions === 1 ? "s" : ""} you`, color: t.blocked, go: cx => this.nextQuestion(cx), hint: "Show the next agent waiting for you (Q)" }
         : info.failed ? { text: `${info.failed} stopped`, color: t.blocked, go: cx => this.open("review", cx), hint: "Show the tasks that stopped" }
         : info.approvals ? { text: `${info.approvals} to review`, color: t.ansi5, go: cx => this.open("review", cx), hint: "Show the work waiting for your review" }
-        : thinking ? { text: "Planning", color: t.accent, go: cx => this.open("queue", cx), hint: "The planner agent is ordering the queue. Show the queue" }
+        : thinking ? { text: "Planning", color: t.accent, go: cx => this.open("planner", cx), hint: "The planner agent is ordering the queue. Show what it does" }
         : { text: "Agents", color: t.accent, go: cx => this.open("queue", cx), hint: "Show the queue" };
       canvas.child(sun(Button.new("pipeline-sun")).border_color(need.color).text_color(t.foreground).tab_index(0).accessibility_label(`${need.text}. ${need.hint}`).tooltip(need.hint)
         .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.foreground)).on_click((_e, cx) => need.go(cx))
@@ -751,7 +751,9 @@ export default class Pipeline extends View {
     const planRight = Math.min(c.x + 90, g.slots[1] ? g.slots[1].x - cw / 2 - 14 : c.x + 90);
     canvas.child(v_flex().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft)).max_h(Math.max(40, c.y - RING - 22)).overflow_hidden().gap(4)
       .child(h_flex().gap(8).items_center()
-        .child(div().text_size(11).font_medium().text_color(t.muted).child(planner ? `The plan · ${planner}` : "The plan"))
+        .child(planner ? Button.new("pipeline-plan-open").text_size(11).font_medium().text_color(t.muted).tab_index(0).accessibility_label(`The plan · ${planner}. See what the planner did`)
+            .tooltip("See what the planner read and why").hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
+            .on_click((_e, cx) => this.open("planner", cx)).child(`The plan · ${planner}`) : div().text_size(11).font_medium().text_color(t.muted).child("The plan"))
         .when(Boolean(planner) && state.planning && state.planning.status !== "running", el => el.child(this.button("replan", "Plan again", cx => this.act({ type: "replan" }, cx), t,
           { small: true, icon: "reset", hint: "Ask the planner agent to read the queue and the repository again" }).h(20))))
       .child(div().text_size(12).line_height(1.45).child(state.plan)));
@@ -858,7 +860,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Planner", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -894,6 +896,7 @@ export default class Pipeline extends View {
     }
     else if (this.drawer === "settings") state.live ? this.liveSettings(body, state, t) : this.settings(body, state, t);
     else if (this.drawer === "quota") this.quota(body, state, t);
+    else if (this.drawer === "planner") this.plannerView(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
     else if (this.drawer === "schedule") this.schedule(body, state, t);
     else if (this.drawer === "task") this.detail(body, state, t, cx);
@@ -1333,6 +1336,51 @@ export default class Pipeline extends View {
     if (log.length) body.child(this.heading("Task history"));
     for (const message of log) body.child(this.label(message, t));
   }
+  plannerView(body, state, t) {
+    const planning = state.planning, now = Date.now();
+    if (!state.planner?.on) {
+      body.child(this.label("The planner is off. With Plan with an agent on, Claude Code or Codex orders the queue and says which task waits for which.", t));
+      body.child(this.button("planner-settings", "Open Settings", cx => this.open("settings", cx), t, { icon: "settings" }));
+      if (!planning) return;
+    }
+    const watching = Boolean(state.planner?.watch);
+    if (state.planner?.on) body.child(h_flex().gap(8).flex_wrap()
+      .child(this.button("planner-again", "Plan again", cx => this.act({ type: "replan" }, cx), t, { icon: "reset", disabled: planning?.status === "running", hint: "Read the queue and the repository again" }))
+      .child(this.button("planner-watch", watching ? "Next plan opens in a tab" : "Watch the next plan", cx => this.act({ type: "watchPlan" }, cx), t,
+        { icon: "terminal", selected: watching, hint: watching ? "Click to plan in the background again" : "Run the next plan in a terminal tab, so you see what it reads as it goes" })));
+    if (!planning) { body.child(this.label("It hasn't planned yet. It plans a few seconds after a task joins the queue.", t)); return; }
+    const who = [PLANNERS[planning.agent] ?? "Claude Code", planning.model ?? "default model", planning.effort ? `${planning.effort} effort` : null].filter(Boolean).join(" · ");
+    const cost = [planning.ms && `took ${Math.max(1, Math.round(planning.ms / 1000))} s`, planning.tokens && `${compact(planning.tokens)} tokens`, typeof planning.cost === "number" && `$${planning.cost.toFixed(planning.cost < 0.01 ? 4 : 2)}`].filter(Boolean);
+    const status = planning.status === "running" ? `Planning since ${elapsed(now - planning.at)} ago${planning.watch ? ", in its own tab" : ""}…`
+      : planning.status === "failed" ? `Couldn't plan, ${elapsed(now - planning.at)} ago` : `Planned ${elapsed(now - planning.at)} ago`;
+    body.child(v_flex().gap(3)
+      .child(h_flex().gap(7).items_center().child(dot(planning.status === "failed" ? t.blocked : planning.status === "running" ? t.accent : t.ansi2)).child(div().text_size(13).font_medium().child(status)))
+      .child(this.label([who, ...cost].join(" · "), t)));
+    if (planning.status === "failed") body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(planning.error));
+    if (planning.summary) body.child(div().text_size(13).line_height(1.5).child(planning.summary));
+    if (planning.tasks?.length) {
+      body.child(this.heading("Its order"));
+      planning.tasks.forEach((row, i) => {
+        const task = state.tasks.find(other => other.id === row.id);
+        body.child(Button.new(`pipeline-planned-${row.id}`).w_full().p(10).rounded(6).bg(t.surface).border_1().border_color(t.border).text_color(t.foreground).tab_index(0)
+          .accessibility_label(`${i + 1}. ${row.id}: ${row.title}`).hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
+          .on_click((_e, cx) => { if (task) this.inspect(task.id, cx); })
+          .child(v_flex().w_full().gap(4)
+            .child(h_flex().gap(6).items_center().child(div().text_size(11).font_medium().text_color(t.muted).child(`${i + 1}. ${row.id}`)).child(div().flex_1())
+              .child(div().text_size(11).text_color(t.muted).child(task ? labelFor(state, task.status) : "Gone")))
+            .child(div().text_size(12).font_medium().child(row.title))
+            .when(Boolean(row.reason), el => el.child(div().text_size(12).line_height(1.45).text_color(t.muted).child(row.reason)))
+            .when(row.waits.length > 0, el => el.child(div().text_size(11).text_color(t.ansi5).child(`Waits for ${row.waits.join(", ")}`)))));
+      });
+    }
+    if (planning.trace?.length) body.child(this.heading("What it read and did")).child(this.screen(planning.trace, t));
+    else if (planning.status !== "running") body.child(this.label("It didn't report reading anything.", t));
+    if (planning.prompt) {
+      body.child(this.button("planner-prompt", this.showPrompt ? "Hide what it was asked" : "Show what it was asked", cx => { this.showPrompt = !this.showPrompt; cx.notify(); }, t, { small: true }));
+      if (this.showPrompt) body.child(v_flex().w_full().p(10).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(11).line_height(1.45)
+        .font_family(settings().font_family ?? "JetBrains Mono").children(planning.prompt.split("\n").map(line => div().whitespace_normal().min_h(15).child(line || " "))));
+    }
+  }
   plannerSettings(body, state, t) {
     const setup = { on: false, model: null, effort: null, ...state.planner }, installed = Object.keys(PLANNERS).filter(key => this.agentChoices.some(agent => agent.key === key));
     const agent = plannerAgent(state), name = PLANNERS[agent];
@@ -1347,6 +1395,7 @@ export default class Pipeline extends View {
       .children(models.map(model => chip(`model-${model}`, model, setup.model === model, { model }))));
     body.child(h_flex().gap(6).flex_wrap().child(chip("effort-default", "Default effort", !setup.effort, { effort: null }, `${name}'s own default effort`))
       .children(efforts.map(effort => chip(`effort-${effort}`, effort, setup.effort === effort, { effort }))));
+    body.child(this.button("planner-open", state.planning ? "See what the planner did" : "Open the planner", cx => this.open("planner", cx), t, { icon: "eye" }));
     body.child(this.label("It runs whenever the queue changes, can only read, and new agents wait for its plan. Pipeline still keeps the rules: limits, waits you set, no circles. Start first and Start anyway still win.", t));
   }
   firstButton(task, t) {

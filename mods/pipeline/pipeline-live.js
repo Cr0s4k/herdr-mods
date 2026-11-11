@@ -99,24 +99,23 @@ export function planPrompt(state) {
     ...(started.length ? ["", "Already started (they hold their files until they merge):", ...started.map(task => `- ${task.id}: ${task.title} (${task.status}, ${task.repos.join(", ")})`)] : []),
   ].join("\n");
 }
-// Both run read-only and headless. Codex takes its schema as a file, so the first argument of its job is the schema itself.
+// The job planner.py runs: both agents read-only and headless; it adds the output flags, the schema and the prompt.
 export function planArgs(state) {
   const agent = plannerAgent(state), options = AGENT_OPTIONS[agent], tune = { model: state.planner?.model ?? null, effort: state.planner?.effort ?? null };
   const dirs = options.dirs((state.repositories ?? []).slice(1).map(repo => repo.path));
-  if (agent === "codex") return { agent, args: [JSON.stringify(PLAN_SCHEMA), "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune), ...dirs, planPrompt(state)] };
-  return { agent, args: ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", ...dirs, "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
-    "--output-format", "json", "--json-schema", JSON.stringify(PLAN_SCHEMA), planPrompt(state)] };
+  const args = agent === "codex" ? ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune), ...dirs]
+    : ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", ...dirs, "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"];
+  return { agent, args, schema: PLAN_SCHEMA, prompt: planPrompt(state), tuning: [tune.model, tune.effort && `${tune.effort} effort`].filter(Boolean) };
 }
-// Claude Code wraps the plan in its JSON result; Codex writes the plan itself as its last message.
-export function readPlan(stdout, agent = "claude") {
-  let reply;
-  try { reply = JSON.parse(stdout); } catch { throw new Error("The planner's answer wasn't readable."); }
-  const plan = agent === "codex" ? reply : reply?.structured_output;
-  if (reply?.is_error || !plan || !Array.isArray(plan.order)) throw new Error(String(reply?.result || "The planner gave no plan.").slice(0, 300));
+// What planner.py hands back, as the reducer takes it; a run without a plan throws, carrying what it did see.
+export function readPlan(result) {
+  const plan = result?.plan, seen = { trace: (result?.trace ?? []).map(String).slice(-80), ms: Number(result?.ms) || null,
+    cost: typeof result?.cost === "number" ? result.cost : null, tokens: Number(result?.tokens) || null };
+  if (!plan || !Array.isArray(plan.order)) throw Object.assign(new Error(String(result?.error || "The planner gave no plan.").slice(0, 300)), seen);
   const tasks = Array.isArray(plan.tasks) ? plan.tasks.filter(row => row && typeof row.id === "string") : [];
   return { summary: String(plan.summary ?? ""), order: plan.order.map(String),
     waits: Object.fromEntries(tasks.map(row => [row.id, Array.isArray(row.waits) ? row.waits.map(String) : []])),
-    reasons: Object.fromEntries(tasks.map(row => [row.id, String(row.reason ?? "")])) };
+    reasons: Object.fromEntries(tasks.map(row => [row.id, String(row.reason ?? "")])), ...seen };
 }
 
 export const rebaseRequest = (target, error) => [`Merging this branch into ${target} was refused:`, error || "The branch conflicts.", "",
@@ -289,12 +288,14 @@ export class LiveRunner {
     const key = planKey(state), now = this.host.now(), seen = this.queues.get(id);
     if (seen?.key !== key) { this.queues.set(id, { key, since: now }); return; }
     if (now - seen.since < 4000) return;
-    this.apply(id, { type: "planning", key });
-    if (this.host.shared(STORE)?.[id]?.planning?.key !== key) return;
+    const job = planArgs(state);
+    this.apply(id, { type: "planning", key, prompt: job.prompt });
+    const asked = this.host.shared(STORE)?.[id]?.planning;
+    if (asked?.key !== key) return;
     this.planning.add(id);
     cx.spawn(async () => {
-      try { this.apply(id, { type: "planned", key, ...(await this.host.plan(state.context, planArgs(state))) }); }
-      catch (error) { this.apply(id, { type: "planFailed", key, error: error?.message || String(error) }); }
+      try { this.apply(id, { type: "planned", key, ...readPlan(await this.host.plan(state.context, { ...job, watch: Boolean(asked.watch), space: state.space ?? null })) }); }
+      catch (error) { this.apply(id, { type: "planFailed", key, error: error?.message || String(error), trace: error?.trace, ms: error?.ms, cost: error?.cost, tokens: error?.tokens }); }
       finally { this.planning.delete(id); }
     });
   }

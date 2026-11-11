@@ -1021,3 +1021,32 @@ test("the planner's settings offer Claude Code or Codex when both are installed,
   view.act({ type: "plannerSetup", on: false }, cx);
   assert.equal(find(view.render(cx), "planner").styles.disabled[0], true, "without either, it can't be turned on");
 });
+
+test("the Planner view keeps the last plan: who planned, its order and reasons, what it read and what it was asked", () => {
+  const view = setupLive();
+  for (const title of ["A", "B"]) view.act({ type: "create", title }, cx);
+  view.act({ type: "plannerSetup", on: true, model: "sonnet", effort: "low" }, cx);
+  const key = globalThis.__pipelineView.planKey(view.state());
+  view.act({ type: "planning", key, prompt: "You plan the work queue.\nQueued tasks:" }, cx);
+  assert.match(text(find(view.render(cx), "sun")), /Planning/);
+  click(view, "sun");
+  assert.equal(view.drawer, "planner");
+  assert.match(text(find(view.render(cx), "inspector")), /Planning since under a minute ago…/);
+  view.act({ type: "planned", key, summary: "B before A.", order: ["T-2", "T-1"], waits: { "T-1": ["T-2"] }, reasons: { "T-1": "It reuses B's helper." },
+    trace: ["Reads src/b.js", "Searches for “helper”"], ms: 8600, cost: 0.0029, tokens: 35000 }, cx);
+  view.act({ type: "run" }, cx);
+  let inspector = text(find(view.render(cx), "inspector"));
+  assert.match(inspector, /Planned under a minute ago Claude Code · sonnet · low effort · took 9 s · 35k tokens · \$0\.0029/);
+  assert.match(inspector, /B before A\. Its order 1\. T-2 .* B .*2\. T-1 .* A It reuses B's helper\. Waits for T-2/);
+  assert.match(inspector, /What it read and did Reads src\/b\.js Searches for “helper”/);
+  assert.equal(inspector.includes("Queued tasks:"), false);
+  click(view, "planner-prompt");
+  assert.match(text(find(view.render(cx), "inspector")), /You plan the work queue\. Queued tasks:/);
+  click(view, "planner-watch");
+  assert.equal(view.state().planner.watch, true);
+  assert.match(text(find(view.render(cx), "planner-watch")), /Next plan opens in a tab/);
+  click(view, "planned-T-1");
+  assert.deepEqual([view.drawer, view.selected], ["task", "T-1"]);
+  click(view, "plan-open");
+  assert.equal(view.drawer, "planner");
+});
