@@ -30,7 +30,8 @@ globalThis.__pipelineView = {
   ...model, ...geometry, View: class {}, div: native, svg: native, h_flex: native, v_flex: native,
   Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) },
   InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
-  hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
+  hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => { world.runs.push([name, args]); world.onRun?.(name, args); },
+  panes: () => world.panes ?? [], spaces: () => world.spaces ?? [],
   knownAgents: async () => [], exec: async (...args) => world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
@@ -635,6 +636,31 @@ test("failed checks offer Fix on the card and the full choice in the inspector",
   click(view, "recheck-T-1");
   assert.equal(row(view, "T-1").status, "testing");
   assert.match(text(find(view.render(cx), "card-T-1")), /Running checks/);
+});
+
+test("Try it runs the project's command in the task's worktree, once, in a tab beside its agent", async () => {
+  const view = setupLive();
+  view.trySuggestions = ["./preview.sh", "npm run dev"];
+  view.open("settings", cx);
+  click(view, "try-use-./preview.sh");
+  assert.equal(view.state().tryout, "./preview.sh");
+  assert.equal(find(view.render(cx), "try-use-./preview.sh"), undefined);
+  view.open(null, cx);
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null });
+  world.spaces = [{ id: "s9", tabs: [{ id: "tb9" }] }];
+  world.panes = [{ terminal: "t9", tab: "tb9", cwd: "/wt/T-1" }];
+  world.onRun = (name, args) => { if (name === "tab.new") world.panes = [...world.panes, { terminal: "t10", tab: "tb10", cwd: args.folder }]; };
+  view.inspect("T-1", cx);
+  await settle(view, "try-T-1");
+  const opened = world.runs.find(call => call[0] === "tab.new")[1];
+  assert.deepEqual([opened.space, opened.folder, opened.name, opened.argv.slice(-2)], ["s9", "/wt/T-1", "Try T-1", ["./preview.sh", "T-1"]]);
+  assert.equal(row(view, "T-1").tried, "tb10");
+  world.spaces = [{ id: "s9", tabs: [{ id: "tb9" }, { id: "tb10" }] }];
+  world.runs = [];
+  await settle(view, "try-T-1");
+  assert.deepEqual(world.runs, [["space.select", { id: "s9" }], ["tab.select", { id: "tb10" }]]);
+  world.onRun = null; world.panes = []; world.spaces = [];
 });
 
 test("pull request delivery changes the approve wording and links the open PR", () => {

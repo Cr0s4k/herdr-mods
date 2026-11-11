@@ -871,6 +871,20 @@ export function reduce(state, action, now = Date.now()) {
       event(next, value ? `Checks before review: ${command}.` : "No checks before review.");
       break;
     }
+    case "tryout": {
+      if (!next.live) return state;
+      const command = String(action.command ?? "").trim().slice(0, 500) || null;
+      if (command === (next.tryout ?? null)) return state;
+      next.tryout = command;
+      event(next, command ? `Try it: ${command}.` : "No Try it command.");
+      break;
+    }
+    case "tried": {
+      const task = row(action.id);
+      if (!next.live || !task || task.tried === action.tab) return state;
+      task.tried = action.tab;
+      break;
+    }
     case "checkPassed": {
       const task = row(action.id);
       if (!next.live || task?.status !== "testing" || task.checkRun !== action.run) return state;

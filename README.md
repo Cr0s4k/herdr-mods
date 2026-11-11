@@ -273,6 +273,14 @@ task, so parallel agents never touch each other or your checkout.
    a merge is refused because the branch conflicts, **Ask the agent to rebase** sends the
    refusal to its agent, which rebases, resolves the conflicts and comes back to review.
 
+   To use the change before merging, set a **Try it** command in Settings (Pipeline suggests
+   an executable `./try.sh` or `./preview.sh`, a package.json `dev`, `start` or `preview`
+   script, a Makefile `run`, `dev` or `preview` target, or `cargo run`). **Try it** (T) in the
+   inspector runs it in the task's worktree, in a tab of its own beside the agent, with the
+   task id in `$PIPELINE_TASK`. Ctrl-C leaves a shell in the worktree; pressing it again shows
+   that tab; it closes when the task merges or is discarded. Several branches running at once
+   is up to the command, for example a dev server that picks a free port.
+
    Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
    finishes with passing checks (or with no check set) merges straight away. Work you sent
    on with **Review anyway**, and a merge that was refused, still wait for you.

@@ -1,13 +1,13 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
-import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
+import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
-const KEYS = { live: "Space start or pause · N new task · arrows or J K walk the tasks · D read the diff · P Plane · L Linear · Q next agent that needs you · Y merge all · R retry failed · Esc close",
+const KEYS = { live: "Space start or pause · N new task · arrows or J K walk the tasks · D read the diff · T try it · P Plane · L Linear · Q next agent that needs you · Y merge all · R retry failed · Esc close",
   simulation: "Space start or pause · N new task · arrows or J K walk the tasks · A examples · Q answer · Y approve all · R retry failed · S speed · Esc close" };
 const COMET = ["●", "•", "·", "", "", ""];
 const CHECK_HINTS = [
@@ -18,6 +18,15 @@ const CHECK_HINTS = [
   "if [ -f go.mod ]; then echo 'go test ./...'; fi",
   "if [ -f pytest.ini ] || grep -qs pytest pyproject.toml; then echo 'python3 -m pytest'; fi",
 ].join("\n");
+const TRY_HINTS = [
+  'for f in try.sh preview.sh; do [ -x "$f" ] && echo "./$f"; done',
+  "if [ -f package.json ]; then pm=npm; [ -f pnpm-lock.yaml ] && pm=pnpm; [ -f yarn.lock ] && pm=yarn; { [ -f bun.lockb ] || [ -f bun.lock ]; } && pm=bun",
+  "  for s in dev start preview; do grep -q \"\\\"$s\\\":\" package.json && echo \"$pm run $s\"; done; fi",
+  'if [ -f Makefile ]; then for s in run dev preview; do grep -q "^$s:" Makefile && echo "make $s"; done; fi',
+  "if [ -f Cargo.toml ]; then echo 'cargo run'; fi",
+].join("\n");
+// Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
+const TRY_RUN = 'trap : INT; PIPELINE_TASK="$2" sh -c "$1"; exec "${SHELL:-sh}" -l';
 // Prints a folder's repository root, with ~ expanded on the machine the project is on; exit 3 means no such folder.
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
@@ -92,6 +101,11 @@ export default class Pipeline extends View {
     this.checkInput.on("blur", (_e, cx) => this.saveCheck(cx));
     this.checkInput.on("change", (_e, cx) => cx.notify());
     this.checkSuggestions = [];
+    this.tryInput = InputState.new({ placeholder: "Nothing to run. For example: npm run dev" });
+    this.tryInput.on("submit", (_e, cx) => this.saveTry(cx));
+    this.tryInput.on("blur", (_e, cx) => this.saveTry(cx));
+    this.tryInput.on("change", (_e, cx) => cx.notify());
+    this.trySuggestions = [];
     this.times = {};
     for (const [kind, placeholder] of [["start", "Not scheduled. For example: 22:00"], ["pause", "Not scheduled. For example: 7:00"]]) {
       const input = this.times[kind] = InputState.new({ placeholder });
@@ -148,7 +162,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.tryInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -196,6 +210,8 @@ export default class Pipeline extends View {
       if (this.repo?.root) {
         const found = await exec("sh", ["-c", CHECK_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.checkSuggestions = (found?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
+        const runs = await exec("sh", ["-c", TRY_HINTS], { cwd: this.repo.root, on }).catch(() => null);
+        this.trySuggestions = (runs?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
       }
       cx.notify();
     });
@@ -323,6 +339,31 @@ export default class Pipeline extends View {
     if (!state?.live || this.checkInput.value().trim() === (state.check?.command ?? "")) return;
     this.act({ type: "check", command: this.checkInput.value() }, cx);
   }
+  saveTry(cx) {
+    const state = this.state();
+    if (!state?.live || this.tryInput.value().trim() === (state.tryout ?? "")) return;
+    this.act({ type: "tryout", command: this.tryInput.value() }, cx);
+  }
+  tryTask(task, cx) {
+    const command = this.state()?.tryout, ws = task && workspacesOf(task)[0];
+    if (!command || !ws || task.discard) return;
+    const open = task.tried && spaces().find(space => space.tabs.some(tab => tab.id === task.tried));
+    if (open) {
+      try { run("space.select", { id: open.id }); run("tab.select", { id: task.tried }); } catch { /* It closed meanwhile. */ }
+      return;
+    }
+    const before = new Set(panes().map(pane => pane.terminal).filter(Boolean)), name = `Try ${task.id}`;
+    const opening = { folder: ws.cwd, argv: ["sh", "-c", TRY_RUN, "sh", command, task.id] };
+    if (task.space && spaces().some(space => space.id === task.space)) run("tab.new", { ...opening, space: task.space, name });
+    else run("space.new", { ...opening, machine: this.context.on || "", tab: name });
+    cx.spawn(async cx => {
+      for (let i = 0; i < 60; i++) {
+        const pane = panes().find(row => row.terminal && !before.has(row.terminal) && row.cwd === ws.cwd);
+        if (pane) { this.act({ type: "tried", id: task.id, tab: pane.tab }, cx); return; }
+        await cx.sleep(100);
+      }
+    });
+  }
   saveTime(kind, cx) {
     const state = this.state(), text = this.times[kind].value().trim();
     if (!state || text === (state.schedule?.[kind] ?? "")) return;
@@ -349,6 +390,7 @@ export default class Pipeline extends View {
   open(drawer, cx) {
     if (drawer === "settings" && this.state()?.live) {
       this.checkInput.set_value(this.state().check?.command ?? "");
+      this.tryInput.set_value(this.state().tryout ?? "");
       this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
       if (drawer !== this.drawer) this.loadUpdateStates(cx);
     }
@@ -590,6 +632,7 @@ export default class Pipeline extends View {
       q: () => this.nextQuestion(cx),
       s: () => this.speed(cx),
       d: () => { if (this.state()?.live && this.drawer === "task") this.viewChanges(this.peek.diff.find(repo => repo.files.length)); },
+      t: () => { if (this.state()?.live && this.drawer === "task") this.tryTask(this.state().tasks.find(task => task.id === this.selected), cx); },
     };
     const asked = this.drawer === "task" ? this.state()?.tasks.find(task => task.id === this.selected && needsInput(task)) : null;
     const option = choices(asked && (this.state().live ? this.liveQuestion(asked) : asked.question))[Number(e.keystroke) - 1];
@@ -1212,6 +1255,16 @@ export default class Pipeline extends View {
     if (state.check?.command) body.child(this.button("check-fix", state.check.fix ? "Failures go back to the agent, up to 2 times" : "Failures wait for you",
       cx => this.act({ type: "check", fix: !state.check.fix }, cx), t, { icon: state.check.fix ? "check" : null, selected: state.check.fix,
         hint: state.check.fix ? "Click to stop and wait for you when checks fail" : "Click to send failures back to the agent automatically" }).w_full().justify_start());
+    body.child(this.heading("Try it"));
+    body.child(this.label("Runs a task's branch from its worktree, in a tab of its own, so you can use the change before merging: a dev server, a preview build, a second app window. Its task id is in $PIPELINE_TASK. The tab closes when the task merges or is discarded.", t));
+    body.child(h_flex().gap(6).items_center()
+      .child(Input.new(this.tryInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Try it command"))
+      .child(this.button("try-save", "Save", cx => this.saveTry(cx), t, { small: true, disabled: this.tryInput.value().trim() === (state.tryout ?? "") })));
+    const runs = this.trySuggestions.filter(command => command !== state.tryout);
+    if (runs.length) body.child(h_flex().gap(6).flex_wrap().children(runs.map(command => this.button(`try-use-${command}`, `Use ${command}`, cx => {
+      this.tryInput.set_value(command); this.act({ type: "tryout", command }, cx);
+    }, t, { small: true, hint: "Found in this repository" }))));
     this.stepper(body, "Parallel agents", "Lowering the limit lets running agents finish.", state.parallel, "parallel", 1, 6, t);
     this.stepper(body, "Branches waiting for review", "New agents wait while this many finished branches are unmerged.", state.reviewLimit, "reviewLimit", 1, 10, t);
     body.child(this.heading("Delivery"));
@@ -1389,6 +1442,11 @@ export default class Pipeline extends View {
         .child(this.button(`send-${task.id}`, task.status === "review" ? "Send feedback" : "Send", cx => this.send(task, cx), t,
           { disabled: !this.message.value().trim(), hint: "Types into its terminal and presses Enter" })));
       if (this.sent?.id === task.id) body.child(this.label(this.sent.error ?? (this.sent.pending ? "Sending…" : this.sent.answer ? `You answered: “${this.sent.answer}”` : "Sent. The card follows what the agent does next."), t));
+    }
+    if (state.tryout && trees.length && !["queued", "routing", "done"].includes(task.status) && !task.discard) {
+      const open = task.tried && spaces().some(space => space.tabs.some(tab => tab.id === task.tried));
+      body.child(this.button(`try-${task.id}`, open ? "Show its Try it tab" : "Try it", cx => this.tryTask(task, cx), t,
+        { icon: "play", hint: open ? "Shows the tab already running it (T)" : `Runs ${state.tryout} in ${several ? `its ${task.repos[0]} worktree` : "its worktree"}, in a tab of its own (T)` }));
     }
     if (trees.length && !["queued", "routing", "done"].includes(task.status) && !task.discard) this.changes(body, task, t, several);
     if (task.status === "testing") body.child(this.label(`Running ${state.check?.command ?? "checks"} in ${several ? `each of its ${trees.length} worktrees` : "its worktree"}…`, t));

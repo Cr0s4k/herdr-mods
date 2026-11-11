@@ -476,6 +476,22 @@ test("check settings are per project and an empty command turns checks off", () 
   assert.equal(live.tail("a\nb\nc", 2), "b\nc");
 });
 
+test("the Try it command is per project, and its tab closes with the task", async () => {
+  let state = reduce(createLive(context, 0), { type: "tryout", command: "  npm run dev  " }, 0);
+  assert.equal(state.tryout, "npm run dev");
+  assert.equal(reduce(state, { type: "tryout", command: "npm run dev" }, 0), state);
+  assert.equal(reduce(state, { type: "tryout", command: "" }, 0).tryout, null);
+  assert.equal(reduce(createPipeline(0), { type: "tryout", command: "npm run dev" }, 0).tryout, undefined);
+  const world = host(reduce(reduce(state, { type: "create", title: "A" }, 0), { type: "run", space: "sp-project" }, 0));
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.store = { [id]: reduce(world.state(), { type: "tried", id: "T-1", tab: "tb-try" }, 0) };
+  assert.equal(row(world.state(), "T-1").tried, "tb-try");
+  world.store = { [id]: reduce(world.state(), { type: "discard", id: "T-1" }, 0) };
+  await step(runner);
+  assert.deepEqual(world.calls.filter(call => call[0] === "tab.close").map(call => call[1].id), ["tb-try", "tb9"]);
+});
+
 async function reviewed(world, runner) {
   await step(runner);
   world.panes = [{ terminal: "t9" }];

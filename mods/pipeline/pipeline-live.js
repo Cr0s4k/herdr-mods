@@ -560,6 +560,7 @@ export class LiveRunner {
   }
 
   async clean(context, task, force) {
+    try { if (task.tried) this.host.run("tab.close", { id: task.tried, confirmed: true }); } catch { /* Already closed. */ }
     try {
       if (task.own === "space" && task.space) this.host.run("space.close", { id: task.space, confirmed: true });
       else if (task.tab) this.host.run("tab.close", { id: task.tab, confirmed: true });
