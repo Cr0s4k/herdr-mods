@@ -339,6 +339,22 @@ restart is never repeated: the task stops with a note to check before retrying. 
 Python 3 and Git where the project lives, and a project folder (open Pipeline from a
 space).
 
+### Usage limits
+
+In Live, the gauge button in the toolbar shows how full the usage limits of the agent your tasks start with are
+(**Claude 49%**), and opens **Usage limits**. It shows each of Claude's and Codex's limits (5-hour, weekly, and a
+model's own weekly limit such as Fable's), how full each is and when it resets.
+
+While a limit is at **Hold at** (90% by default) or more, no new agent starts: the queued task says **Held by usage
+limit**, and the plan says which limit and when it resets. Agents already working keep going, and new ones start
+when the limit resets. A model's own limit only holds tasks set to that model. **Hold new agents near a limit**
+turns this off, for example when Claude's extra usage is on and you'd rather spend it.
+
+Claude's limits come from Anthropic every five minutes, asked with Claude Code's own login from the keychain (or
+`~/.claude/.credentials.json` off macOS). This uses Anthropic's usage endpoint, which isn't documented and may
+change. Codex's limits come from its newest session on that machine, so they are as fresh as Codex's last reply.
+**Read again** reads both now. A project on another machine reads that machine's limits.
+
 ### Schedule
 
 The clock on the right half of the **Start pipeline** button opens the schedule, which sets a daily **Start at** and **Pause intake at** time (22:00, 7:30

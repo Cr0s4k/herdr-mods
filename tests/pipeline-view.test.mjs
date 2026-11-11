@@ -335,6 +335,37 @@ function setupLive() {
 const agentTask = (view, id, patch) => Object.assign(row(view, id), { workspaces: { shop: { root: `/wt/${id}`, cwd: `/wt/${id}`, branch: `pipeline/${id}`, base: "a".repeat(40), target: "main", source: "/work/shop" } },
   terminal: "t9", space: "s9", tab: "tb9", agent: "Claude Code", slot: 0, ...patch });
 
+test("Live's usage limits drawer shows both agents' limits, and the hold decides when new agents start", () => {
+  const view = setupLive();
+  view.title.set_value("One");
+  click(view, "create");
+  const resets = Date.now() + 3600000;
+  view.act({ type: "limits", limits: {
+    claude: { windows: [{ name: "5-hour", used: 93, resets, model: null }, { name: "Weekly Fable", used: 20, resets, model: "fable" }], extra: 79 },
+    codex: { error: "Codex hasn't reported its limits on this machine yet.", missing: true } } }, cx);
+  click(view, "run");
+  assert.equal(row(view, "T-1").status, "queued");
+  let scene = view.render(cx);
+  assert.equal(text(find(scene, "quota")).trim(), "Claude 93%");
+  assert.match(text(scene), /Held by a usage limit/);
+  assert.match(text(scene), /Held by usage limit/);
+  click(view, "quota");
+  scene = view.render(cx);
+  assert.match(text(scene), /Usage limits/);
+  assert.match(text(scene), /93% · resets/);
+  assert.match(text(scene), /Weekly Fable only holds tasks whose model is set to fable/);
+  assert.match(text(scene), /Extra usage is on, so Claude keeps working/);
+  assert.match(text(scene), /Codex hasn't reported its limits/);
+  click(view, "limitHold-more");
+  assert.equal(view.state().limitHold, 95);
+  assert.equal(row(view, "T-1").status, "routing", "93% is under the new hold, so the agent starts");
+  find(view.render(cx), "limit-hold").handlers.on_change(false, cx);
+  assert.equal(view.state().limitHold, null);
+  assert.equal(find(view.render(cx), "limitHold-more"), undefined, "no hold, no hold percentage");
+  click(view, "limits-read");
+  assert.ok(view.state().limitsAsked, "Read again asks the runner");
+});
+
 test("Live keeps its own pipeline beside the simulation, and typed tasks become agent tasks", () => {
   const view = setupLive();
   assert.equal(view.storeKey(), "live:shop");
@@ -343,8 +374,9 @@ test("Live keeps its own pipeline beside the simulation, and typed tasks become 
   click(view, "create");
   assert.deepEqual([row(view, "T-1").status, row(view, "T-1").repos], ["queued", ["shop"]]);
   const scene = view.render(cx);
-  for (const id of ["add", "watch", "quota", "speed", "delivery"]) assert.equal(find(scene, id), undefined, `${id} is simulation only`);
+  for (const id of ["add", "watch", "speed", "delivery"]) assert.equal(find(scene, id), undefined, `${id} is simulation only`);
   assert.ok(find(scene, "agent"));
+  assert.equal(text(find(scene, "quota")).trim(), "Limits", "Live's gauge reads real usage limits, not the example quota");
   click(view, "mode-simulation");
   assert.equal(view.state().live, undefined);
   click(view, "mode-live");

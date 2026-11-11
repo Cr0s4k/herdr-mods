@@ -1528,3 +1528,78 @@ test("a watched plan is asked for once, and the plan keeps what it read even whe
   assert.equal(world.state().events.some(item => /Planner started/.test(item.message)), false);
   assert.ok(reduce(world.state(), { type: "run" }, 0).events.some(item => /^Started\. Agents start for queued tasks/.test(item.message)));
 });
+
+const limited = (windows, extra = {}) => ({ type: "limits", limits: { claude: { windows }, codex: { windows: [{ name: "5-hour", used: 10, resets: null, model: null }], seen: 5 }, ...extra } });
+const fiveHour = (used, resets = 5000, model = null) => ({ name: "5-hour", used, resets, model });
+
+test("a usage limit at the hold keeps new agents from starting until it resets", () => {
+  let state = reduce(reduce(typed("One", "Two"), limited([fiveHour(93)]), 0), { type: "run" }, 0);
+  assert.deepEqual(activeTasks(state), []);
+  assert.match(model.waitingReason(state, row(state, "T-1"), 0), /^Held by Claude's 5-hour limit until \d\d:\d\d$/);
+  assert.match(state.plan, /^Holding new agents: Claude's 5-hour limit is at 93%, past the 90% you hold at\. It resets at \d\d:\d\d\. Agents already working keep going\.$/);
+  assert.equal(reduce(state, { type: "readLimits" }, 4999).tasks.filter(task => task.status === "routing").length, 0);
+  state = reduce(state, { type: "readLimits" }, 5000);
+  assert.deepEqual(activeTasks(state).map(task => task.id), ["T-1", "T-2"], "the reset frees them, before a new reading");
+});
+
+test("only the limits of the agent tasks start with hold them, and a model's own limit holds only that model", () => {
+  const codex = { key: "codex", name: "Codex", run: ["codex"] };
+  let state = reduce(reduce(typed("One"), limited([fiveHour(99, null)]), 0), { type: "agent", value: codex }, 0);
+  assert.equal(reduce(state, { type: "run" }, 0).tasks[0].status, "routing", "Claude's full limit doesn't hold Codex");
+  state = reduce(state, limited([fiveHour(99, null)], { codex: { windows: [{ name: "Weekly", used: 100, resets: null, model: null }] } }), 0);
+  assert.equal(reduce(state, { type: "run" }, 0).tasks[0].status, "queued");
+  state = reduce(reduce(typed("One", "Two"), limited([fiveHour(40, null), { name: "Weekly Fable", used: 96, resets: null, model: "fable" }]), 0), { type: "run" }, 0);
+  assert.equal(state.tasks.filter(task => task.status === "routing").length, 2, "no model set, so Fable's limit holds nothing");
+  state = reduce({ ...reduce(typed("One", "Two"), limited([{ name: "Weekly Fable", used: 96, resets: null, model: "fable" }]), 0), tuning: { claude: { model: "fable" } } }, { type: "run" }, 0);
+  assert.equal(activeTasks(state).length, 0);
+  assert.match(state.plan, /Claude's weekly Fable limit is at 96%/);
+  const other = { key: null, name: "Pi", run: ["pi"] };
+  assert.equal(reduce(reduce(reduce(typed("One"), limited([fiveHour(100, null)]), 0), { type: "agent", value: other }, 0), { type: "run" }, 0).tasks[0].status, "routing");
+});
+
+test("the hold can move or go, and a failed read keeps the last good one", () => {
+  let state = reduce(reduce(typed("One"), limited([fiveHour(93, null)]), 0), { type: "run" }, 0);
+  assert.equal(model.limitHold(state), 90);
+  state = reduce(state, { type: "limitHold", value: 95 }, 0);
+  assert.equal(state.tasks[0].status, "routing");
+  assert.equal(reduce(state, { type: "limitHold", value: 20 }, 0).limitHold, 50);
+  assert.equal(reduce(state, { type: "limitHold", value: null }, 0).limitHold, null);
+  assert.equal(reduce(createPipeline(context, 0), { type: "limitHold", value: 50 }, 0).limitHold, undefined, "Live only");
+  state = reduce(state, { type: "limits", limits: { error: "Pipeline could not run Python." } }, 7);
+  assert.deepEqual([state.limits.claude.windows[0].used, state.limits.error, state.limits.read], [93, "Pipeline could not run Python.", 7]);
+  state = reduce(state, { type: "limits", limits: { claude: { error: "Claude Code isn't signed in on this machine.", missing: true }, codex: { windows: [{ name: "x", used: 140 }, null] } } }, 8);
+  assert.deepEqual(state.limits.claude, { error: "Claude Code isn't signed in on this machine.", missing: true });
+  assert.deepEqual(state.limits.codex, { windows: [] });
+  assert.equal(state.limits.error, null);
+});
+
+test("the runner reads limits once per machine every five minutes, when asked, and right after a window resets", async () => {
+  let reads = 0;
+  const world = host(reduce(typed("One"), { type: "run" }, 0), { limits: async () => { reads++; return { claude: { windows: [fiveHour(95, 70000)] } }; } });
+  world.store[`${LIVE}other`] = { ...createLive({ ...context, id: "other" }, 0) };
+  world.store[`${LIVE}remote`] = { ...createLive({ ...context, id: "remote", on: "box" }, 0) };
+  let clock = 1000;
+  world.host.now = () => clock;
+  world.host.start = () => "space";
+  const runner = new live.LiveRunner(world.host);
+  const jobs = [], cx = { spawn: fn => jobs.push(fn({ sleep: async () => {} })) };
+  const tick = async at => { clock = at; runner.watchLimits(cx); await Promise.all(jobs.splice(0)); };
+  await tick(1000);
+  assert.equal(reads, 2, "this machine and the remote one");
+  assert.equal(world.store[`${LIVE}other`].limits.claude.windows[0].used, 95, "both pipelines on a machine get its reading");
+  await tick(30000);
+  assert.equal(reads, 2);
+  world.store[id] = reduce(world.store[id], { type: "readLimits" }, 31000);
+  await tick(31000);
+  assert.equal(reads, 3, "Read again");
+  await tick(69999);
+  assert.equal(reads, 3);
+  await tick(70000);
+  assert.equal(reads, 5, "the 5-hour window reset, on both machines");
+  await tick(71000);
+  assert.equal(reads, 5, "a reset counts once");
+  await tick(70000 + model.LIMIT_READ - 1);
+  assert.equal(reads, 5);
+  await tick(70000 + model.LIMIT_READ);
+  assert.equal(reads, 7);
+});

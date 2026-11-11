@@ -25,6 +25,7 @@ export const liveHost = {
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
   usage: (context, cwds) => python("pipeline/usage.py", context, { cwds }),
+  limits: context => python("pipeline/limits.py", context, {}, 30000),
   // A watched plan runs in a tab of its own, so you see what it reads; the runner waits for its result file.
   async plan(context, job) {
     if (!job.watch) return python("pipeline/planner.py", context, { ...job, cwd: context.cwd }, 320000);

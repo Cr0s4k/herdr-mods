@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, AGENT_OPTIONS, labelFor, ACTIVE } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -247,7 +247,30 @@ export class LiveRunner {
     }
   }
 
+  // Usage limits are read once per machine every five minutes, when asked, and as soon as a window has reset.
+  watchLimits(cx) {
+    if (!this.host.limits) return;
+    const machines = new Map();
+    for (const [id, state] of this.pipelines()) machines.set(state.context.on ?? "", [...(machines.get(state.context.on ?? "") ?? []), [id, state]]);
+    for (const [on, rows] of machines) {
+      const key = `limits/${on}`, now = this.host.now(), last = this.polled.get(key) ?? -Infinity;
+      if (this.polling.has(key)) continue;
+      const resets = rows.flatMap(([, state]) => Object.keys(LIMITED).flatMap(agent => (state.limits?.[agent]?.windows ?? []).map(window => window.resets)));
+      const due = now - last >= LIMIT_READ || (now - last >= 10000 && (rows.some(([, state]) => state.limitsAsked > last) || resets.some(at => at > last && at <= now)));
+      if (!due) continue;
+      this.polled.set(key, now); this.polling.add(key);
+      cx.spawn(async () => {
+        let limits;
+        try { limits = await this.host.limits(rows[0][1].context); }
+        catch (error) { limits = { error: error?.message || String(error) }; }
+        finally { this.polling.delete(key); }
+        for (const [id] of rows) this.apply(id, { type: "limits", limits });
+      });
+    }
+  }
+
   step(cx) {
+    this.watchLimits(cx);
     for (const [id, state] of this.pipelines()) {
       for (const provider of Object.keys(SOURCES)) this.watchTickets(id, state, provider, cx);
       this.watchBlockers(id, state, cx);

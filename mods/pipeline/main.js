@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, fixRequest, rebaseRequest, commitRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -47,6 +47,7 @@ function cardStatus(state, task) {
   if (task.status === "queued") {
     const waits = dependencies(state, task);
     if (waits.length) return `Needs ${waits.join(", ")}`;
+    if (waitingReason(state, task).startsWith("Held by")) return "Held by usage limit";
     return { "Waiting for the planner": "Waiting for the planner", "Ready for the planner": "Next up", "Waiting for a work slot": "Waiting for a slot", "Waiting for quota above the reserve": "Held by quota reserve", "Outstanding PR limit reached": "Held by PR limit" }[waitingReason(state, task)] ?? (task.rank ? "Queued · starts first" : "Queued");
   }
   if (task.status === "input") return "Needs you";
@@ -512,11 +513,11 @@ export default class Pipeline extends View {
       questions: state.tasks.filter(needsInput).length,
       done: state.tasks.filter(task => task.status === "done").length,
     };
-    const held = state.running && info.queued > 0 && quotaHeld(state);
+    const held = state.running && state.tasks.some(task => task.status === "queued" && quotaHeld(state, task, now));
     const unusable = state.live && this.repo?.error;
     info.status = unusable ? "Not a Git repository" : info.questions ? (state.live ? "An agent needs you" : "Waiting for your answer")
       : !state.running ? (info.active ? (state.live ? "Intake paused · agents keep working" : "Intake paused · finishing active work") : "Paused")
-      : held ? "Waiting for quota" : info.active ? (state.live ? "Agents working" : "Pipeline running")
+      : held ? (state.live ? "Held by a usage limit" : "Waiting for quota") : info.active ? (state.live ? "Agents working" : "Pipeline running")
       : info.approvals ? (state.live ? "Waiting for your review" : "Waiting for your approval") : info.queued ? "Waiting" : "Watching for work";
     info.color = held || info.failed || info.questions || unusable ? t.blocked : state.running ? t.accent : t.muted;
     const narrow = this.size.width < 820, compact = this.size.width < 640, wide = this.size.width >= ONE_ROW;
@@ -616,7 +617,8 @@ export default class Pipeline extends View {
         : [this.button("add", "Examples", toggle("picker"), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }),
           this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", toggle("watch"), t, { icon: "eye", selected: state.watch })]),
       this.button("parallel", `${state.parallel} parallel`, toggle("settings"), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }),
-      ...(state.live ? [] : [this.button("quota", `Quota ${state.quota}%`, toggle("quota"), t, { icon: "gauge", hint: "Example quota and reserve controls" })])];
+      state.live ? this.button("quota", this.limitLabel(state), toggle("quota"), t, { icon: "gauge", selected: this.drawer === "quota", hint: "How full Claude's and Codex's usage limits are, and when new agents wait for them" })
+        : this.button("quota", `Quota ${state.quota}%`, toggle("quota"), t, { icon: "gauge", hint: "Example quota and reserve controls" })];
   }
 
   sourceButton(provider, state, t, hint) {
@@ -881,7 +883,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Plan", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: state.live ? "Usage limits" : "Quota", planner: "Plan", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -916,7 +918,7 @@ export default class Pipeline extends View {
         : this.label(item.message, t));
     }
     else if (this.drawer === "settings") state.live ? this.liveSettings(body, state, t) : this.settings(body, state, t);
-    else if (this.drawer === "quota") this.quota(body, state, t);
+    else if (this.drawer === "quota") state.live ? this.limits(body, state, t) : this.quota(body, state, t);
     else if (this.drawer === "planner") this.plannerView(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
     else if (this.drawer === "schedule") this.schedule(body, state, t);
@@ -948,12 +950,12 @@ export default class Pipeline extends View {
     if (!tasks.length) body.child(this.label(query ? "No matching example tasks." : "Every example task has joined the pipeline.", t));
     body.child(this.button("generate", "Generate 6 more examples", cx => this.act({ type: "generate", count: 6 }, cx), t, { icon: "plus", hint: "Queue six new example tasks" }));
   }
-  stepper(body, title, hint, value, type, min, max, t) {
+  stepper(body, title, hint, value, type, min, max, t, step = 1, unit = "") {
     body.child(v_flex().gap(7).child(this.heading(title)).child(this.label(hint, t))
       .child(h_flex().gap(10).items_center()
-        .child(this.button(`${type}-less`, `Decrease ${title}`, cx => this.act({ type, value: value - 1 }, cx), t, { icon: "minus", iconOnly: true, disabled: value <= min }))
-        .child(div().min_w(24).text_size(16).font_semibold().child(String(value)))
-        .child(this.button(`${type}-more`, `Increase ${title}`, cx => this.act({ type, value: value + 1 }, cx), t, { icon: "plus", iconOnly: true, disabled: value >= max }))));
+        .child(this.button(`${type}-less`, `Decrease ${title}`, cx => this.act({ type, value: value - step }, cx), t, { icon: "minus", iconOnly: true, disabled: value <= min }))
+        .child(div().min_w(24).text_size(16).font_semibold().child(`${value}${unit}`))
+        .child(this.button(`${type}-more`, `Increase ${title}`, cx => this.act({ type, value: value + step }, cx), t, { icon: "plus", iconOnly: true, disabled: value >= max }))));
   }
   settings(body, state, t) {
     this.stepper(body, "Parallel tasks", "Lowering the limit lets active work finish.", state.parallel, "parallel", 1, 6, t);
@@ -978,7 +980,43 @@ export default class Pipeline extends View {
     body.child(this.button("quota-limit", "Simulate quota limit", cx => this.act({ type: "quota", value: state.reserve }, cx), t, { disabled: state.quota <= state.reserve }));
     body.child(this.button("quota-reset", "Reset example quota", cx => this.act({ type: "quota", value: 100 }, cx), t, { icon: "reset", primary: true }));
     this.stepper(body, "Quota reserve", "Percentage kept for your other work.", state.reserve, "reserve", 0, 50, t);
-    body.child(this.label("Quota and launch costs are simulated. Live provider usage and reset times will be connected in a later milestone.", t));
+    body.child(this.label("Quota and launch costs are simulated. In Live, Pipeline reads Claude's and Codex's real usage limits.", t));
+  }
+  limitLabel(state) {
+    const key = limitAgent(state), windows = state.limits?.[key]?.windows;
+    if (!LIMITED[key] || !windows?.length) return "Limits";
+    return `${LIMITED[key]} ${Math.round(Math.max(...windows.map(window => limitUsed(window))))}%`;
+  }
+  limits(body, state, t) {
+    const hold = limitHold(state), key = limitAgent(state), now = Date.now(), warn = text => div().text_size(12).line_height(1.45).text_color(t.blocked).child(text);
+    for (const agent of Object.keys(LIMITED).sort((a, b) => (b === key) - (a === key))) {
+      const reading = state.limits?.[agent];
+      body.child(h_flex().gap(8).items_center().child(this.heading(LIMITED[agent]))
+        .when(agent === key, el => el.child(div().text_size(11).text_color(t.muted).child("New tasks start with it"))));
+      if (!reading) { body.child(this.label("Reading…", t)); continue; }
+      if (reading.error) { body.child(reading.missing ? this.label(reading.error, t) : warn(reading.error)); continue; }
+      if (!reading.windows.length) body.child(this.label("No limits reported.", t));
+      for (const window of reading.windows) {
+        const used = limitUsed(window, now), over = hold !== null && used >= hold;
+        body.child(v_flex().gap(5)
+          .child(h_flex().gap(8).items_center().text_size(12)
+            .child(div().flex_1().min_w(0).truncate().child(window.name))
+            .child(div().flex_none().text_color(over ? t.blocked : t.muted).child(`${Math.round(used)}%${window.resets && window.resets > now ? ` · resets ${resetTime(window.resets, now)}` : ""}`)))
+          .child(div().h(5).rounded(3).bg(t.raised).child(div().w(`${Math.min(100, used)}%`).h(5).rounded(3).bg(over ? t.blocked : t.accent))));
+      }
+      const scoped = reading.windows.filter(window => window.model);
+      if (scoped.length) body.child(this.label(`${scoped.map(window => window.name).join(" and ")} only hold${scoped.length === 1 ? "s" : ""} tasks whose model is set to ${scoped.map(window => window.model).join(" or ")}.`, t));
+      if (reading.extra !== undefined) body.child(this.label(`Extra usage is on, so ${LIMITED[agent]} keeps working past a full limit on paid credits. ${reading.extra}% of this month's cap is spent.`, t));
+      if (reading.seen) body.child(this.label(`As of ${LIMITED[agent]}'s last reply on this machine, ${elapsed(now - reading.seen)} ago.`, t));
+      else if (state.limits?.read) body.child(this.label(`Read ${elapsed(now - state.limits.read)} ago.`, t));
+    }
+    if (state.limits?.error) body.child(warn(state.limits.error));
+    body.child(this.button("limits-read", "Read again", cx => this.act({ type: "readLimits" }, cx), t, { icon: "reset", small: true, hint: "Read both agents' limits now" }));
+    body.child(div().h(1).bg(t.border));
+    body.child(this.switchRow("limit-hold", "Hold new agents near a limit", hold === null ? "New agents start whatever the limits say" : `New agents wait while a limit of the agent they start is at ${hold}% or more`,
+      hold !== null, cx => this.act({ type: "limitHold", value: hold === null ? LIMIT_HOLD : null }, cx), t));
+    if (hold !== null) this.stepper(body, "Hold at", "Lower it to keep more of each limit for your own work.", hold, "limitHold", 50, 100, t, 5, "%");
+    body.child(this.label("Agents already working keep going; only new agents wait, and they start once the limit resets. Claude's limits come from Anthropic, asked with Claude Code's own login every five minutes. Codex's come from its newest session on this machine, so they're as fresh as its last reply.", t));
   }
   watch(body, state, t) {
     body.child(this.label("A watched column feeds the same queue as picked tasks. Tasks are claimed once.", t));

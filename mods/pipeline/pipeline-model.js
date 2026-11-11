@@ -274,14 +274,45 @@ export function liveNotices(before, after) {
   }
   return notices;
 }
-export const quotaHeld = state => !state.live && state.quota - 8 < state.reserve;
-export function waitingReason(state, task) {
+export const LIMITED = { claude: "Claude", codex: "Codex" };
+export const LIMIT_HOLD = 90;
+export const LIMIT_READ = 5 * 60000;
+export const limitHold = state => state.limitHold === undefined ? LIMIT_HOLD : state.limitHold;
+export const limitAgent = state => state.agent ? state.agent.key : "claude";
+// A reading outlives its window: once a window resets, nothing of it is used until the next reading says otherwise.
+export const limitUsed = (window, now = Date.now()) => window.resets && window.resets <= now ? 0 : window.used;
+// The limit that keeps a task from starting: one of its agent's windows at the hold, unless it counts only another model.
+export function limitHolding(state, task = null, now = Date.now()) {
+  const hold = limitHold(state), key = limitAgent(state), windows = state.limits?.[key]?.windows;
+  if (!state.live || hold === null || !Array.isArray(windows)) return null;
+  const model = String(taskTuning(state, task, key).model ?? "").toLowerCase();
+  const held = windows.find(window => limitUsed(window, now) >= hold && (!window.model || model.includes(window.model)));
+  return held ? { ...held, agent: LIMITED[key] } : null;
+}
+const percent = value => typeof value === "number" && value >= 0 && value <= 100 ? value : null;
+function cleanLimits(read) {
+  if (!Array.isArray(read.windows)) return { error: String(read.error ?? "No reading.").slice(0, 300), missing: Boolean(read.missing) };
+  const windows = read.windows.filter(window => window && typeof window.name === "string" && percent(window.used) !== null).slice(0, 8)
+    .map(window => ({ name: window.name.slice(0, 40), used: window.used, resets: Number(window.resets) || null, model: typeof window.model === "string" && window.model ? window.model.slice(0, 40) : null }));
+  return { windows, ...(percent(read.extra) !== null ? { extra: read.extra } : {}), ...(Number(read.seen) ? { seen: Number(read.seen) } : {}) };
+}
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export function resetTime(at, now = Date.now()) {
+  const when = new Date(at), clock = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  if (when.toDateString() === new Date(now).toDateString()) return clock;
+  return at - now < 6 * 86400000 ? `${DAYS[when.getDay()]} ${clock}` : `${when.getDate()}/${when.getMonth() + 1} ${clock}`;
+}
+const limitName = limit => `${limit.agent}'s ${limit.name.replace(/^Weekly /, "weekly ").replace(/^Weekly$/, "weekly")} limit`;
+export const quotaHeld = (state, task = null, now = Date.now()) => state.live ? Boolean(limitHolding(state, task, now)) : state.quota - 8 < state.reserve;
+export function waitingReason(state, task, now = Date.now()) {
   const waits = waitsFor(state, task), tasks = waits.filter(wait => wait.kind === "task"), tickets = waits.filter(wait => wait.kind === "ticket");
   if (waits.length) return `Waiting for ${[tasks.length && `${tasks.map(wait => wait.id).join(", ")} to merge`,
     tickets.length && `${tickets.map(wait => wait.id).join(", ")} to close in ${SOURCES[task.ticket?.provider] ?? "its tracker"}`].filter(Boolean).join(" and ")}`;
   if (!state.running) return "Intake paused";
   if (plannerHolds(state)) return "Waiting for the planner";
-  if (quotaHeld(state)) return "Waiting for quota above the reserve";
+  const limit = limitHolding(state, task, now);
+  if (limit) return `Held by ${limitName(limit)}${limit.resets ? ` until ${resetTime(limit.resets, now)}` : ""}`;
+  if (!state.live && quotaHeld(state)) return "Waiting for quota above the reserve";
   if (outstandingCount(state) + task.repos.length > state.reviewLimit) return state.live ? "Too many branches waiting for your review" : "Outstanding PR limit reached";
   if (activeTasks(state).length >= state.parallel) return "Waiting for a work slot";
   return "Ready for the planner";
@@ -354,8 +385,8 @@ function advance(state, task, now) {
   } else if (previous === "merging") { task.status = "done"; task.finished = ++state.sequence; event(state, `${task.id} merged across ${task.repos.join(" + ")}.`, task.id); }
 }
 
-function explain(state, picked) {
-  const said = plain(state, picked);
+function explain(state, picked, now = Date.now()) {
+  const said = plain(state, picked, now);
   if (!state.live || !state.planner?.on || !state.tasks.some(task => task.status === "queued")) return said;
   const planning = state.planning;
   if (plannerHolds(state)) return `The planner is reading ${count(state.tasks.filter(task => task.status === "queued").length, "queued task")} and the repository.${state.running ? " New agents wait for its plan." : ""}`;
@@ -363,7 +394,7 @@ function explain(state, picked) {
   return `${planning?.summary ?? ""}${picked.length ? ` ${said}` : ""}`.trim();
 }
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-function plain(state, picked) {
+function plain(state, picked, now = Date.now()) {
   const queued = state.tasks.filter(task => task.status === "queued");
   const held = queued.filter(task => dependencies(state, task).length);
   const ready = queued.filter(task => !dependencies(state, task).length);
@@ -378,8 +409,10 @@ function plain(state, picked) {
   if (state.live && !state.running && !state.tasks.length) return "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree.";
   const starts = state.schedule?.start ? ` Starts by itself at ${state.schedule.start}.` : "";
   if (!state.running) return outstanding(state).length ? `Intake paused. Active work and approved merges can finish.${starts}` : starts ? `Ready.${starts}` : "Ready. Start the pipeline and the planner picks independent work first.";
-  if (ready.length && quotaHeld(state)) return `Holding new work to protect your quota reserve. Reset the example quota to resume.${holding}`;
-  if (ready.length) return `${ready[0].id}: ${waitingReason(state, ready[0])}.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} awaiting your approval.` : ""}${holding}`;
+  if (ready.length && !state.live && quotaHeld(state)) return `Holding new work to protect your quota reserve. Reset the example quota to resume.${holding}`;
+  const limit = ready.length && ready.every(task => limitHolding(state, task, now)) && limitHolding(state, ready[0], now);
+  if (limit) return `Holding new agents: ${limitName(limit)} is at ${Math.round(limitUsed(limit, now))}%, past the ${limitHold(state)}% you hold at.${limit.resets ? ` It resets at ${resetTime(limit.resets, now)}.` : ""} Agents already working keep going.${holding}`;
+  if (ready.length) return `${ready[0].id}: ${waitingReason(state, ready[0], now)}.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} awaiting your approval.` : ""}${holding}`;
   if (held.length) return holding.trim();
   if (outstanding(state).length) return `All queued work is in flight.${reviews ? ` ${reviews} task${reviews === 1 ? "" : "s"} ${state.live ? "ready for your review" : "awaiting your approval"}.` : ""}`;
   if (state.live) return "Queue clear. Type a task to start another agent.";
@@ -1071,6 +1104,21 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "parallel": next.parallel = Math.max(1, Math.min(6, Math.floor(Number(action.value) || 1))); break;
     case "reviewLimit": next.reviewLimit = Math.max(1, Math.min(10, Math.floor(Number(action.value) || 1))); break;
+    case "limits": {
+      if (!next.live) return state;
+      const read = action.limits ?? {};
+      next.limits = { ...(next.limits ?? {}), read: now, error: read.error ? String(read.error).slice(0, 300) : null };
+      for (const key of Object.keys(LIMITED)) if (read[key]) next.limits[key] = cleanLimits(read[key]);
+      break;
+    }
+    case "limitHold": {
+      const value = action.value === null ? null : Math.max(50, Math.min(100, Math.round(Number(action.value) || LIMIT_HOLD)));
+      if (!next.live || limitHold(next) === value) return state;
+      next.limitHold = value;
+      event(next, value === null ? "Usage limits no longer hold new agents." : `New agents wait while a usage limit is at ${value}% or more.`);
+      break;
+    }
+    case "readLimits": if (!next.live) return state; next.limitsAsked = now; break;
     case "delivery": next.delivery = action.value === "direct" ? "direct" : "pr"; break;
     case "speed": {
       const speed = SPEEDS.includes(action.value) ? action.value : 1;
@@ -1149,7 +1197,8 @@ export function reduce(state, action, now = Date.now()) {
     const candidates = next.tasks.filter(task => task.status === "queued" && dependencies(next, task).length === 0)
       .sort(startOrder(next));
     for (const task of candidates) {
-      if (activeTasks(next).length >= next.parallel || quotaHeld(next)) break;
+      if (activeTasks(next).length >= next.parallel) break;
+      if (quotaHeld(next, task, now)) continue;
       if (outstandingCount(next) + task.repos.length > next.reviewLimit) continue;
       const used = new Set(activeTasks(next).map(row => row.slot));
       let slot = 0; while (used.has(slot)) slot++;
@@ -1168,6 +1217,6 @@ export function reduce(state, action, now = Date.now()) {
     if (old && WORKED.includes(old.status) && old.at) task.spent = (task.spent ?? 0) + Math.max(0, now - old.at);
     task.at = now;
   }
-  next.plan = explain(next, picked);
+  next.plan = explain(next, picked, now);
   return next;
 }
