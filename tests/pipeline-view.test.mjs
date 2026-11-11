@@ -325,9 +325,9 @@ test("Settings can make the next working task ask a question", () => {
 function setupLive() {
   world.data = {}; timers.length = 0; world.hc = []; world.runs = [];
   world.context = { id: "shop", name: "shop", cwd: "/work/shop", on: null };
-  world.storage.set("mode", "live");
+  world.storage.delete("mode");
   const view = new Pipeline(); view.init({}, cx);
-  world.context = null; world.storage.delete("mode");
+  world.context = null;
   view.repo = { root: "/work/shop", branch: "main" };
   view.agentChoices = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: true }];
   return view;
@@ -349,6 +349,15 @@ test("Live keeps its own pipeline beside the simulation, and typed tasks become 
   assert.equal(view.state().live, undefined);
   click(view, "mode-live");
   assert.equal(row(view, "T-1").title, "Add a dark mode toggle");
+});
+
+test("a project folder opens in Live unless this copy switched to the simulation", () => {
+  assert.equal(setupLive().mode, "live");
+  world.storage.set("mode", "simulation");
+  world.context = { id: "shop", name: "shop", cwd: "/work/shop", on: null };
+  const view = new Pipeline(); view.init({}, cx);
+  world.context = null; world.storage.delete("mode");
+  assert.equal(view.mode, "simulation");
 });
 
 test("Live needs a project folder", () => {

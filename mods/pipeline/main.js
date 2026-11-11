@@ -108,7 +108,7 @@ export default class Pipeline extends View {
     this.repoError = null; this.repoAdding = false;
     this.details = TextareaState.new({ placeholder: "Context, constraints, how to check it…", rows: 4 });
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
-    this.mode = this.context.cwd && localStorage.getItem("mode") === "live" ? "live" : "simulation";
+    this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
     this.repo = null; this.agentChoices = []; this.codexModels = [];
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
