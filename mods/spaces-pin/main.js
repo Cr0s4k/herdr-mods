@@ -30,10 +30,16 @@ function place(s, ps) {
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
+// Every folder a space's terminals are in, Herdr's place first, then where it was made.
+function places(s, ps) {
+  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
+  return [...new Set([...ps.filter((p) => tabs.has(p.tab) && p.cwd).map((p) => p.cwd), s.folder].filter(Boolean))];
+}
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const RAIL_CELL = 32;
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
+const spot = (s, cwd) => JSON.stringify([s.machine ?? null, cwd]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
@@ -58,7 +64,7 @@ export default class Spaces extends View {
     this.agents = new AgentTree();
     this.expanded = JSON.parse(localStorage.getItem("spaces.expanded") ?? "{}");
     this.attention = localStorage.getItem("spaces.attention") === "true";
-    this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
+    this.git = {}; // where() -> { name, branch, ahead, behind, repo, top, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
     this.pending = new Set(); // where()s to look at next
@@ -192,8 +198,11 @@ export default class Spaces extends View {
   due(now, sp, ps) {
     // Moved there: what it knew of that place may be old.
     const at = {};
-    for (const s of sp) at[s.id] = where(s, ps);
-    const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
+    const keys = new Set();
+    for (const s of sp) {
+      at[s.id] = this.home(s, ps).key;
+      for (const cwd of places(s, ps)) keys.add(spot(s, cwd));
+    }
     const due = new Set([...keys].filter((k) => !(k in this.git)));
     for (const [id, k] of Object.entries(at)) if (this.at[id] && this.at[id] !== k && keys.has(k)) due.add(k);
     this.at = at;
@@ -203,7 +212,10 @@ export default class Spaces extends View {
     for (const p of ps) {
       if (!p.terminal || !spaceOf[p.tab]) continue;
       busy[p.pane] = p.status === "working" || !(p.program?.shell || p.program?.agent);
-      if (this.busy[p.pane] && !busy[p.pane]) this.sameRepo(at[spaceOf[p.tab].id], keys).forEach((k) => due.add(k));
+      if (this.busy[p.pane] && !busy[p.pane]) {
+        const s = spaceOf[p.tab];
+        [...this.sameRepo(at[s.id], keys), ...(p.cwd ? this.sameRepo(spot(s, p.cwd), keys) : [])].forEach((k) => due.add(k));
+      }
     }
     this.busy = busy;
     for (const m of machines()) {
@@ -324,7 +336,7 @@ export default class Spaces extends View {
       ]);
       const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
-      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), linked: repo !== `${top}/.git` };
+      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), top, linked: repo !== `${top}/.git` };
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {
@@ -348,6 +360,46 @@ export default class Spaces extends View {
     });
   }
 
+  // Herdr names an unnamed space after its first terminal's folder, so a Pipeline
+  // task's worktree can take it over. While one of its terminals, or the folder it
+  // was made in, is in that repo's checkout, the space stays there and keeps its name.
+  home(s, ps) {
+    const keys = places(s, ps).map((cwd) => spot(s, cwd));
+    const first = keys[0] ?? where(s, ps), g = this.git[first];
+    const main = g?.linked ? keys.find((k) => this.git[k] && !this.git[k].linked && this.git[k].repo === g.repo) : null;
+    const key = main ?? first;
+    return { key, g: this.git[key] ?? null, name: main && !s.named ? this.git[main].name : s.name };
+  }
+
+  // A space's agents in another worktree than the space's own go under a node per worktree.
+  worktrees(w, members, home) {
+    const direct = [], trees = new Map();
+    const own = this.git[home]?.top;
+    const cwd = new Map(this.panes.map((p) => [p.pane, p.cwd]));
+    for (const a of members) {
+      const g = cwd.get(a.pane) ? this.git[spot(w, cwd.get(a.pane))] : null;
+      if (!g?.linked || !g.top || g.top === own) { direct.push(a); continue; }
+      if (!trees.has(g.top)) trees.set(g.top, { g, agents: [] });
+      trees.get(g.top).agents.push(a);
+    }
+    return { direct, trees: [...trees.values()] };
+  }
+
+  worktree(w, wt, n, t, agent, { prefix = "", compact = false } = {}) {
+    const { g, agents } = wt;
+    const row = h_flex().id(`${prefix}worktree-${w.id}-${n}`).h(28).px(5).gap(6).min_w(0).flex_none().rounded(6).items_center()
+      .when(compact, el => el.justify_center())
+      .cursor_pointer().hover(s => s.bg(t.hover))
+      .accessibility_label(`Worktree ${g.branch}`).tooltip(`Worktree · ${g.branch} · ${g.top}`)
+      .on_click(() => run("pane.focus", { pane: agents[0].pane }))
+      .child(svg("mods/workspace-chrome/branch.svg").size(14).flex_none().text_color(t.muted))
+      .when(!compact, el => el.child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.muted).child(g.branch)));
+    return v_flex().id(`${prefix}worktree-tree-${w.id}-${n}`).min_w(0).flex_none().child(row)
+      .child(compact
+        ? v_flex().flex_none().children(agents.map(agent))
+        : v_flex().pl(12).flex_none().children(agents.map((a, i) => branch(agent(a), i === agents.length - 1, t, `${prefix}worktree-agent-${a.address}`))));
+  }
+
   menu(w) {
     // A popup is as tall as its items; height is only the most.
     openOverlay({ mod: "menu-pin", kind: "popup", width: 200, height: 310, props: { tab: "space", target: { id: w.id } } });
@@ -365,9 +417,9 @@ export default class Spaces extends View {
   // Spaces in order, each worktree space moved under its main checkout's.
   ordered() {
     const sp = spaces(), ps = panes();
-    const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
+    const ready = (w) => this.shown.has(w.id) || places(w, ps).every((cwd) => spot(w, cwd) in this.git) || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
-    const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
+    const list = sp.map((w, i) => { const h = this.home(w, ps); return { w, i, g: h.g, home: h.key, name: h.name }; });
     const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
     const nested = (r) => r.g?.linked && mains.has(r.g.repo);
     const listed = [];
@@ -522,9 +574,12 @@ export default class Spaces extends View {
     const open = this.attention || (this.expanded[r.w.id] ?? !r.tree);
     const key = `space:${r.w.id}`;
     const cursor = this.navigable(key, { kind: "space", w: r.w, parent, open, hasChildren, toggle: (cx) => this.toggleSpace(r, cx) });
+    const agent = a => this.agents.agent(a, t, this.attention, false, new Set(), { ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: key }) });
+    const { direct, trees } = this.worktrees(r.w, members, r.home);
     const children = [
       ...(pipe ? [{ id: `pipeline-branch-${r.w.id}`, view: () => pipelineRow(r.w, pipe, t, this.agents.indicator, { hovered: this.pipeHovered === r.w.id, hover: (over, cx) => this.hoverPipeline(r.w.id, over, cx), ring: this.navigable(`pipeline:${r.w.id}`, { kind: "pipeline", w: r.w, pipe, parent: key }) }) }] : []),
-      ...members.map(a => ({ id: `agent-branch-${a.address}`, view: () => this.agents.agent(a, t, this.attention, false, new Set(), { ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: key }) }) })),
+      ...direct.map(a => ({ id: `agent-branch-${a.address}`, view: () => agent(a) })),
+      ...trees.map((wt, n) => ({ id: `worktree-branch-${r.w.id}-${n}`, view: () => this.worktree(r.w, wt, n, t, agent) })),
       ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t, key) })),
     ];
     return v_flex().id(`space-tree-${r.w.id}`).flex_none().min_w(0)
@@ -568,7 +623,7 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree, pinned, open, hasChildren, cursor }, t) {
+  row({ w, i, g, name, tree, pinned, open, hasChildren, cursor }, t) {
     const on = w.active;
     const isPinned = (shared("space.pinned") ?? []).includes(w.id);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
@@ -629,8 +684,8 @@ export default class Spaces extends View {
           .items_center()
           .child(div().id(`space-fold-${w.id}`).w(12).h(24).flex_none().flex().items_center().justify_center().rounded(4)
             .when(hasChildren, el => el.cursor_pointer().text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
-              .accessibility_label(`${open ? "Collapse" : "Expand"} ${w.name}`)
-              .tooltip(this.attention ? "Show all spaces to collapse branches" : `${open ? "Collapse" : "Expand"} ${w.name}`)
+              .accessibility_label(`${open ? "Collapse" : "Expand"} ${name}`)
+              .tooltip(this.attention ? "Show all spaces to collapse branches" : `${open ? "Collapse" : "Expand"} ${name}`)
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
               .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
               .on_click((_e, cx) => {
@@ -639,12 +694,12 @@ export default class Spaces extends View {
               })
               .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11))))
           .when(Boolean(tree), el => el.child(svg("mods/workspace-chrome/branch.svg").size(14).flex_none().text_color(t.muted)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...w.name][0]?.toUpperCase() ?? "?")))
-          .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
-          .when(Boolean(g), el => el.child(this.gitTail(g, tree, w.name, t).flex_none().max_w(65)))
+          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...name][0]?.toUpperCase() ?? "?")))
+          .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
+          .when(Boolean(g), el => el.child(this.gitTail(g, tree, name, t).flex_none().max_w(65)))
           .when(this.hovered === w.id, el => el.child(div().id(`space-focus-${w.id}`).size(24).flex_none().flex().items_center().justify_center()
             .rounded(4).text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
-            .accessibility_label(`Focus ${w.name}`).tooltip("Focus this space")
+            .accessibility_label(`Focus ${name}`).tooltip("Focus this space")
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => {
@@ -657,7 +712,7 @@ export default class Spaces extends View {
             .child(svg("mods/menu-pin/focus.svg").size(14))))
           .when(this.hovered === w.id, el => el.child(div().id(`space-hide-${w.id}`).size(24).flex_none().flex().items_center().justify_center()
             .rounded(4).text_color(t.muted).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
-            .role("button").accessibility_label(`Hide ${w.name}`).tooltip("Hide space until…")
+            .role("button").accessibility_label(`Hide ${name}`).tooltip("Hide space until…")
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_mouse_up("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => {
@@ -685,7 +740,7 @@ export default class Spaces extends View {
       .when(Boolean(cursor), (el) => el.child(this.ring(t, 8)));
   }
 
-  compact({ w, i }, t) {
+  compact({ w, i, name }, t) {
     const cursor = this.navigable(`space:${w.id}`, { kind: "space", w, parent: null, open: false, hasChildren: false });
     return railCell(h_flex()
       .id(`space-${w.id}`)
@@ -697,7 +752,7 @@ export default class Spaces extends View {
       .items_center()
       .when(w.active, (el) => el.bg(t.selected))
       .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
-      .tooltip(w.name)
+      .tooltip(name)
       .on_click(() => run("space.select", { id: w.id }))
       .on_mouse_down("right", () => this.menu(w))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
@@ -707,6 +762,9 @@ export default class Spaces extends View {
   focusedSpace(s, sp, t, collapsed) {
     const members = this.agents.members(s.id, false);
     const pipe = this.pipeline(s);
+    const home = this.home(s, this.panes), name = home.name;
+    const { direct, trees } = this.worktrees(s, members, home.key);
+    const agent = a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed, ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: null }) });
     const elsewhere = this.agents.summary(sp.filter(other => other.id !== s.id).map(other => other.id)).blocked;
     const color = (shared("space.colors") ?? {})[s.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : MARK[color] ?? t[color];
@@ -722,15 +780,16 @@ export default class Spaces extends View {
           .child(collapsed ? String(elsewhere) : `${elsewhere} elsewhere`))))
       .child(h_flex().id("spaces-focus-title").h(36).px(16).gap(8).flex_none().items_center().min_w(0)
         .when(collapsed, el => el.justify_center())
-        .tooltip(`${s.name}${s.machine ? ` · ${s.machine}` : ""} · Click to show this space`)
+        .tooltip(`${name}${s.machine ? ` · ${s.machine}` : ""} · Click to show this space`)
         .on_click(() => run("space.select", { id: s.id }))
         .on_mouse_down("right", () => this.menu(s))
-        .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...s.name][0]?.toUpperCase() ?? "?"))
-        .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(s.name))
+        .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...name][0]?.toUpperCase() ?? "?"))
+        .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(name))
           .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.muted).child(s.machine)))))
       .child(v_flex().id(`spaces-focus-list-${s.id}`).flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .when(Boolean(pipe), el => el.child(pipelineRow(s, pipe, t, this.agents.indicator, { prefix: "focus-", compact: collapsed, hovered: this.pipeHovered === s.id, hover: (over, cx) => this.hoverPipeline(s.id, over, cx), ring: this.navigable(`pipeline:${s.id}`, { kind: "pipeline", w: s, pipe, parent: null }) })))
-        .children(members.map(a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed, ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: null }) })))
+        .children(direct.map(agent))
+        .children(trees.map((wt, n) => this.worktree(s, wt, n, t, agent, { prefix: "focus-", compact: collapsed })))
         .when(!members.length && !pipe, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
           .tooltip("No agents in this space.").child(collapsed ? "0" : "No agents in this space."))))
       .when(collapsed, el => el.child(div().id("spaces-focus-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()

@@ -629,6 +629,12 @@ without changing focus. Click an agent to focus its pane. Worktree spaces remain
 under their checkout and start collapsed; subagents start collapsed too, and clicking
 a subagent opens its live preview. Expansion choices survive restarts.
 
+Herdr names a space after its first terminal's folder, so a Pipeline task's worktree could
+rename the whole space. While one of its terminals, or the folder it was made in, is in the
+repo's main checkout, the sidebar keeps the space there and under the repo's name (a name you
+gave it always wins). Agents working in another worktree sit under a branch row inside their
+space; click the branch to focus its first agent.
+
 Status indicators appear on agent rows. **Needs you** filters the tree to agents
 waiting for input, revealing their ancestors without changing saved expansion choices.
 Turn the filter off to return to all spaces. It also reveals matching agents inside

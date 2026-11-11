@@ -211,6 +211,32 @@ test("worktrees fold under the checkout and retain pins and rail access without 
   assert.deepEqual(world.calls.at(-1), ["layout.resize", { id: "sidebar", px: 268 }]);
 });
 
+test("a worktree terminal first in a space keeps the checkout's name and groups its agents under the branch", () => {
+  const view = setup();
+  const app = { ...space("app", true), name: "t-4-fix-8a32", tabs: [{ id: "pipe-tab", name: "Pipeline" }, { id: "task-tab", name: "T-4", named: true }, { id: "app-tab", name: "3" }] };
+  world.spaces = [app];
+  world.agents = [agent("task", "app", "working", { tab: "task-tab" }), agent("main", "app")];
+  world.panes = [{ pane: "pipe-pane", tab: "pipe-tab", mod: "pipeline" }, { pane: "task-pane", tab: "task-tab", cwd: "/wt/t-4-fix-8a32" }, { pane: "main-pane", tab: "app-tab", cwd: "/work/app" }];
+  view.git = {
+    '[null,"/wt/t-4-fix-8a32"]': { repo: "repo", name: "app", branch: "t-4-fix", top: "/wt/t-4-fix-8a32", linked: true },
+    '[null,"/work/app"]': { repo: "repo", name: "app", branch: "main", top: "/work/app", linked: false },
+  };
+  let root = view.render();
+  assert.equal(text(find(root, "space-app")).trim(), "A app");
+  const tree = find(root, "worktree-tree-app-0");
+  assert.match(text(tree), /t-4-fix/);
+  assert.ok(find(tree, "ag-task"));
+  assert.equal(find(tree, "ag-main"), undefined);
+  assert.ok(find(find(root, "space-tree-app"), "ag-main"));
+  click(root, "worktree-app-0");
+  assert.deepEqual(world.calls.at(-1), ["pane.focus", { pane: "task-pane" }]);
+  sharedState.set("spaces.focus", "app"); root = view.render();
+  assert.match(text(find(root, "spaces-focus-title")), /app/);
+  assert.ok(find(find(root, "focus-worktree-tree-app-0"), "focus-ag-task"));
+  app.named = true;
+  assert.match(text(view.render()), /t-4-fix-8a32/);
+});
+
 test("the attention filter gives a way back when the last blocked agent becomes idle", () => {
   const view = setup(); world.agents[0].status = "blocked";
   click(view.render(), "spaces-needs-you");
