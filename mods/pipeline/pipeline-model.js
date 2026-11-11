@@ -140,9 +140,20 @@ export function compact(n) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n);
 }
 export const usageText = usage => usage ? `${compact(usage.written)} tokens written · ${compact(usage.read)} read · ${compact(usage.cached)} from cache` : null;
-// The order the planner starts work in: tasks marked to start first, then priority, then arrival.
-const startOrder = (a, b) => (b.rank ?? 0) - (a.rank ?? 0) || b.priority - a.priority || a.id.localeCompare(b.id, undefined, { numeric: true });
-export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder);
+// The order the planner starts work in: tasks marked to start first, then the planner agent's order when it is on, then priority, then arrival.
+const startOrder = state => (a, b) => (b.rank ?? 0) - (a.rank ?? 0)
+  || (state.planner?.on ? planOrder(a) - planOrder(b) : 0) || b.priority - a.priority || a.id.localeCompare(b.id, undefined, { numeric: true });
+const planOrder = task => task.plan?.sig === planSig(task) ? task.plan.n : Infinity;
+export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder(state));
+// A queued task needs a new plan when it is new or what the planner read about it changed; a task leaving the queue doesn't.
+export const planSig = task => JSON.stringify([task.title, task.description ?? "", task.repos, task.priority, task.depends]);
+export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
+export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
+// A failed plan lets the tasks it was asked about start by priority; only a new or changed task asks again.
+const failedFor = state => state.planning?.status === "failed"
+  && state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task) || JSON.parse(state.planning.key).some(([id, sig]) => id === task.id && sig === planSig(task)));
+// With the planner agent on, nothing new starts until every queued task is planned, unless planning them failed.
+export const plannerHolds = state => Boolean(state.live && state.planner?.on && !planned(state) && !failedFor(state));
 export function elapsed(ms) {
   const minutes = Math.floor(Math.max(0, ms) / 60000);
   if (minutes < 1) return "under a minute";
@@ -161,9 +172,11 @@ export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "revi
 export const outstandingCount = state => outstanding(state).reduce((count, task) => count + task.repos.length, 0);
 const ticketRows = (state, task, blocker) => blocker.key ? state.tasks.filter(row => row !== task && row.ticket?.provider === task.ticket?.provider && row.ticket?.key === blocker.key) : [];
 // A blocker that is also in the pipeline waits for its task to merge; one outside it waits for its ticket to close.
+const planWaits = (state, task) => state.planner?.on && task.plan?.sig === planSig(task) ? (task.plan?.waits ?? []).filter(id => { const row = state.tasks.find(other => other.id === id); return row && row.status !== "done"; }) : [];
 export function waitsFor(state, task) {
   if (task.unblocked) return [];
   const waits = task.depends.filter(id => state.tasks.find(row => row.id === id)?.status !== "done").map(id => ({ id, kind: "task" }));
+  for (const id of planWaits(state, task)) if (!waits.some(wait => wait.id === id)) waits.push({ id, kind: "task", planner: true });
   for (const blocker of task.blockers ?? []) {
     const rows = ticketRows(state, task, blocker);
     if (rows.some(row => row.status === "done")) continue;
@@ -173,7 +186,7 @@ export function waitsFor(state, task) {
   return waits;
 }
 export const dependencies = (state, task) => waitsFor(state, task).map(wait => wait.id);
-const after = (state, task) => [...task.depends, ...(task.blockers ?? []).flatMap(blocker => ticketRows(state, task, blocker).map(row => row.id))];
+const after = (state, task) => [...task.depends, ...(state.planner?.on ? task.plan?.waits ?? [] : []), ...(task.blockers ?? []).flatMap(blocker => ticketRows(state, task, blocker).map(row => row.id))];
 function reaches(state, from, id, seen = new Set()) {
   if (from.id === id) return true;
   if (seen.has(from.id)) return false;
@@ -255,6 +268,7 @@ export function waitingReason(state, task) {
   if (waits.length) return `Waiting for ${[tasks.length && `${tasks.map(wait => wait.id).join(", ")} to merge`,
     tickets.length && `${tickets.map(wait => wait.id).join(", ")} to close in ${SOURCES[task.ticket?.provider] ?? "its tracker"}`].filter(Boolean).join(" and ")}`;
   if (!state.running) return "Intake paused";
+  if (plannerHolds(state)) return "Waiting for the planner";
   if (quotaHeld(state)) return "Waiting for quota above the reserve";
   if (outstandingCount(state) + task.repos.length > state.reviewLimit) return state.live ? "Too many branches waiting for your review" : "Outstanding PR limit reached";
   if (activeTasks(state).length >= state.parallel) return "Waiting for a work slot";
@@ -329,6 +343,15 @@ function advance(state, task, now) {
 }
 
 function explain(state, picked) {
+  const said = plain(state, picked);
+  if (!state.live || !state.planner?.on || !state.tasks.some(task => task.status === "queued")) return said;
+  const planning = state.planning;
+  if (plannerHolds(state)) return `The planner is reading ${count(state.tasks.filter(task => task.status === "queued").length, "queued task")} and the repository.${state.running ? " New agents wait for its plan." : ""}`;
+  if (!planned(state) && planning?.status === "failed") return `The planner couldn't plan: ${planning.error} Tasks start by priority meanwhile.`;
+  return `${planning?.summary ?? ""}${picked.length ? ` ${said}` : ""}`.trim();
+}
+const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+function plain(state, picked) {
   const queued = state.tasks.filter(task => task.status === "queued");
   const held = queued.filter(task => dependencies(state, task).length);
   const ready = queued.filter(task => !dependencies(state, task).length);
@@ -648,6 +671,50 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "working" || (task.stalled ?? null) === since) return state;
       task.stalled = since;
       if (since) event(next, `${task.id} · its terminal has shown nothing new for ${elapsed(STALL)}. Its agent may be stuck.`, task.id);
+      break;
+    }
+    case "plannerSetup": {
+      if (!next.live) return state;
+      const before = { on: false, model: null, ...next.planner }, value = { ...before };
+      if ("on" in action) value.on = Boolean(action.on);
+      if ("model" in action) value.model = String(action.model ?? "").trim().slice(0, 100) || null;
+      if (JSON.stringify(value) === JSON.stringify(before)) return state;
+      next.planner = value;
+      if (value.on !== before.on) event(next, value.on ? "An agent plans the queue before work starts." : "Tasks start by priority again, without the planner agent.");
+      break;
+    }
+    case "planning": {
+      if (!next.live || !next.planner?.on || action.key !== planKey(next)) return state;
+      next.planning = { key: action.key, status: "running", at: now, model: next.planner.model ?? null };
+      break;
+    }
+    case "planned": {
+      if (!next.live || !next.planner?.on || next.planning?.key !== action.key || action.key !== planKey(next)) return state;
+      const queued = next.tasks.filter(task => task.status === "queued");
+      const order = [...new Set((action.order ?? []).map(String))].filter(id => queued.some(task => task.id === id));
+      for (const task of queued.sort(startOrder({ planner: null }))) if (!order.includes(task.id)) order.push(task.id);
+      for (const task of queued) task.plan = { n: order.indexOf(task.id), reason: String(action.reasons?.[task.id] ?? "").slice(0, 300), waits: [], sig: planSig(task) };
+      // A wait on a queued task the plan starts later contradicts the plan's own order, so it is left out.
+      for (const task of [...queued].sort((a, b) => a.plan.n - b.plan.n)) for (const id of [...new Set((action.waits?.[task.id] ?? []).map(String))]) {
+        const other = next.tasks.find(row => row.id === id);
+        if (!other || other === task || other.status === "done" || task.depends.includes(id) || (other.status === "queued" && other.plan.n > task.plan.n)) continue;
+        if (canWaitFor(next, task, other)) task.plan.waits.push(id);
+      }
+      next.planning = { ...next.planning, status: "done", at: now, summary: String(action.summary ?? "").replace(/\s+/g, " ").trim().slice(0, 400) || "The planner ordered the queue." };
+      const waiting = queued.filter(task => task.plan.waits.length);
+      event(next, `The planner ordered the queue: ${order.join(", ")}.${waiting.length ? ` ${waiting.map(task => `${task.id} waits for ${task.plan.waits.join(", ")}`).join("; ")}.` : ""}`);
+      break;
+    }
+    case "planFailed": {
+      if (!next.live || next.planning?.key !== action.key || next.planning.status !== "running") return state;
+      next.planning = { ...next.planning, status: "failed", at: now, error: String(action.error || "The planner gave no plan.").replace(/\s+/g, " ").slice(0, 300) };
+      event(next, `The planner couldn't plan · ${next.planning.error}`);
+      break;
+    }
+    case "replan": {
+      if (!next.live || !next.planner?.on || next.planning?.status === "running") return state;
+      next.planning = null;
+      for (const task of next.tasks) if (task.status === "queued") task.plan = null;
       break;
     }
     case "quiet": {
@@ -1039,9 +1106,9 @@ export function reduce(state, action, now = Date.now()) {
       : `${task.id} · merging into ${target}${repoNames(task)}.`, task.id);
   }
   const picked = [];
-  if (next.running) {
+  if (next.running && !plannerHolds(next)) {
     const candidates = next.tasks.filter(task => task.status === "queued" && dependencies(next, task).length === 0)
-      .sort(startOrder);
+      .sort(startOrder(next));
     for (const task of candidates) {
       if (activeTasks(next).length >= next.parallel || quotaHeld(next)) break;
       if (outstandingCount(next) + task.repos.length > next.reviewLimit) continue;

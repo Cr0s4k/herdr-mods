@@ -58,6 +58,10 @@ In Live the scene's centre is a button (`pipeline-sun`) naming the most pressing
 
 Task cards are 164 wide below 1320 px of window width, 188 up to 1500 and 212 beyond (`cardWidth`, from the window rather than the scene, so opening the inspector never resizes them).
 
+### Planner agent
+
+`state.planner` (`{on, model}`, `plannerSetup`) turns on planning by Claude Code. `planSig(task)` covers what the planner reads about a queued task (title, details, repositories, priority, waits you set); `planned(state)` is true while every queued task has a `task.plan` with the current signature, so tasks leaving the queue never ask again. While it isn't, `plannerHolds` stops dispatch, unless the last plan failed for the same tasks (`failedFor`), so a failing planner never blocks the pipeline. The runner (`LiveRunner.plan`) waits until `planKey` (queued ids and signatures) has been the same for four seconds, sends `planning`, and calls `host.plan` with `planArgs`: `claude -p` with `--tools Read,Grep,Glob`, `--add-dir` for the other repositories, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`, `--json-schema PLAN_SCHEMA` and `planPrompt(state)`, in the project folder, for up to five minutes. `readPlan` takes `structured_output` (`summary`, `order`, `tasks[{id, waits, reason}]`). `planned` applies it only when the queue is still the one asked about: `task.plan = {n, reason, waits, sig}`, unknown ids dropped, missing ones appended in the usual order, and a wait kept only when it points at a started task or one the plan starts earlier, and `canWaitFor` allows it. `startOrder` puts `rank` (Start first) before `plan.n`, and `waitsFor` adds the plan's waits (`planner: true`) unless the task was unblocked. `planFailed` records the error; a restart turns a running plan into a failure. `replan` drops the plans of queued tasks.
+
 ## Next milestone
 
 Pull requests on hosts other than GitHub.

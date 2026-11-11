@@ -1,6 +1,6 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
 import { STORE, MOVING, reduce, migrate } from "./pipeline-model.js";
-import { LiveRunner, prompt } from "./pipeline-live.js";
+import { LiveRunner, prompt, readPlan } from "./pipeline-live.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
 const watching = () => panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline";
@@ -25,6 +25,13 @@ export const liveHost = {
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
   usage: (context, cwds) => python("pipeline/usage.py", context, { cwds }),
+  async plan(context, args) {
+    const result = await exec("sh", ["-c", 'command -v claude >/dev/null || exit 127; exec claude "$@" < /dev/null', "sh", ...args], { cwd: context.cwd, on: context.on, timeout: 300000 })
+      .catch(error => { throw new Error(/timeout|timed out/i.test(String(error)) ? "The planner took longer than 5 minutes." : String(error?.message ?? error)); });
+    if (result.code === 127) throw new Error("The planner needs Claude Code, and it isn't installed on that machine.");
+    if (result.code !== 0 && !result.stdout.trim()) throw new Error((result.stderr || "Claude Code stopped without a plan.").trim().slice(0, 300));
+    return readPlan(result.stdout);
+  },
   send: async (terminal, text) => { const result = await hc(["send", terminal, text]); if (result.code !== 0) throw new Error(result.stderr); },
   async check(context, cwd, command) {
     try {

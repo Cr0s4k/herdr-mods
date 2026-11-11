@@ -1327,3 +1327,87 @@ test("a live task keeps its own history when the shared log moves on", () => {
   const old = { ...row(state, "T-1"), log: undefined };
   assert.deepEqual(model.taskLog(state, old), [], "a task saved before this falls back to the shared log");
 });
+
+test("with the planner agent on, its order and waits decide what starts, inside Pipeline's own rules", () => {
+  let state = reduce(typed("Schema", "API", "Docs"), { type: "plannerSetup", on: true }, 0);
+  const key = model.planKey(state);
+  state = reduce(state, { type: "run" }, 0);
+  assert.equal(activeTasks(state).length, 0, "nothing starts before the plan");
+  assert.equal(model.waitingReason(state, row(state, "T-1")), "Waiting for the planner");
+  assert.match(state.plan, /The planner is reading 3 queued tasks and the repository\. New agents wait for its plan\./);
+  state = reduce(state, { type: "planning", key }, 0);
+  assert.equal(reduce(state, { type: "planned", key: "old", order: ["T-3"] }, 0), state, "a plan for another queue is dropped");
+  state = reduce(state, { type: "planned", key, summary: "Docs first; the API builds on the schema.", order: ["T-3", "T-1", "NOPE"],
+    waits: { "T-2": ["T-1", "NOPE"], "T-1": ["T-2"] }, reasons: { "T-2": "It reads the schema's new types." } }, 0);
+  assert.deepEqual(activeTasks(state).map(task => task.id).sort(), ["T-1", "T-3"]);
+  assert.deepEqual({ ...row(state, "T-2").plan, sig: undefined }, { n: 2, reason: "It reads the schema's new types.", waits: ["T-1"], sig: undefined }, "unknown ids are dropped and order fills in");
+  assert.deepEqual(row(state, "T-1").plan.waits, [], "a wait on a task the plan starts later is refused");
+  assert.match(state.plan, /^Docs first; the API builds on the schema\. Starting agents for T-3 \+ T-1/);
+  assert.match(state.events.find(item => /planner ordered/.test(item.message)).message, /T-3, T-1, T-2\. T-2 waits for T-1\./);
+  assert.equal(model.plannerHolds(state), false, "tasks leaving the queue don't ask for a new plan");
+  state = reduce(state, { type: "create", title: "Late" }, 0);
+  assert.equal(model.plannerHolds(state), true, "a new task does");
+});
+
+test("the planner's order yields to Start first and Start anyway, and a failed plan lets work start by priority", () => {
+  let state = reduce(typed("A", "B", "C"), { type: "plannerSetup", on: true }, 0);
+  let key = model.planKey(state);
+  state = reduce(reduce(state, { type: "planning", key }, 0), { type: "planned", key, order: ["T-3", "T-2", "T-1"], waits: { "T-1": ["T-2"] } }, 0);
+  assert.deepEqual(model.queueOrder(state).map(task => task.id), ["T-3", "T-2", "T-1"]);
+  state = reduce(state, { type: "first", id: "T-1" }, 0);
+  key = model.planKey(state);
+  assert.equal(model.planKey(state), key, "Start first doesn't ask for a new plan");
+  assert.deepEqual(model.queueOrder(state).map(task => task.id), ["T-1", "T-3", "T-2"]);
+  assert.deepEqual(model.dependencies(state, row(state, "T-1")), ["T-2"]);
+  state = reduce(state, { type: "unblock", id: "T-1", value: true }, 0);
+  assert.deepEqual(model.dependencies(state, row(state, "T-1")), []);
+  state = reduce(state, { type: "plannerSetup", on: false }, 0);
+  assert.deepEqual(model.queueOrder(state).map(task => task.id), ["T-1", "T-2", "T-3"], "off, its order and waits are ignored");
+  state = reduce(reduce(state, { type: "plannerSetup", on: true }, 0), { type: "create", title: "D" }, 0);
+  key = model.planKey(state);
+  state = reduce(reduce(state, { type: "planning", key }, 0), { type: "run" }, 0);
+  assert.equal(activeTasks(state).length, 0);
+  state = reduce(state, { type: "planFailed", key, error: "The planner took longer than 5 minutes." }, 0);
+  assert.equal(activeTasks(state).length, 2, "a failed plan never blocks the pipeline");
+  assert.match(state.plan, /couldn't plan: The planner took longer than 5 minutes\./);
+  assert.equal(model.plannerHolds(state), false, "the failure covers the tasks it was asked about");
+  assert.equal(model.plannerHolds(reduce(state, { type: "create", title: "E" }, 0)), true, "a new task asks again");
+  assert.equal(reduce(state, { type: "replan" }, 0).planning, null);
+});
+
+test("the runner asks the planner once the queue settles, read-only, and applies the answer", async () => {
+  let state = reduce(reduce(typed("A", "B"), { type: "plannerSetup", on: true, model: "sonnet" }, 0), { type: "addRepository", path: "/work/api" }, 0);
+  let clock = 0, calls = [];
+  const world = host(state, { now: () => clock, plan: async (_context, args) => { calls.push(args); return { summary: "B first.", order: ["T-2", "T-1"], waits: {}, reasons: { "T-1": "After B." } }; } });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async ms => { clock += ms; const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
+  await tick(0); await tick(1000);
+  assert.equal(calls.length, 0, "waits for the queue to settle");
+  world.store[id] = reduce(world.store[id], { type: "create", title: "C" }, 0);
+  await tick(3500);
+  assert.equal(calls.length, 0, "a new task restarts the wait");
+  await tick(4000);
+  assert.equal(calls.length, 1);
+  const args = calls[0];
+  assert.deepEqual(args.slice(0, 5), ["-p", "--model", "sonnet", "--tools", "Read,Grep,Glob"]);
+  assert.ok(args.includes("--add-dir=/work/api") && args.includes("--strict-mcp-config") && args.includes("--json-schema"));
+  assert.match(args.at(-1), /- T-3: C\n  repositories: shop · priority 2/);
+  assert.match(args.at(-1), /- api: \/work\/api/);
+  assert.equal(world.state().planning.status, "done");
+  assert.equal(row(world.state(), "T-1").plan.reason, "After B.");
+  await tick(10000);
+  assert.equal(calls.length, 1, "the same queue isn't planned twice");
+  assert.deepEqual(live.readPlan(JSON.stringify({ structured_output: { summary: "s", order: ["T-1"], tasks: [{ id: "T-1", waits: ["T-2"], reason: "r" }] } })),
+    { summary: "s", order: ["T-1"], waits: { "T-1": ["T-2"] }, reasons: { "T-1": "r" } });
+  assert.throws(() => live.readPlan(JSON.stringify({ is_error: true, result: "Credit balance is too low" })), /Credit balance is too low/);
+  assert.throws(() => live.readPlan("not json"), /wasn't readable/);
+});
+
+test("a plan that was running when Herdr restarted fails, so the queue isn't held", () => {
+  let state = reduce(typed("A"), { type: "plannerSetup", on: true }, 0);
+  state = reduce(state, { type: "planning", key: model.planKey(state) }, 0);
+  const world = host(state);
+  new live.LiveRunner(world.host).start();
+  assert.equal(world.state().planning.status, "failed");
+  assert.equal(model.plannerHolds(world.state()), false);
+});

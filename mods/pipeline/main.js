@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, fixRequest, rebaseRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -22,6 +22,7 @@ const CHECK_HINTS = [
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
+const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule"];
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
 const filterLabel = filter => [SCOPES[filter.scope], filter.project?.name].filter(Boolean).join(" · ");
@@ -44,7 +45,7 @@ function cardStatus(state, task) {
   if (task.status === "queued") {
     const waits = dependencies(state, task);
     if (waits.length) return `Needs ${waits.join(", ")}`;
-    return { "Ready for the planner": "Next up", "Waiting for a work slot": "Waiting for a slot", "Waiting for quota above the reserve": "Held by quota reserve", "Outstanding PR limit reached": "Held by PR limit" }[waitingReason(state, task)] ?? (task.rank ? "Queued · starts first" : "Queued");
+    return { "Waiting for the planner": "Waiting for the planner", "Ready for the planner": "Next up", "Waiting for a work slot": "Waiting for a slot", "Waiting for quota above the reserve": "Held by quota reserve", "Outstanding PR limit reached": "Held by PR limit" }[waitingReason(state, task)] ?? (task.rank ? "Queued · starts first" : "Queued");
   }
   if (task.status === "input") return "Needs you";
   if (state.live && task.stalled) return `No output for ${elapsed(Date.now() - task.stalled)}`;
@@ -725,6 +726,8 @@ export default class Pipeline extends View {
       .when(motion && state.running, el => el.spin(7000)));
     canvas.child(svg("mods/pipeline/moon-small.svg").id("pipeline-electron").absolute().left(c.x - SUN - 12).top(c.y - SUN - 12).size(SUN * 2 + 24).text_color(t.muted)
       .when(motion && state.running, el => el.spin(3200)));
+    const thinking = state.live && state.planner?.on && plannerBusy(state);
+    const planner = state.live && state.planner?.on ? (thinking ? "planning…" : state.planning?.status === "failed" ? "planner stopped" : planned(state) && state.planning ? `by ${state.planning.model ?? "Claude Code"}` : null) : null;
     const resting = !state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle";
     const sun = el => el.absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().bg(t.surface);
     if (!state.live) canvas.child(sun(v_flex()).border_color(t.accent)
@@ -736,6 +739,7 @@ export default class Pipeline extends View {
       const need = info.questions ? { text: `${info.questions} need${info.questions === 1 ? "s" : ""} you`, color: t.blocked, go: cx => this.nextQuestion(cx), hint: "Show the next agent waiting for you (Q)" }
         : info.failed ? { text: `${info.failed} stopped`, color: t.blocked, go: cx => this.open("review", cx), hint: "Show the tasks that stopped" }
         : info.approvals ? { text: `${info.approvals} to review`, color: t.ansi5, go: cx => this.open("review", cx), hint: "Show the work waiting for your review" }
+        : thinking ? { text: "Planning", color: t.accent, go: cx => this.open("queue", cx), hint: "The planner agent is ordering the queue. Show the queue" }
         : { text: "Agents", color: t.accent, go: cx => this.open("queue", cx), hint: "Show the queue" };
       canvas.child(sun(Button.new("pipeline-sun")).border_color(need.color).text_color(t.foreground).tab_index(0).accessibility_label(`${need.text}. ${need.hint}`).tooltip(need.hint)
         .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.foreground)).on_click((_e, cx) => need.go(cx))
@@ -746,7 +750,10 @@ export default class Pipeline extends View {
     const planLeft = Math.max(30 + cw + 20, c.x - 120);
     const planRight = Math.min(c.x + 90, g.slots[1] ? g.slots[1].x - cw / 2 - 14 : c.x + 90);
     canvas.child(v_flex().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft)).max_h(Math.max(40, c.y - RING - 22)).overflow_hidden().gap(4)
-      .child(div().text_size(11).font_medium().text_color(t.muted).child("The plan"))
+      .child(h_flex().gap(8).items_center()
+        .child(div().text_size(11).font_medium().text_color(t.muted).child(planner ? `The plan · ${planner}` : "The plan"))
+        .when(Boolean(planner) && state.planning && state.planning.status !== "running", el => el.child(this.button("replan", "Plan again", cx => this.act({ type: "replan" }, cx), t,
+          { small: true, icon: "reset", hint: "Ask the planner agent to read the queue and the repository again" }).h(20))))
       .child(div().text_size(12).line_height(1.45).child(state.plan)));
 
     g.slots.forEach((slot, i) => {
@@ -1076,6 +1083,7 @@ export default class Pipeline extends View {
       this.modelInput.set_value(tuningFor(this.state(), agent.key).model ?? "");
     }, t, { selected: chosen === agent.name, icon: chosen === agent.name ? "check" : null, hint: agentRun(state, agent).join(" ") }).w_full().justify_start());
     this.tuning(body, state, t);
+    this.plannerSettings(body, state, t);
     body.child(this.button("auto-trust", state.autoTrust ? "Trusting new worktrees automatically" : "Trust new worktrees automatically", cx => this.act({ type: "autoTrust" }, cx), t,
       { icon: state.autoTrust ? "check" : null, selected: Boolean(state.autoTrust), hint: "Answer the agent's “Do you trust this folder?” prompt for worktrees Pipeline made from your repository" }).w_full().justify_start());
     body.child(this.label("Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.", t));
@@ -1243,6 +1251,8 @@ export default class Pipeline extends View {
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
       body.child(this.label("The title and these details are the agent's first message. Saved when you leave the field.", t));
       body.child(this.label(waitingReason(state, task), t));
+      if (state.planner?.on && task.plan?.reason && task.plan.sig === planSig(task)) body.child(div().id(`pipeline-plan-reason-${task.id}`).text_size(12).line_height(1.45)
+        .child(`Planner: ${task.plan.reason}${task.plan.waits.length ? ` Waits for ${task.plan.waits.join(", ")}.` : ""}`));
       body.child(this.firstButton(task, t));
       this.taskTune(body, state, task, t);
       this.repoChips(body, state, task, t);
@@ -1322,6 +1332,16 @@ export default class Pipeline extends View {
     const log = taskLog(state, task).slice(0, 12);
     if (log.length) body.child(this.heading("Task history"));
     for (const message of log) body.child(this.label(message, t));
+  }
+  plannerSettings(body, state, t) {
+    const setup = { on: false, model: null, ...state.planner }, claude = this.agentChoices.some(agent => agent.key === "claude");
+    body.child(this.switchRow("planner", "Plan with an agent", claude ? "Claude Code reads the queue and the repository, orders the tasks and says which must wait for which"
+      : "Needs Claude Code installed on the project's machine", setup.on, cx => this.act({ type: "plannerSetup", on: !setup.on }, cx), t, !claude && !setup.on));
+    if (!setup.on) return;
+    body.child(h_flex().gap(6).flex_wrap()
+      .child(this.button("planner-model-default", "Default", cx => this.act({ type: "plannerSetup", model: null }, cx), t, { small: true, selected: !setup.model, hint: "Claude Code's own default model" }))
+      .children(AGENT_OPTIONS.claude.models.map(model => this.button(`planner-model-${model}`, model, cx => this.act({ type: "plannerSetup", model }, cx), t, { small: true, selected: setup.model === model }))));
+    body.child(this.label("It runs whenever the queue changes, can only read, and new agents wait for its plan. Pipeline still keeps the rules: limits, waits you set, no circles. Start first and Start anyway still win.", t));
   }
   firstButton(task, t) {
     return this.button(`first-${task.id}`, task.rank ? "Starts first" : "Start first", cx => this.act({ type: "first", id: task.id }, cx), t,

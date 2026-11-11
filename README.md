@@ -206,6 +206,19 @@ task, so parallel agents never touch each other or your checkout.
    rest, whatever its priority; the last one marked goes first, and clicking again puts it
    back. **Model and effort for this task** there lets one task start with its own (a small
    model for a docs change, say); what you leave **As set** follows Settings.
+
+   **Plan with an agent** (Settings) hands the ordering to Claude Code. Whenever a task joins
+   the queue or its details change, Pipeline asks Claude Code, which can only read, to look
+   at the queue, the work already started and the repositories, and to answer with the
+   order to start tasks in, which must wait for which (because one builds on another, or
+   both would change the same lines), and a reason for each. The plan appears above the
+   centre with **Plan again**, each queued task's inspector shows its reason, and cards
+   show the waits. New agents wait for the plan; if planning fails, tasks start by priority
+   and only a new or changed task asks again. Pipeline still keeps its own rules: the
+   parallel and review limits, waits you set, no circles, and a wait that contradicts the
+   plan's own order is dropped. **Start first** and **Start anyway** still win. Pick its
+   model there (Default is Claude Code's own); on haiku a plan takes seconds and costs a
+   fraction of a cent.
 2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it

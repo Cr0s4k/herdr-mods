@@ -978,3 +978,26 @@ test("after a rebase a task's changes start where it now leaves its target branc
     assert.equal(forkOf(start, "gone"), start, "a missing target falls back to the start commit");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("the planner is switched on in Settings and shows its plan, its reasons and its state", () => {
+  const view = setupLive();
+  for (const title of ["A", "B"]) view.act({ type: "create", title }, cx);
+  click(view, "settings");
+  find(view.render(cx), "planner").handlers.on_change(true, cx);
+  assert.equal(view.state().planner.on, true);
+  click(view, "planner-model-sonnet");
+  assert.equal(view.state().planner.model, "sonnet");
+  let scene = view.render(cx);
+  assert.match(text(find(scene, "plan")), /The plan · planning…/);
+  assert.match(text(find(scene, "sun")), /Planning/);
+  const key = globalThis.__pipelineView.planKey(view.state());
+  view.act({ type: "planning", key }, cx);
+  view.act({ type: "planned", key, summary: "B before A.", order: ["T-2", "T-1"], waits: { "T-1": ["T-2"] }, reasons: { "T-1": "It reuses B's helper." } }, cx);
+  scene = view.render(cx);
+  assert.match(text(find(scene, "plan")), /The plan · by sonnet .*B before A\./);
+  assert.match(text(find(scene, "card-T-1")), /Needs T-2/);
+  view.inspect("T-1", cx);
+  assert.match(text(find(view.render(cx), "plan-reason-T-1")), /Planner: It reuses B's helper\. Waits for T-2\./);
+  click(view, "replan");
+  assert.equal(view.state().planning, null);
+});

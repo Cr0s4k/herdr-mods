@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, ACTIVE } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -67,6 +67,48 @@ export function changedFiles(names, stats, status) {
 }
 
 export const tail = (text, lines = 40) => String(text ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").trimEnd().split("\n").slice(-lines).join("\n").slice(-4000);
+export const PLAN_SCHEMA = { type: "object", additionalProperties: false, required: ["summary", "order", "tasks"], properties: {
+  summary: { type: "string", description: "One or two plain sentences for the person: the order and why anything waits." },
+  order: { type: "array", items: { type: "string" }, description: "Every queued task id, in the order to start them." },
+  tasks: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "waits", "reason"], properties: {
+    id: { type: "string" }, waits: { type: "array", items: { type: "string" } }, reason: { type: "string" } } } } } };
+
+// What the planner agent reads: the queue, the work already started, and the rules Pipeline keeps whatever it says.
+export function planPrompt(state) {
+  const queued = state.tasks.filter(task => task.status === "queued"), started = state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
+  const describe = task => [`- ${task.id}: ${task.title}`, `  repositories: ${task.repos.join(", ")} · priority ${task.priority}${task.ticket ? ` · ticket ${task.ticket.key}` : ""}`,
+    ...(task.depends.length ? [`  the person has it wait for: ${task.depends.join(", ")}`] : []),
+    ...(task.description?.trim() ? [`  details: ${task.description.trim().replace(/\s+/g, " ").slice(0, 1200)}`] : [])].join("\n");
+  const repos = (state.repositories ?? [{ name: state.repo, path: state.context.cwd }]).map(repo => `- ${repo.name}: ${repo.path}`);
+  return [
+    "You plan the work queue of Herdr Pipeline. Pipeline starts one coding agent per task, each in its own Git worktree and branch, up to " + `${state.parallel} at once; finished branches are merged one at a time into the branch they started from.`,
+    "Read the repository as much as you need (you can only read), then decide:",
+    "1. The order to start the queued tasks in: what unblocks other work or is most valuable first, then priority (4 is urgent, 1 low).",
+    "2. Which queued tasks must wait for another task (queued or already started) to merge first: because they build on its result, or because both would change the same lines and running them in parallel would make the second one conflict. Only add a wait you can justify from the code or the task; independent tasks should run in parallel.",
+    "3. One short reason per queued task, in plain words for the person.",
+    "Never invent task ids. Waits must not form a circle. Don't change any file.",
+    "", "Repositories:", ...repos,
+    "", "Queued tasks:", ...queued.map(describe),
+    ...(started.length ? ["", "Already started (they hold their files until they merge):", ...started.map(task => `- ${task.id}: ${task.title} (${task.status}, ${task.repos.join(", ")})`)] : []),
+  ].join("\n");
+}
+export function planArgs(state) {
+  const model = state.planner?.model, extra = (state.repositories ?? []).slice(1).map(repo => `--add-dir=${repo.path}`);
+  return ["-p", ...(model ? ["--model", model] : []), "--tools", "Read,Grep,Glob", ...extra, "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
+    "--output-format", "json", "--json-schema", JSON.stringify(PLAN_SCHEMA), planPrompt(state)];
+}
+// Claude Code's JSON result, turned into the plan the reducer applies.
+export function readPlan(stdout) {
+  let reply;
+  try { reply = JSON.parse(stdout); } catch { throw new Error("The planner's answer wasn't readable."); }
+  const plan = reply?.structured_output;
+  if (reply?.is_error || !plan || !Array.isArray(plan.order)) throw new Error(String(reply?.result || "The planner gave no plan.").slice(0, 300));
+  const tasks = Array.isArray(plan.tasks) ? plan.tasks.filter(row => row && typeof row.id === "string") : [];
+  return { summary: String(plan.summary ?? ""), order: plan.order.map(String),
+    waits: Object.fromEntries(tasks.map(row => [row.id, Array.isArray(row.waits) ? row.waits.map(String) : []])),
+    reasons: Object.fromEntries(tasks.map(row => [row.id, String(row.reason ?? "")])) };
+}
+
 export const rebaseRequest = (target, error) => [`Merging this branch into ${target} was refused:`, error || "The branch conflicts.", "",
   `Rebase this branch onto ${target}, resolve the conflicts, make sure the work still does what the task asked, commit, and stop.`].join("\n");
 export const fixRequest = (command, output) => ["The check command failed after your change:", `$ ${command}`, output || "(no output)", "",
@@ -74,7 +116,7 @@ export const fixRequest = (command, output) => ["The check command failed after 
 
 // Starts, merges and discards real agents' work, one job at a time, and maps agent status onto tasks.
 export class LiveRunner {
-  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.screens = new Map(); this.counted = new Map(); }
+  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.screens = new Map(); this.counted = new Map(); this.queues = new Map(); this.planning = new Set(); }
 
   // Open pull requests are asked about once a minute: what they wait for, and whether GitHub merged or closed them.
   watchPullRequest(id, state, task, repo, cx) {
@@ -111,6 +153,7 @@ export class LiveRunner {
   }
 
   start() {
+    for (const [id, state] of this.pipelines()) if (state.planning?.status === "running") this.apply(id, { type: "planFailed", key: state.planning.key, error: "Herdr restarted while the planner was planning." });
     // A restart cannot prove whether a start command reached the core. Never replay it.
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "routing" && task.launch === "starting") this.apply(id, { type: "launchFailed", id: task.id,
@@ -182,6 +225,7 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) {
       for (const provider of Object.keys(SOURCES)) this.watchTickets(id, state, provider, cx);
       this.watchBlockers(id, state, cx);
+      this.plan(id, state, cx);
     }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       const change = observe(task, this.host);
@@ -226,6 +270,22 @@ export class LiveRunner {
       const keys = this.host.shared(STORE)?.[id]?.autoTrust && trustKeys(screen);
       if (keys && await this.host.keys(task.terminal, keys).then(() => true, () => false)) this.apply(id, { type: "trusted", id: task.id });
       else this.apply(id, { type: "observe", id: task.id, status: "input", reason: "trust" });
+    });
+  }
+
+  // The planner agent plans a queue once it has stayed the same for a few seconds, so typing several tasks asks once.
+  plan(id, state, cx) {
+    if (!this.host.plan || this.planning.has(id) || !plannerHolds(state)) { this.queues.delete(id); return; }
+    const key = planKey(state), now = this.host.now(), seen = this.queues.get(id);
+    if (seen?.key !== key) { this.queues.set(id, { key, since: now }); return; }
+    if (now - seen.since < 4000) return;
+    this.apply(id, { type: "planning", key });
+    if (this.host.shared(STORE)?.[id]?.planning?.key !== key) return;
+    this.planning.add(id);
+    cx.spawn(async () => {
+      try { this.apply(id, { type: "planned", key, ...(await this.host.plan(state.context, planArgs(state))) }); }
+      catch (error) { this.apply(id, { type: "planFailed", key, error: error?.message || String(error) }); }
+      finally { this.planning.delete(id); }
     });
   }
 
