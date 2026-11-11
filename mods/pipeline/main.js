@@ -574,10 +574,9 @@ export default class Pipeline extends View {
     return h_flex().h(50).px(20).gap(10).items_center().flex_none()
       .child(icon("pipeline", 20).text_color(t.accent))
       .when(!compact, el => el.child(div().text_size(16).font_semibold().flex_none().child("Pipeline")))
-      .child(h_flex().p(2).gap(2).rounded(7).bg(t.raised).flex_none()
-        .child(this.button("mode-simulation", "Simulation", cx => this.setMode("simulation", cx), t, { small: true, selected: !state.live, hint: "Example tasks and simulated agents" }))
-        .child(this.button("mode-live", "Live", cx => this.setMode("live", cx), t, { small: true, selected: Boolean(state.live), disabled: !this.context.cwd,
-          hint: this.context.cwd ? "Real agents, each in its own Git worktree" : "Open Pipeline from a project to run real agents" })))
+      .child(this.button("mode", "Simulation", cx => this.setMode(state.live ? "simulation" : "live", cx), t, { icon: state.live ? "live" : "flask", iconOnly: true, disabled: !state.live && !this.context.cwd,
+        hint: state.live ? "Live: real agents, each in its own Git worktree. Click for the simulation"
+          : this.context.cwd ? "Simulation: example tasks and simulated agents. Click for Live" : "Simulation: open Pipeline from a project to run real agents" }))
       .when(wide, el => el.children(this.controls(state, t)).child(div().flex_1()))
       .when(!wide, el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
         ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}${(state.repositories?.length ?? 1) > 1 ? ` + ${state.repositories.length - 1} more ${state.repositories.length === 2 ? "repository" : "repositories"}` : ""} · ${this.agentLabel(state)} in its own worktree per task`

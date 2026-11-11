@@ -377,9 +377,11 @@ test("Live keeps its own pipeline beside the simulation, and typed tasks become 
   for (const id of ["add", "watch", "speed", "delivery"]) assert.equal(find(scene, id), undefined, `${id} is simulation only`);
   assert.ok(find(scene, "agent"));
   assert.equal(text(find(scene, "quota")).trim(), "Limits", "Live's gauge reads real usage limits, not the example quota");
-  click(view, "mode-simulation");
+  assert.match(find(scene, "mode").styles.tooltip[0], /^Live/);
+  click(view, "mode");
   assert.equal(view.state().live, undefined);
-  click(view, "mode-live");
+  assert.match(find(view.render(cx), "mode").styles.tooltip[0], /^Simulation/);
+  click(view, "mode");
   assert.equal(row(view, "T-1").title, "Add a dark mode toggle");
 });
 
@@ -394,7 +396,7 @@ test("a project folder opens in Live unless this copy switched to the simulation
 
 test("Live needs a project folder", () => {
   const view = setup();
-  assert.equal(find(view.render(cx), "mode-live").styles.disabled[0], true);
+  assert.equal(find(view.render(cx), "mode").styles.disabled[0], true);
 });
 
 test("the agent setting picks which program each task starts", () => {

@@ -154,8 +154,8 @@ does not itself install those skills for either agent.
 ## Pipeline
 
 **Pipeline** in the top toolbar opens a visual task pipeline for the current project in its
-own tab. The header switches between **Simulation** (example tasks and pretend agents) and
-**Live** (real coding agents on your repository).
+own tab. The icon button in the header toggles between **Simulation** (flask: example tasks
+and pretend agents) and **Live** (broadcast: real coding agents on your repository).
 
 In the sidebar, a space lists its **Pipeline** above its agents while the Pipeline tab is open
 there, the live pipeline is started, or it has tasks that aren't merged yet. It spins while the
