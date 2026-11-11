@@ -157,6 +157,10 @@ does not itself install those skills for either agent.
 own tab. The header switches between **Simulation** (example tasks and pretend agents) and
 **Live** (real coding agents on your repository).
 
+In the sidebar, a space lists its **Pipeline** above its agents while the Pipeline tab is open
+there, the live pipeline is started, or it has tasks that aren't merged yet. It spins while the
+pipeline is started; click it to open the pipeline in that space.
+
 ### Live
 
 Live runs real agents on the project's Git repository, one isolated worktree and branch per

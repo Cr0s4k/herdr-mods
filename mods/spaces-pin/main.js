@@ -10,6 +10,7 @@ import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, set
 import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 import { ink, watchMotion } from "./ui.js";
+import { spacePipeline, pipelineRow, openPipeline } from "./pipeline-row.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -140,6 +141,7 @@ export default class Spaces extends View {
       case "end": move(nav.length - 1); break;
       case "enter": case "space":
         if (space) run("space.select", { id: item.w.id });
+        else if (item.kind === "pipeline") openPipeline(item.w, item.pipe);
         else run("pane.focus", { pane: item.a.pane });
         break;
       case "right":
@@ -495,14 +497,20 @@ export default class Spaces extends View {
     });
   }
 
+  pipeline(w) {
+    return spacePipeline(w, [w.folder, place(w, this.panes)], this.panes);
+  }
+
   spaceTree(r, t, parent = null) {
     const members = this.agents.members(r.w.id, this.attention);
     const kids = r.kids.filter(k => !this.attention || k.summary.blocked > 0);
-    const hasChildren = members.length + kids.length > 0;
+    const pipe = this.attention ? null : this.pipeline(r.w);
+    const hasChildren = members.length + kids.length + (pipe ? 1 : 0) > 0;
     const open = this.attention || (this.expanded[r.w.id] ?? !r.tree);
     const key = `space:${r.w.id}`;
     const cursor = this.navigable(key, { kind: "space", w: r.w, parent, open, hasChildren, toggle: (cx) => this.toggleSpace(r, cx) });
     const children = [
+      ...(pipe ? [{ id: `pipeline-branch-${r.w.id}`, view: () => pipelineRow(r.w, pipe, t, this.agents.indicator, { ring: this.navigable(`pipeline:${r.w.id}`, { kind: "pipeline", w: r.w, pipe, parent: key }) }) }] : []),
       ...members.map(a => ({ id: `agent-branch-${a.address}`, view: () => this.agents.agent(a, t, this.attention, false, new Set(), { ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: key }) }) })),
       ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t, key) })),
     ];
@@ -685,6 +693,7 @@ export default class Spaces extends View {
 
   focusedSpace(s, sp, t, collapsed) {
     const members = this.agents.members(s.id, false);
+    const pipe = this.pipeline(s);
     const elsewhere = this.agents.summary(sp.filter(other => other.id !== s.id).map(other => other.id)).blocked;
     const color = (shared("space.colors") ?? {})[s.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : MARK[color] ?? t[color];
@@ -707,8 +716,9 @@ export default class Spaces extends View {
         .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(s.name))
           .when(Boolean(s.machine), el => el.child(div().max_w(65).truncate().text_size(11).text_color(t.muted).child(s.machine)))))
       .child(v_flex().id(`spaces-focus-list-${s.id}`).flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
+        .when(Boolean(pipe), el => el.child(pipelineRow(s, pipe, t, this.agents.indicator, { prefix: "focus-", compact: collapsed, ring: this.navigable(`pipeline:${s.id}`, { kind: "pipeline", w: s, pipe, parent: null }) })))
         .children(members.map(a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed, ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: null }) })))
-        .when(!members.length, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
+        .when(!members.length && !pipe, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
           .tooltip("No agents in this space.").child(collapsed ? "0" : "No agents in this space."))))
       .when(collapsed, el => el.child(div().id("spaces-focus-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
         .text_color(t.muted).hover(el => el.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")
@@ -731,7 +741,8 @@ export default class Spaces extends View {
     const hiddenCount = sp.length - visible.length;
     const focus = visible.find(s => s.id === focusId);
     if (focusId && !focus) setShared("spaces.focus", null);
-    this.agents.update(sp, panes());
+    this.panes = panes();
+    this.agents.update(sp, this.panes);
     const attentionCount = this.agents.summary(visible.map(s => s.id)).blocked;
     const ids = new Set(sp.map(p => p.id));
     const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));

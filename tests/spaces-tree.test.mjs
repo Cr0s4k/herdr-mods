@@ -47,9 +47,13 @@ source = (await readFile(new URL("../mods/spaces-pin/agent-tree.js", import.meta
 source = "const { div, image, svg, h_flex, v_flex, agents, terminals, focused, run, setAgentOrder, spin } = globalThis.__spacesNative;\n" + source;
 const { AgentTree, branch } = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, { AgentTree, branch });
+const { STORE, LIVE } = await import("../mods/pipeline/pipeline-model.js");
+source = (await readFile(new URL("../mods/spaces-pin/pipeline-row.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = `const { div, svg, h_flex, run, shared } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, LIVE = ${JSON.stringify(LIVE)};\n` + source;
+Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;
@@ -503,4 +507,30 @@ test("the sidebar walks spaces and agents with the keyboard", () => {
   key("escape");
   assert.equal(view.keyboard, false);
   assert.deepEqual(world.calls.at(-1), ["pane.go", { direction: "right" }]);
+});
+
+test("a space lists its pipeline once it is in use, spinning while started, and opens it there", () => {
+  const view = setup(), key = LIVE + JSON.stringify([null, "/work/app"]);
+  const context = { id: JSON.stringify([null, "/work/app"]), cwd: "/work/app", on: null, name: "app" };
+  const live = (running, tasks) => sharedState.set(STORE, { [key]: { live: true, context, running, tasks } });
+  live(false, [{ status: "done" }]);
+  assert.equal(find(view.render(), "pipeline-app"), undefined);
+  live(false, [{ status: "queued" }, { status: "review" }]);
+  let row = find(view.render(), "pipeline-app");
+  assert.ok(find(find(view.render(), "space-tree-app"), "pipeline-app"));
+  assert.equal(find(view.render(), "pipeline-other"), undefined);
+  assert.equal(row.styles.tooltip[0], "Pipeline · Not started · 1 queued · 1 to review");
+  assert.equal(row.nodes.at(-1).styles.spin, undefined);
+  live(true, [{ status: "working" }]);
+  row = find(view.render(), "pipeline-app");
+  assert.equal(row.styles.tooltip[0], "Pipeline · Started · 1 working");
+  assert.deepEqual(row.nodes.at(-1).styles.spin, [900]);
+  row.handlers.click({}, cx);
+  assert.deepEqual(world.calls, [["space.select", { id: "app" }], ["tab.new", { space: "app", name: "Pipeline", mod: "pipeline", props: { context } }]]);
+  world.calls = [];
+  world.panes = [{ pane: "pipe", mod: "pipeline", tab: "other-tab", terminal: null, cwd: null }];
+  click(view.render(), "pipeline-other");
+  assert.deepEqual(world.calls, [["space.select", { id: "other" }], ["tab.select", { id: "other-tab" }], ["pane.focus", { pane: "pipe" }]]);
+  click(view.render(), "spaces-needs-you");
+  assert.equal(find(view.render(), "pipeline-app"), undefined);
 });
