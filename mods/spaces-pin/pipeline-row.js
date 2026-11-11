@@ -49,6 +49,6 @@ export function pipelineRow(s, pipe, t, indicator, { prefix = "", compact = fals
       .role("button").accessibility_label("Close pipeline").tooltip("Close pipeline…")
       .on_click((_e, cx) => { cx.stop_propagation(); closePipeline(s, pipe); })
       .child(svg("mods/pipeline/x.svg").size(12))))
-    .child(indicator(t, started ? "working" : "idle", true))
+    .child(started ? div().size(7).mx(3).flex_none().rounded(4).bg(t.working ?? t.dim) : indicator(t, "idle", true))
     .when(ring, el => el.relative().child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)));
 }

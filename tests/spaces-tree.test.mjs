@@ -514,7 +514,7 @@ test("the sidebar walks spaces and agents with the keyboard", () => {
   assert.deepEqual(world.calls.at(-1), ["pane.go", { direction: "right" }]);
 });
 
-test("a space lists its pipeline once it is in use, spinning while started, and opens it there", () => {
+test("a space lists its pipeline once it is in use, a still dot while started, and opens it there", () => {
   const view = setup(), key = LIVE + JSON.stringify([null, "/work/app"]);
   const context = { id: JSON.stringify([null, "/work/app"]), cwd: "/work/app", on: null, name: "app" };
   const live = (running, tasks) => sharedState.set(STORE, { [key]: { live: true, context, running, tasks } });
@@ -529,7 +529,8 @@ test("a space lists its pipeline once it is in use, spinning while started, and 
   live(true, [{ status: "working" }]);
   row = find(view.render(), "pipeline-app");
   assert.equal(row.styles.tooltip[0], "Pipeline · Started · 1 working");
-  assert.deepEqual(row.nodes.at(-1).styles.spin, [900]);
+  assert.equal(row.nodes.at(-1).styles.spin, undefined);
+  assert.ok(row.nodes.at(-1).styles.bg);
   row.handlers.click({}, cx);
   assert.deepEqual(world.calls, [["space.select", { id: "app" }], ["tab.new", { space: "app", name: "Pipeline", mod: "pipeline", props: { context } }]]);
   world.calls = [];
