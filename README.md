@@ -319,9 +319,9 @@ turns them off. Completed tasks say how long they took.
 
 A working agent redraws its terminal all the time. When one shows nothing new for ten
 minutes, its card turns to **No output for 12 min** and Pipeline notifies you that it may be
-stuck; the flag clears by itself when the screen moves again. For Claude Code, a task's
-inspector also says how many tokens its agent used (written, read and read from cache),
-counted from Claude Code's own transcripts for the worktree each time a turn ends, and
+stuck; the flag clears by itself when the screen moves again. For Claude Code and Codex, a
+task's inspector also says how many tokens its agent used (written, read and read from cache),
+counted from the agent's own session files for the worktree each time a turn ends, and
 **Completed** adds up agent time and tokens written. Each task keeps its own history, so it
 is still there after the activity log has moved on.
 
