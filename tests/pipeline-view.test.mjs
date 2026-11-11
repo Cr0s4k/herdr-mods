@@ -1051,3 +1051,20 @@ test("the Planner view keeps the last plan: who planned, its order and reasons, 
   click(view, "plan-open");
   assert.equal(view.drawer, "planner");
 });
+
+test("the map shows the plan as one clickable line, and the Plan pane has all of it", () => {
+  const view = setup();
+  let card = find(view.render(cx), "plan-open");
+  assert.match(text(card), /The plan .*Ready\. Start the pipeline/);
+  const line = card.nodes[0].nodes.at(-1);
+  assert.ok(line.styles.truncate && text(line).startsWith("Ready."), "one line on the map");
+  click(view, "plan-open");
+  assert.equal(view.drawer, "planner");
+  assert.match(text(find(view.render(cx), "inspector")), /^Plan .*Right now Ready\. Start the pipeline and the planner picks independent work first\.$/);
+  click(view, "plan-open");
+  assert.equal(view.drawer, null, "clicking it again closes the pane");
+  const live = setupLive();
+  live.act({ type: "create", title: "A" }, cx);
+  click(live, "plan-open");
+  assert.match(text(find(live.render(cx), "inspector")), /Right now .*The planner agent is off: tasks start by Start first, then priority, then arrival\./);
+});

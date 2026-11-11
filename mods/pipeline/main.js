@@ -749,12 +749,15 @@ export default class Pipeline extends View {
     }
     const planLeft = Math.max(30 + cw + 20, c.x - 120);
     const planRight = Math.min(c.x + 90, g.slots[1] ? g.slots[1].x - cw / 2 - 14 : c.x + 90);
-    canvas.child(v_flex().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft)).max_h(Math.max(40, c.y - RING - 22)).overflow_hidden().gap(4)
-      .child(h_flex().gap(8).items_center()
-        .child(planner ? Button.new("pipeline-plan-open").text_size(11).font_medium().text_color(t.muted).tab_index(0).accessibility_label(`The plan · ${planner}. See what the planner did`)
-            .tooltip("See what the planner read and why").hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
-            .on_click((_e, cx) => this.open("planner", cx)).child(`The plan · ${planner}`) : div().text_size(11).font_medium().text_color(t.muted).child("The plan")))
-      .child(div().text_size(12).line_height(1.45).child(state.plan)));
+    const heading = planner ? `The plan · ${planner}` : "The plan";
+    canvas.child(div().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(130, planRight - planLeft))
+      .child(Button.new("pipeline-plan-open").w_full().px(10).py(7).rounded(7).border_1().border_color(this.drawer === "planner" ? t.accent : t.border).bg(t.surface).text_color(t.foreground).tab_index(0)
+        .accessibility_label(`${heading}: ${state.plan}. Read the plan`).tooltip("Read the plan").hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
+        .on_click((_e, cx) => this.open(this.drawer === "planner" ? null : "planner", cx))
+        .child(v_flex().w_full().min_w(0).gap(2)
+          .child(h_flex().gap(6).items_center().child(dot(thinking ? t.accent : state.planning?.status === "failed" && state.planner?.on ? t.blocked : t.muted, 5))
+            .child(div().flex_1().min_w(0).text_size(11).font_medium().text_color(t.muted).truncate().child(heading)))
+          .child(div().text_size(12).truncate().child(state.plan)))));
 
     g.slots.forEach((slot, i) => {
       const launching = state.tasks.find(task => task.status === "routing" && task.slot === i);
@@ -858,7 +861,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Planner", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Plan", settings: "Pipeline settings", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -1336,8 +1339,11 @@ export default class Pipeline extends View {
   }
   plannerView(body, state, t) {
     const planning = state.planning, now = Date.now();
+    body.child(v_flex().gap(4).child(this.heading("Right now")).child(div().text_size(13).line_height(1.5).child(state.plan)));
+    if (!state.live) return;
+    body.child(div().h(1).bg(t.border));
     if (!state.planner?.on) {
-      body.child(this.label("The planner is off. With Plan with an agent on, Claude Code or Codex orders the queue and says which task waits for which.", t));
+      body.child(this.label("The planner agent is off: tasks start by Start first, then priority, then arrival. With Plan with an agent on, Claude Code or Codex orders the queue and says which task waits for which.", t));
       body.child(this.button("planner-settings", "Open Settings", cx => this.open("settings", cx), t, { icon: "settings" }));
       if (!planning) return;
     }
@@ -1355,7 +1361,7 @@ export default class Pipeline extends View {
       .child(h_flex().gap(7).items_center().child(dot(planning.status === "failed" ? t.blocked : planning.status === "running" ? t.accent : t.ansi2)).child(div().text_size(13).font_medium().child(status)))
       .child(this.label([who, ...cost].join(" · "), t)));
     if (planning.status === "failed") body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(planning.error));
-    if (planning.summary) body.child(div().text_size(13).line_height(1.5).child(planning.summary));
+    if (planning.summary && planning.summary !== state.plan) body.child(div().text_size(13).line_height(1.5).child(planning.summary));
     if (planning.tasks?.length) {
       body.child(this.heading("Its order"));
       planning.tasks.forEach((row, i) => {
