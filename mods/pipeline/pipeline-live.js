@@ -118,8 +118,8 @@ export function readPlan(result) {
     reasons: Object.fromEntries(tasks.map(row => [row.id, String(row.reason ?? "")])), ...seen };
 }
 
-// Agents tick a timer, a token count and a spinner while they wait, so only words count as new output.
-export const screenText = text => text.replace(/\d+/g, "0").replace(/[^\x20-\x7e\n]/g, "");
+// Agents tick a timer, a token count and a blinking spinner while they wait, so only words count as new output.
+export const screenText = text => text.replace(/\d+[a-z]*/gi, "").replace(/[^A-Za-z]+/g, " ").trim();
 
 export const rebaseRequest = (target, error) => [`Merging this branch into ${target} was refused:`, error || "The branch conflicts.", "",
   `Rebase this branch onto ${target}, resolve the conflicts, make sure the work still does what the task asked, commit, and stop.`].join("\n");
