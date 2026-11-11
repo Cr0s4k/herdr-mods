@@ -758,6 +758,9 @@ export default class Pipeline extends View {
         : info.failed ? { text: `${info.failed} stopped`, color: t.blocked, go: cx => this.open("review", cx), hint: "Show the tasks that stopped" }
         : info.approvals ? { text: `${info.approvals} to review`, color: t.ansi5, go: cx => this.open("review", cx), hint: "Show the work waiting for your review" }
         : thinking ? { text: "Planning", color: t.accent, go: cx => this.open("planner", cx), hint: "The planner agent is ordering the queue. Show what it does" }
+        : state.planner?.on ? state.planning?.status === "failed"
+          ? { text: "Planner", color: t.blocked, go: cx => this.open("planner", cx), hint: "The planner stopped. Show why" }
+          : { text: "Planner", color: t.accent, go: cx => this.open("planner", cx), hint: "Show the plan" }
         : { text: "Agents", color: t.accent, go: cx => this.open("queue", cx), hint: "Show the queue" };
       canvas.child(sun(Button.new("pipeline-sun")).border_color(need.color).text_color(t.foreground).tab_index(0).accessibility_label(`${need.text}. ${need.hint}`).tooltip(need.hint)
         .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.foreground)).on_click((_e, cx) => need.go(cx))

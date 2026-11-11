@@ -990,6 +990,32 @@ test("in Live the centre says what waits for you and takes you there", () => {
   assert.equal(find(setup().render(cx), "sun"), undefined, "the simulation keeps its planner");
 });
 
+test("in Live with the planner on, the centre is the Planner and opens the plan", () => {
+  const view = setupLive();
+  for (const title of ["A", "B"]) view.act({ type: "create", title }, cx);
+  view.act({ type: "plannerSetup", on: true }, cx);
+  const key = globalThis.__pipelineView.planKey(view.state());
+  view.act({ type: "planning", key }, cx);
+  view.act({ type: "planned", key, summary: "B before A.", order: ["T-2", "T-1"], waits: {}, reasons: {} }, cx);
+  let sun = find(view.render(cx), "sun");
+  assert.match(text(sun), /Planner/);
+  assert.equal(sun.styles.border_color[0], "accent");
+  click(view, "sun");
+  assert.equal(view.drawer, "planner");
+  view.act({ type: "create", title: "C" }, cx);
+  const next = globalThis.__pipelineView.planKey(view.state());
+  view.act({ type: "planning", key: next }, cx);
+  view.act({ type: "planFailed", key: next, error: "No answer." }, cx);
+  sun = find(view.render(cx), "sun");
+  assert.match(text(sun), /Planner/);
+  assert.equal(sun.styles.border_color[0], "blocked");
+  view.act({ type: "plannerSetup", on: false }, cx);
+  assert.match(text(find(view.render(cx), "sun")), /Agents/);
+  view.act({ type: "plannerSetup", on: true }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null });
+  assert.match(text(find(view.render(cx), "sun")), /1 to review/, "what waits for you still comes first");
+});
+
 test("a stalled agent, its tokens and its own history show on the card and in the inspector", () => {
   const view = setupLive();
   view.act({ type: "create", title: "A" }, cx);
