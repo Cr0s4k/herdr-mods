@@ -25,6 +25,7 @@ const TRY_HINTS = [
   'if [ -f Makefile ]; then for s in run dev preview; do grep -q "^$s:" Makefile && echo "make $s"; done; fi',
   "if [ -f Cargo.toml ]; then echo 'cargo run'; fi",
 ].join("\n");
+const GITHUB = "git remote get-url origin 2>/dev/null | grep -q github.com && command -v gh >/dev/null";
 // Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
 const TRY_RUN = 'trap : INT; PIPELINE_TASK="$2" sh -c "$1"; exec "${SHELL:-sh}" -l';
 // Prints a folder's repository root, with ~ expanded on the machine the project is on; exit 3 means no such folder.
@@ -130,7 +131,7 @@ export default class Pipeline extends View {
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
-    this.repo = null; this.agentChoices = []; this.codexModels = [];
+    this.repo = null; this.agentChoices = []; this.codexModels = []; this.github = false;
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
     this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
     this.updateStates = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, states: [], error: null }]));
@@ -216,6 +217,8 @@ export default class Pipeline extends View {
         this.checkSuggestions = (found?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
         const runs = await exec("sh", ["-c", TRY_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.trySuggestions = (runs?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
+        const hub = await exec("sh", ["-c", GITHUB], { cwd: this.repo.root, on }).catch(() => null);
+        this.github = hub?.code === 0;
       }
       cx.notify();
     });
@@ -873,7 +876,8 @@ export default class Pipeline extends View {
     if (g.prs.length) canvas.child(h_flex().absolute().right(30).top(g.prTop).w(cw).h(24).gap(8).items_center()
       .child(div().flex_1().h(1).bg(t.border))
       .child(this.button("pr-list", `Pull requests · ${g.prs.length}`, cx => this.open("prs", cx), t, { small: true, hint: "Open on GitHub: what each one waits for" })));
-    if (!g.queue.length) canvas.child(v_flex().absolute().left(30).top(70).w(cw).gap(6)
+    const setup = state.live && state.setup && !state.running;
+    if (!g.queue.length && !setup) canvas.child(v_flex().absolute().left(30).top(70).w(cw).gap(6)
       .child(div().text_size(13).child(state.watch ? `Watching ${state.column}` : "Queue is clear"))
       .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.live ? "Type a task above. Each one gets its own agent, branch and worktree."
         : state.watch ? "New example tasks enter here." : "Type a task above or press A for examples.")));
@@ -888,9 +892,49 @@ export default class Pipeline extends View {
       .absolute().right(30).top(g.prY(g.prShown.length) - 20).w(cw));
 
     for (const node of g.nodes) canvas.child(this.node(node, state, t, motion, now, cx, node.task === g.doneShown[0]));
+    if (setup) canvas.child(this.setupCard(state, t, g));
     canvas.child(this.button("history", `${count(info.done, "task")} completed`, cx => this.open("done", cx), t, { icon: "check", small: true }).absolute().right(24).bottom(12));
     canvas.child(div().absolute().left(30).bottom(17).text_size(11).text_color(t.muted).child("Click a task, or use the arrow keys, to inspect it. Keys are listed in Settings."));
     return canvas;
+  }
+
+  setupCard(state, t, g) {
+    const w = Math.min(500, g.w - 60), branch = this.repo?.branch ?? "your branch";
+    const change = (key, label = "Change") => this.button(`setup-${key}-change`, label, cx => this.open("settings", cx, key), t, { small: true, hint: `Open ${SECTIONS.live[key]} in Settings` });
+    const row = (key, title, mark, value, actions) => h_flex().id(`pipeline-setup-${key}`).min_h(34).gap(10).items_center()
+      .child(div().w(16).flex_none().flex().justify_center().child(mark()))
+      .child(div().w(64).flex_none().text_size(12).text_color(t.muted).child(title))
+      .child(div().flex_1().min_w(0).text_size(12).truncate().child(value))
+      .children(actions);
+    const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7);
+    const suggested = this.checkSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const rows = [
+      row("agent", "Agent", this.agentChoices.length ? ok : todo,
+        this.agentChoices.length ? this.agentLabel(state) : this.repo ? "No coding agent found" : "Looking for agents…", [change("agent")]),
+      row("checks", "Checks", state.check ? ok : todo, state.check?.command ?? "None, so unchecked work reaches review", [
+        ...(!state.check && suggested ? [this.button("setup-check-use", `Use ${suggested}`, cx => { this.checkInput.set_value(suggested); this.act({ type: "check", command: suggested }, cx); }, t,
+          { small: true, primary: true, hint: "Found in this repository. Runs in each finished task's worktree before review" })] : []),
+        change("checks", state.check ? "Change" : "Set")]),
+      row("delivery", "Delivery", ok, state.delivery === "pr" ? `Pull request into ${branch}` : `Merge into ${branch} locally`, [
+        ...(state.delivery !== "pr" && this.github ? [this.button("setup-pr-use", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx), t,
+          { small: true, hint: "This repository is on GitHub and gh is installed, so finished work can open a pull request instead" })] : []),
+        change("delivery")]),
+      row("tickets", "Tickets", watched.length ? ok : () => dot(t.muted, 5),
+        watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : "Typed here",
+        Object.keys(SOURCES).map(provider => this.button(`setup-${provider}`, SOURCES[provider], cx => this.open(provider, cx), t, { small: true, icon: provider, hint: `Queue tickets from ${SOURCES[provider]}` }))),
+    ];
+    return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(70, g.center.y - 165)).w(w).p(16).gap(4)
+      .rounded(10).border_1().border_color(t.border).bg(t.surface).text_color(t.foreground).shadow_lg()
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .child(h_flex().gap(8).items_center().pb(6)
+        .child(div().flex_1().text_size(14).font_semibold().child("Set up this pipeline"))
+        .child(this.button("setup-close", "Close setup", cx => this.act({ type: "setupDone" }, cx), t, { small: true, icon: "x", iconOnly: true, hint: "Hide this; everything stays in Settings" })))
+      .child(div().pb(6).text_size(12).line_height(1.45).text_color(t.muted).child("The defaults work. These are the ones worth a look before the first agent starts."))
+      .children(rows)
+      .child(h_flex().pt(10).gap(8).items_center()
+        .child(this.button("setup-settings", "All settings", cx => this.open("settings", cx, "agent"), t, { small: true, icon: "settings" }))
+        .child(div().flex_1().text_size(11).text_color(t.muted).truncate().child("Type a task above, then press Space"))
+        .child(this.button("setup-done", "Done", cx => this.act({ type: "setupDone" }, cx), t, { small: true })));
   }
 
   node({ task, x, y, kind }, state, t, motion, now, cx, newest) {

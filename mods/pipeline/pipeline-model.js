@@ -95,7 +95,7 @@ const folderName = path => String(path ?? "").replace(/\\/g, "/").split("/").fil
 export function createLive(context, now = Date.now()) {
   const repo = folderName(context.cwd) || "project";
   return { version: VERSION, live: true, context, repo, repositories: [{ name: repo, path: context.cwd ?? "" }], running: false, parallel: 2, reviewLimit: 4, delivery: "merge", agent: null, speed: 1, quota: 100, reserve: 0,
-    watch: false, column: "Ready", lastTick: now, sequence: 0, created: 0, events: [], tasks: [], watching: {}, sourceErrors: {},
+    watch: false, column: "Ready", lastTick: now, sequence: 0, created: 0, events: [], tasks: [], watching: {}, sourceErrors: {}, setup: true,
     plan: "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree." };
 }
 
@@ -517,6 +517,7 @@ export function reduce(state, action, now = Date.now()) {
     case "run":
       next.running = !next.running;
       if (next.live && action.space) next.space = action.space;
+      if (next.running) delete next.setup;
       event(next, next.running ? (next.live ? "Started. Agents start for queued tasks, up to the parallel limit." : "Planner started. Looking for independent work.") : "Intake paused. Active work will finish.");
       break;
     case "schedule": {
@@ -545,6 +546,7 @@ export function reduce(state, action, now = Date.now()) {
       const running = due.kind === "start";
       if (next.running === running) break;
       next.running = running;
+      if (running) delete next.setup;
       event(next, running ? `Scheduled start at ${due.time} · planner started.` : `Scheduled pause at ${due.time} · intake paused. Active work will finish.`);
       break;
     }
@@ -871,6 +873,10 @@ export function reduce(state, action, now = Date.now()) {
       event(next, value ? `Checks before review: ${command}.` : "No checks before review.");
       break;
     }
+    case "setupDone":
+      if (!next.setup) return state;
+      delete next.setup;
+      break;
     case "tryout": {
       if (!next.live) return state;
       const command = String(action.command ?? "").trim().slice(0, 500) || null;

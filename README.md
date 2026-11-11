@@ -169,6 +169,12 @@ worktrees and branches, and closes the Pipeline tab. Tasks merging or waiting on
 Live runs real agents on the project's Git repository, one isolated worktree and branch per
 task, so parallel agents never touch each other or your checkout.
 
+A space's new live pipeline opens with a **Set up this pipeline** card over its empty canvas:
+the agent, the check command, delivery and where tickets come from, each with a button into its
+Settings section. What Pipeline recognises is offered, never applied: **Use npm test** for a
+check command it finds, **Use pull requests** when the repository is on GitHub and `gh` is
+installed. The card goes away with **Done** or the first **Start pipeline**.
+
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
    the title and details are its first message. Text too long for a title (over 90
    characters, marked **Title + details** in the field) keeps its first sentence or opening

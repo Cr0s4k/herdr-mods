@@ -582,6 +582,36 @@ test("an unlinked repository points to the Tasks panel", async () => {
   world.planeReply = null;
 });
 
+test("a new Live pipeline shows a setup card with suggestions until it is dismissed or started", () => {
+  const view = setupLive();
+  view.checkSuggestions = ["npm test"]; view.github = true;
+  const card = find(view.render(cx), "setup");
+  assert.ok(card, "the empty pipeline offers setup");
+  assert.match(text(find(card, "setup-agent")), /Claude Code/);
+  assert.match(text(find(card, "setup-checks")), /unchecked/);
+  assert.match(text(find(card, "setup-delivery")), /Merge into main locally/);
+  click(view, "setup-check-use");
+  assert.deepEqual(view.state().check, { command: "npm test", fix: true });
+  assert.equal(find(view.render(cx), "setup-check-use"), undefined, "a used suggestion leaves");
+  click(view, "setup-pr-use");
+  assert.equal(view.state().delivery, "pr");
+  assert.match(text(find(view.render(cx), "setup-delivery")), /Pull request into main/);
+  click(view, "setup-checks-change");
+  assert.deepEqual([view.drawer, view.section], ["settings", "checks"]);
+  view.open(null, cx);
+  click(view, "setup-linear");
+  assert.equal(view.drawer, "linear");
+  view.open(null, cx);
+  click(view, "setup-done");
+  assert.equal(find(view.render(cx), "setup"), undefined);
+  const started = setupLive();
+  started.toggleRun(cx);
+  started.toggleRun(cx);
+  assert.equal(find(started.render(cx), "setup"), undefined, "starting once means it's set up");
+  const quiet = setupLive();
+  assert.equal(find(quiet.render(cx), "setup-pr-use"), undefined, "pull requests are only suggested for a GitHub repository with gh");
+});
+
 test("the check command is set in Live settings, from a suggestion or typed", () => {
   const view = setupLive();
   view.checkSuggestions = ["npm test"];
