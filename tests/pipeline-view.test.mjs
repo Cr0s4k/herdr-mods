@@ -919,12 +919,16 @@ test("a merge refused for conflicts offers to send its agent to rebase", async (
   view.act({ type: "create", title: "A" }, cx);
   agentTask(view, "T-1", { status: "review", slot: null, error: "The branch conflicts with main. Ask the agent to rebase onto main and resolve the conflicts, then merge again." });
   view.inspect("T-1", cx);
+  const tint = id => find(view.render(cx), id).styles.bg[0];
+  assert.notEqual(tint("merge-T-1"), tint("resolve-T-1"), "merging again would only be refused again, so rebasing is the main action");
+  assert.equal(tint("approve-T-1"), tint("merge-T-1"));
   world.hc = [];
   await settle(view, "resolve-T-1");
   assert.deepEqual(world.hc.at(-1).slice(0, 2), ["send", "t9"]);
   assert.match(world.hc.at(-1)[2], /rebase onto main: The branch conflicts with main/);
   assert.equal(row(view, "T-1").error, null);
   assert.equal(find(view.render(cx), "resolve-T-1"), undefined);
+  assert.equal(tint("merge-T-1"), tint("approve-T-1"));
   agentTask(view, "T-1", { status: "review", slot: null, error: "Your project folder has uncommitted changes on main. Commit or stash them, then merge again." });
   assert.equal(find(view.render(cx), "resolve-T-1"), undefined, "an agent can't fix your own uncommitted changes");
 });

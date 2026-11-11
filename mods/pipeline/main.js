@@ -21,6 +21,7 @@ const CHECK_HINTS = [
 // Prints a folder's repository root, with ~ expanded on the machine the project is on; exit 3 means no such folder.
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
+const conflicted = task => task.status === "review" && task.error && task.terminal && !task.discard && /rebase|conflict/i.test(task.error);
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
@@ -852,7 +853,7 @@ export default class Pipeline extends View {
     if (task.status === "merging" && kind === "review" && !state.live) wrap.child(div().absolute().left(9).bottom(6).w(cw - 18).h(2).rounded(1).bg(t.raised)
       .child(this.bar(task, state, cw - 18, t.ansi2, motion, now, cx)));
     if (kind === "review" && needsApproval(task) && state.live) wrap.child(this.button(`approve-${task.id}`, state.delivery === "pr" ? "Open PR" : "Merge", cx => this.act({ type: "approve", id: task.id }, cx), t,
-      { icon: "check", primary: true, small: true, hint: state.delivery === "pr" ? `Push ${task.id}'s branch and open ${task.repos.length > 1 ? `a pull request in each of ${task.repos.join(", ")}` : "a pull request"} into ${targetOf(task) ?? "your branch"}`
+      { icon: "check", primary: !conflicted(task), small: true, hint: state.delivery === "pr" ? `Push ${task.id}'s branch and open ${task.repos.length > 1 ? `a pull request in each of ${task.repos.join(", ")}` : "a pull request"} into ${targetOf(task) ?? "your branch"}`
         : `Merge ${task.id} into ${targetOf(task) ?? "your branch"}${task.repos.length > 1 ? ` in ${task.repos.join(", ")}, all or none` : ""}` }).absolute().right(8).bottom(8));
     else if (kind === "review" && state.live && task.status === "pr" && task.prs) {
       const prs = Object.values(task.prs), one = prs.length === 1 ? prs[0] : null;
@@ -1280,7 +1281,7 @@ export default class Pipeline extends View {
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
     if (task.stalled) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Its terminal has shown nothing new for ${elapsed(Date.now() - task.stalled)}. Open its agent to see whether it is stuck.`));
-    if (task.status === "review" && task.error && task.terminal && !task.discard && /rebase|conflict/i.test(task.error)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${target}`, cx => this.resolve(task, cx), t,
+    if (conflicted(task)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${target}`, cx => this.resolve(task, cx), t,
       { icon: "reset", primary: true, hint: "Sends the refusal to its agent, which rebases, resolves the conflicts and stops for review again" }));
     const ticket = task.ticket, service = SOURCES[ticket?.provider];
     if (service) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${service} ${ticket.key} · ${ticket.status} · ${task.source}`))
@@ -1331,7 +1332,7 @@ export default class Pipeline extends View {
         ? this.button(`merge-${task.id}`, several ? `Open pull requests into ${target}` : `Open a pull request into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
           { icon: "check", primary: true, hint: `Commits anything left, pushes the branch to origin and opens a pull request with gh${several ? " in each repository the agent changed; each one links the others" : ""}.` })
         : this.button(`merge-${task.id}`, several ? `Merge into ${target} in all ${task.repos.length}` : `Merge into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
-          { icon: "check", primary: true, hint: several ? "Commits anything left, rebases every repository's branch, and fast-forwards them only if all rebased cleanly. Your project folders must have no uncommitted changes."
+          { icon: "check", primary: !conflicted(task), hint: several ? "Commits anything left, rebases every repository's branch, and fast-forwards them only if all rebased cleanly. Your project folders must have no uncommitted changes."
             : "Commits anything left, rebases onto it and fast-forwards. Your project folder must have no uncommitted changes." }));
       if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));
     }
