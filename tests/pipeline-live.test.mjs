@@ -1303,16 +1303,16 @@ test("a task's time counts while its agent works or checks run, not while it wai
 });
 
 test("a working agent whose screen stops changing for ten minutes is flagged, and cleared when it moves again", async () => {
-  let state = reduce(typed("One"), { type: "run" }, 0), clock = 0, screen = "spinner 1";
+  let state = reduce(typed("One"), { type: "run" }, 0), clock = 0, screen = "Reading files";
   const said = [], world = host(state, { now: () => clock, read: async () => screen, announce: (_id, notice) => said.push(notice.title) });
   const runner = new live.LiveRunner(world.host);
   const tick = async ms => { clock += ms; const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
   await tick(0);
   world.agents = [{ address: "t9", status: "working" }];
   await tick(1000); await tick(1000);
-  for (let minute = 0; minute < 5; minute++) { screen = `spinner ${minute}`; await tick(60000); }
+  for (const step of ["Edits a", "Edits b", "Runs c", "Runs d", "Waits"]) { screen = step; await tick(60000); }
   assert.equal(row(world.state(), "T-1").stalled ?? null, null, "a screen that keeps changing is fine");
-  for (let minute = 0; minute < 11; minute++) await tick(60000);
+  for (let minute = 0; minute < 11; minute++) { screen = `${minute % 2 ? "✻" : "✢"} Thinking… (${minute * 60 + 7}s · ↓ ${254 + minute} tokens)`; await tick(60000); }
   assert.ok(row(world.state(), "T-1").stalled, "ten minutes of the same screen");
   assert.deepEqual(said, ["T-1 may be stuck"]);
   assert.match(world.state().events[0].message, /shown nothing new for 10 min/);

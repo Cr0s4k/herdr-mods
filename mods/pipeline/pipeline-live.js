@@ -118,6 +118,9 @@ export function readPlan(result) {
     reasons: Object.fromEntries(tasks.map(row => [row.id, String(row.reason ?? "")])), ...seen };
 }
 
+// Agents tick a timer, a token count and a spinner while they wait, so only words count as new output.
+export const screenText = text => text.replace(/\d+/g, "0").replace(/[^\x20-\x7e\n]/g, "");
+
 export const rebaseRequest = (target, error) => [`Merging this branch into ${target} was refused:`, error || "The branch conflicts.", "",
   `Rebase this branch onto ${target}, resolve the conflicts, make sure the work still does what the task asked, commit, and stop.`].join("\n");
 export const fixRequest = (command, output) => ["The check command failed after your change:", `$ ${command}`, output || "(no output)", "",
@@ -309,7 +312,7 @@ export class LiveRunner {
     if (now - seen.read < 60000) return;
     this.screens.set(key, { ...seen, read: now });
     cx.spawn(async () => {
-      const text = await this.host.read(task.terminal).catch(() => null), last = this.screens.get(key);
+      const read = await this.host.read(task.terminal).catch(() => null), text = read === null ? null : screenText(read), last = this.screens.get(key);
       if (text === null || !last) return;
       if (text !== last.text) { this.screens.set(key, { text, since: this.host.now(), read: last.read }); if (this.task(id, task.id)?.stalled) this.apply(id, { type: "stalled", id: task.id, since: null }); }
       else if (this.host.now() - last.since >= STALL && !this.task(id, task.id)?.stalled) this.apply(id, { type: "stalled", id: task.id, since: last.since });
