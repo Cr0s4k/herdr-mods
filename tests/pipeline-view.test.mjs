@@ -654,7 +654,7 @@ test("the Linear drawer filters by scope and project, watches only narrowed stat
   await settle(view, "linear-project");
   await settle(view, "linear-project-p1");
   assert.equal(world.planeCalls.filter(call => call.op === "issues").at(-1).project, "p1");
-  assert.deepEqual(JSON.parse(world.storage.get("linear:shop")), { scope: "all", project: { id: "p1", name: "Herdr" } });
+  assert.deepEqual(JSON.parse(world.storage.get("linear:shop")), { scope: "all", team: null, project: { id: "p1", name: "Herdr" } });
   click(view, "watch-Todo");
   assert.deepEqual(view.state().watching.linear, { id: "Todo", name: "Todo", filter: { scope: "all", project: { id: "p1", name: "Herdr" }, label: "All tickets · Herdr" } });
   assert.match(view.state().events[0].message, /Watching Linear for tickets in Todo · All tickets · Herdr/);
@@ -666,6 +666,44 @@ test("the Linear drawer filters by scope and project, watches only narrowed stat
   view.inspect("PRO-1", cx);
   assert.ok(find(view.render(cx), "linear-link-PRO-1"));
   world.planeReply = null;
+});
+
+test("a team filters tickets and projects on Linear, persists, and narrows watched states even without tickets", async () => {
+  world.storage.delete("linear:shop");
+  const view = setupLive();
+  world.planeCalls = [];
+  world.planeReply = payload => payload.op === "teams" ? { teams: [{ id: "T-ACME", uuid: "acme-id", name: "Acme" }] }
+    : payload.op === "states" ? { states: [{ id: "Todo", name: "Todo", type: "unstarted" }] }
+    : payload.op === "projects" ? { projects: [] } : { issues: [] };
+  view.drawer = "linear";
+  view.linearFilter = { scope: "all", team: null, project: { id: "old-project", name: "Other" } };
+  view.ticketSearch.set_value("old search");
+  await settle(view, "linear-team");
+  view.teamSearch.set_value("Acme");
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  view.teamSearch.emit("submit", spawning);
+  while (spawned.length) await spawned.shift()(spawning);
+  assert.deepEqual(world.planeCalls.at(-1), { provider: "linear", op: "teams", query: "Acme" });
+  await settle(view, "linear-team-T-ACME");
+  assert.deepEqual(world.planeCalls.slice(-2), [
+    { provider: "linear", op: "issues", open: true, scope: "all", team: "acme-id" },
+    { provider: "linear", op: "states", teams: ["acme-id"] },
+  ]);
+  const saved = { scope: "all", team: { id: "acme-id", name: "Acme" }, project: null };
+  assert.deepEqual(JSON.parse(world.storage.get("linear:shop")), saved);
+  assert.equal(view.ticketSearch.value(), "");
+  assert.match(text(view.render(cx)), /Team · Acme/);
+  click(view, "watch-Todo");
+  assert.deepEqual(view.state().watching.linear.filter, { ...saved, label: "All tickets · Acme" });
+  assert.deepEqual(setupLive().linearFilter, saved, "the team survives reopening Pipeline");
+  await settle(view, "linear-project");
+  assert.deepEqual(world.planeCalls.at(-1), { provider: "linear", op: "projects", team: "acme-id" });
+  click(view, "linear-project-back");
+  await settle(view, "linear-team-clear");
+  assert.equal(world.planeCalls.filter(call => call.op === "issues").at(-1).team, undefined);
+  assert.equal(view.linearFilter.team, null);
+  world.planeReply = null;
+  world.storage.delete("linear:shop");
 });
 
 test("a missing Linear connection points to the Linear panel", async () => {

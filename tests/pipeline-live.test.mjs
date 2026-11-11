@@ -655,6 +655,9 @@ test("a watched Linear state polls with its filter, reads only unseen tickets in
   world.store = { [id]: reduce(world.state(), { type: "watchTickets", provider: "linear", state: { id: "Todo", name: "Todo" }, filter: { ...filter, scope: "unassigned" } }, 0) };
   now = 1000; await tick();
   assert.equal(calls.at(-1).scope, "unassigned", "a changed filter polls at once");
+  world.store = { [id]: reduce(world.state(), { type: "watchTickets", provider: "linear", state: { id: "Todo", name: "Todo" }, filter: { scope: "all", team: { id: "acme-id", name: "Acme" }, project: null } }, 0) };
+  now = 2000; await tick();
+  assert.deepEqual(calls.at(-1), { provider: "linear", op: "issues", scope: "all", team: "acme-id", state: "Todo" });
 });
 
 test("saved version 3 live pipelines move Plane fields onto the ticket", () => {

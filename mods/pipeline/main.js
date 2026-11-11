@@ -25,7 +25,7 @@ const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null)
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
-const filterLabel = filter => [SCOPES[filter.scope], filter.project?.name].filter(Boolean).join(" · ");
+const filterLabel = filter => [SCOPES[filter.scope], filter.team?.name, filter.project?.name].filter(Boolean).join(" · ");
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -72,6 +72,8 @@ export default class Pipeline extends View {
     this.ticketSearch.on("change", (_e, cx) => cx.notify());
     this.projectSearch = InputState.new({ placeholder: "Find a Linear project…" });
     this.projectSearch.on("submit", (_e, cx) => this.loadProjects(cx));
+    this.teamSearch = InputState.new({ placeholder: "Find a Linear team…" });
+    this.teamSearch.on("submit", (_e, cx) => this.loadTeams(cx));
     this.title = InputState.new({ placeholder: "New task: type a title and press Enter" });
     this.title.on("change", (_e, cx) => cx.notify());
     this.title.on("submit", (_e, cx) => this.create(cx));
@@ -110,9 +112,9 @@ export default class Pipeline extends View {
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
     this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
     this.updateStates = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, states: [], error: null }]));
-    this.linearFilter = { scope: "mine", project: null };
+    this.linearFilter = { scope: "mine", team: null, project: null };
     try { this.linearFilter = { ...this.linearFilter, ...JSON.parse(localStorage.getItem(`linear:${this.id}`) ?? "{}") }; } catch (_) { /* A damaged filter falls back to My tickets. */ }
-    this.projects = null;
+    this.projects = null; this.teams = null;
     this.motion = localStorage.getItem("motion") !== "false";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
@@ -142,7 +144,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.checkInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -324,7 +326,7 @@ export default class Pipeline extends View {
     if (SOURCES[drawer] && !this.state()?.live) return;
     if (drawer === "schedule") { this.timeError = null; for (const kind of ["start", "pause"]) this.times[kind].set_value(this.state()?.schedule?.[kind] ?? ""); }
     if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
-    if (drawer !== this.drawer && SOURCES[drawer]) { this.ticketSearch.set_value(""); this.ticketPicked.clear(); this.projects = null; }
+    if (drawer !== this.drawer && SOURCES[drawer]) { this.ticketSearch.set_value(""); this.ticketPicked.clear(); this.projects = null; this.teams = null; }
     this.drawer = drawer;
     if (SOURCES[drawer]) { this.loadTickets(drawer, cx); this.ticketSearch.focus(); }
     else if (drawer === "picker") this.search.focus(); else if (!drawer) this.handle.focus();
@@ -342,8 +344,8 @@ export default class Pipeline extends View {
           const states = listed.needsProject ? { states: [] } : await readTickets("plane", { op: "states", context });
           next = { issues: listed.issues, states: states.states, needsProject: Boolean(listed.needsProject), project: listed.project?.name ?? null };
         } else {
-          const listed = await readTickets("linear", { op: "issues", open: true, scope: filter.scope, ...(filter.project ? { project: filter.project.id } : {}) });
-          const teams = [...new Set((listed.issues ?? []).map(issue => issue.team).filter(Boolean))];
+          const listed = await readTickets("linear", { op: "issues", open: true, scope: filter.scope, ...(filter.team ? { team: filter.team.id } : {}), ...(filter.project ? { project: filter.project.id } : {}) });
+          const teams = filter.team ? [filter.team.id] : [...new Set((listed.issues ?? []).map(issue => issue.team).filter(Boolean))];
           const states = teams.length ? await readTickets("linear", { op: "states", teams }) : { states: [] };
           next = { issues: listed.issues, states: states.states };
         }
@@ -375,18 +377,31 @@ export default class Pipeline extends View {
     else run("tab.new", { ...args, space: focused()?.space });
   }
   setLinearFilter(change, cx) {
-    this.linearFilter = { ...this.linearFilter, ...change }; this.projects = null; this.ticketPicked.clear();
+    this.linearFilter = { ...this.linearFilter, ...change, ...("team" in change ? { project: null } : {}) };
+    this.projects = null; this.teams = null; this.ticketPicked.clear(); this.ticketSearch.set_value("");
+    this.sources.linear = { ...this.sources.linear, issues: [], states: [] };
     localStorage.setItem(`linear:${this.id}`, JSON.stringify(this.linearFilter));
     this.loadTickets("linear", cx); cx.notify();
   }
   loadProjects(cx) {
-    const query = this.projectSearch.value().trim(), request = this.projectRequest = (this.projectRequest ?? 0) + 1;
+    const query = this.projectSearch.value().trim(), team = this.linearFilter.team, request = this.projectRequest = (this.projectRequest ?? 0) + 1;
     this.projects = { loading: true, items: this.projects?.items ?? [], error: null };
     cx.spawn(async cx => {
       let next;
-      try { next = { loading: false, items: (await readTickets("linear", { op: "projects", ...(query ? { query } : {}) })).projects ?? [], error: null }; }
+      try { next = { loading: false, items: (await readTickets("linear", { op: "projects", ...(team ? { team: team.id } : {}), ...(query ? { query } : {}) })).projects ?? [], error: null }; }
       catch (error) { next = { loading: false, items: [], error: error?.message || String(error) }; }
       if (this.projectRequest === request && this.projects) { this.projects = next; cx.notify(); }
+    });
+    cx.notify();
+  }
+  loadTeams(cx) {
+    const query = this.teamSearch.value().trim(), request = this.teamRequest = (this.teamRequest ?? 0) + 1;
+    this.teams = { loading: true, items: this.teams?.items ?? [], error: null };
+    cx.spawn(async cx => {
+      let next;
+      try { next = { loading: false, items: (await readTickets("linear", { op: "teams", ...(query ? { query } : {}) })).teams ?? [], error: null }; }
+      catch (error) { next = { loading: false, items: [], error: error?.message || String(error) }; }
+      if (this.teamRequest === request && this.teams) { this.teams = next; cx.notify(); }
     });
     cx.notify();
   }
@@ -1006,21 +1021,26 @@ export default class Pipeline extends View {
       return;
     }
     if (source.error) body.child(warn(source.error));
+    if (provider === "linear" && this.teams) { this.teamPicker(body, t); return; }
     if (provider === "linear" && this.projects) { this.projectPicker(body, t); return; }
     if (provider === "linear") {
       body.child(h_flex().gap(6).flex_wrap().children(Object.entries(SCOPES).map(([scope, label]) =>
         this.button(`linear-scope-${scope}`, label, cx => this.setLinearFilter({ scope }, cx), t, { small: true, selected: filter.scope === scope }))));
+      body.child(h_flex().gap(6).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(filter.team ? `Team · ${filter.team.name}` : "All teams"))
+        .child(this.button("linear-team", filter.team ? "Change team" : "Choose team", cx => { this.teamSearch.set_value(""); this.loadTeams(cx); this.teamSearch.focus(); }, t, { small: true }))
+        .when(Boolean(filter.team), el => el.child(this.button("linear-team-clear", "Clear", cx => this.setLinearFilter({ team: null }, cx), t, { small: true, icon: "x", hint: "Show tickets from all teams" }))));
       body.child(h_flex().gap(6).items_center()
         .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(filter.project?.name ?? "All projects"))
         .child(this.button("linear-project", filter.project ? "Change" : "Choose project", cx => { this.projectSearch.set_value(""); this.loadProjects(cx); this.projectSearch.focus(); }, t, { small: true }))
         .when(Boolean(filter.project), el => el.child(this.button("linear-project-clear", "Clear", cx => this.setLinearFilter({ project: null }, cx), t, { small: true, icon: "x" }))));
       body.child(div().h(1).bg(t.border));
     }
-    const watchable = provider !== "linear" || filter.scope === "mine" || Boolean(filter.project);
-    const filtered = provider === "linear" ? { scope: filter.scope, project: filter.project, label: filterLabel(filter) } : null;
+    const watchable = provider !== "linear" || filter.scope === "mine" || Boolean(filter.team || filter.project);
+    const filtered = provider === "linear" ? { scope: filter.scope, ...(filter.team ? { team: filter.team } : {}), project: filter.project, label: filterLabel(filter) } : null;
     body.child(this.heading("Watch a state"));
     body.child(this.label(watch ? `Tickets in ${watch.name}${watch.filter?.label ? ` (${watch.filter.label})` : ""} join the queue within a minute, each one once.`
-      : !watchable ? "Choose a project or My tickets to watch a state, so tickets from other teams don't flood the queue."
+      : !watchable ? "Choose a team, a project or My tickets to watch a state, so tickets from other teams don't flood the queue."
       : `Choose a state and its tickets join the queue by themselves, each one once. Pipeline changes ${service} only as Ticket updates in Settings say.`, t));
     if (state.sourceErrors?.[provider]) body.child(warn(state.sourceErrors[provider]));
     const current = row => watch?.id === row.id && JSON.stringify(watch?.filter ?? null) === JSON.stringify(filtered);
@@ -1043,8 +1063,24 @@ export default class Pipeline extends View {
       .child(refresh(`${provider}-refresh`)));
     if (source.loading && !source.issues.length) body.child(this.label("Loading open tickets…", t));
     for (const issue of shown.slice(0, 80)) body.child(this.issueRow(provider, issue, active.has(issue.uuid), t));
-    if (!source.loading && !shown.length) body.child(this.label(query ? "No open tickets match." : provider === "plane" ? "No open tickets in this project." : "No open tickets here. Try All tickets or another project.", t));
+    if (!source.loading && !shown.length) body.child(this.label(query ? "No open tickets match." : provider === "plane" ? "No open tickets in this project." : "No open tickets here. Try All tickets or change the team or project.", t));
     if (shown.length > 80) body.child(this.label(`Showing 80 of ${shown.length}. Search to narrow the list.`, t));
+  }
+  teamPicker(body, t) {
+    const teams = this.teams;
+    body.child(h_flex().gap(8).items_center()
+      .child(this.button("linear-team-back", "Back", cx => { this.teams = null; cx.notify(); }, t, { small: true }))
+      .child(div().text_size(12).font_medium().child("Choose a team")));
+    body.child(Input.new(this.teamSearch).w_full().h(34).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Find a Linear team"));
+    body.child(this.label("Press Enter to search Linear.", t));
+    if (teams.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(teams.error));
+    if (teams.loading && !teams.items.length) body.child(this.label("Loading teams…", t));
+    for (const team of teams.items) body.child(Button.new(`pipeline-linear-team-${team.id}`).w_full().px(10).py(9).rounded(6).bg(t.surface)
+      .border_1().border_color(t.border).text_color(t.foreground).text_size(12).tab_index(0).accessibility_label(`Use team ${team.name}`)
+      .hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
+      .on_click((_e, cx) => this.setLinearFilter({ team: { id: team.uuid || team.id, name: team.name } }, cx))
+      .child(div().w_full().whitespace_normal().child(team.name)));
+    if (!teams.loading && !teams.items.length && !teams.error) body.child(this.label("No teams match.", t));
   }
   projectPicker(body, t) {
     const projects = this.projects;

@@ -16,7 +16,7 @@ import urllib.request
 ENDPOINT = "https://mcp.linear.app/mcp"
 FIELDS = ["id", "uuid", "title", "status", "statusType", "assignee", "assigneeId",
           "team", "project", "priority", "url", "updatedAt"]
-READS = {"list_issues", "get_issue", "list_projects", "list_issue_statuses", "get_user"}
+READS = {"list_issues", "get_issue", "list_projects", "list_teams", "list_issue_statuses", "get_user"}
 # Each write is a tool and the exact arguments it may take; every other write is refused.
 WRITES = {("save_issue", ("id", "state")), ("save_issue", ("id", "links"))}
 WRITE_ACCESS = "Pipeline needs write access to Linear. Connect a key with Write permission."
@@ -183,7 +183,7 @@ def request(app_home, payload):
             args["assignee"] = "me"
         elif payload.get("scope") == "unassigned":
             args["assignee"] = "null"
-        for key in ("query", "project", "cursor", "state"):
+        for key in ("query", "team", "project", "cursor", "state"):
             if payload.get(key):
                 args[key] = payload[key]
         if payload.get("open"):
@@ -225,10 +225,16 @@ def request(app_home, payload):
         data = {"states": list(states.values())}
     elif operation == "projects":
         args = {"limit": 50, "fields": ["id", "uuid", "name"]}
-        for key in ("query", "cursor"):
+        for key in ("query", "team", "cursor"):
             if payload.get(key):
                 args[key] = payload[key]
         data = call(token, "list_projects", args)
+    elif operation == "teams":
+        args = {"limit": 250, "includeArchived": False}
+        for key in ("query", "cursor"):
+            if payload.get(key):
+                args[key] = payload[key]
+        data = call(token, "list_teams", args)
     else:
         raise LinearError("Unsupported Linear operation.")
     return {"data": data, "source": source}

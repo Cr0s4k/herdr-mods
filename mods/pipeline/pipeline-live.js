@@ -22,7 +22,7 @@ export function prompt(task, workspaces) {
 
 const WATCHES = {
   plane: (watch, state) => ({ op: "issues", context: { cwd: state.context.cwd, on: state.context.on }, state: watch.id, scope: "all" }),
-  linear: watch => ({ op: "issues", scope: watch.filter?.scope ?? "mine", ...(watch.filter?.project ? { project: watch.filter.project.id } : {}), state: watch.id }),
+  linear: watch => ({ op: "issues", scope: watch.filter?.scope ?? "mine", ...(watch.filter?.team ? { team: watch.filter.team.id } : {}), ...(watch.filter?.project ? { project: watch.filter.project.id } : {}), state: watch.id }),
 };
 
 export const TRUST = /trust (this|the files in this|the contents of this) (folder|directory)|Yes, I trust this folder|project you created or one you trust/i;

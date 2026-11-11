@@ -38,17 +38,26 @@ class LinearTest(unittest.TestCase):
 
     def test_server_search_scope_project_and_pagination(self):
         with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", return_value={"issues": []}) as call:
-            result = reader.request("/app", {"scope": "unassigned", "query": "search text", "project": "project-id", "cursor": "next"})
+            result = reader.request("/app", {"scope": "unassigned", "query": "search text", "team": "team-id", "project": "project-id", "cursor": "next"})
             args = call.call_args.args[2]
             self.assertEqual(args["assignee"], "null")
             self.assertEqual(args["query"], "search text")
             self.assertEqual(args["project"], "project-id")
+            self.assertEqual(args["team"], "team-id")
             self.assertEqual(args["cursor"], "next")
             self.assertNotIn("secret-token", json.dumps(result))
             reader.request("/app", {"scope": "mine"})
             self.assertEqual(call.call_args.args[2]["assignee"], "me")
             reader.request("/app", {"scope": "all"})
             self.assertNotIn("assignee", call.call_args.args[2])
+
+    def test_team_picker_search_and_projects_use_server_filters(self):
+        with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", return_value={"teams": []}) as call:
+            reader.request("/app", {"op": "teams", "query": "Acme", "cursor": "next"})
+            self.assertEqual(call.call_args.args[1:], ("list_teams", {"limit": 250, "includeArchived": False, "query": "Acme", "cursor": "next"}))
+            reader.request("/app", {"op": "projects", "team": "team-id", "query": "App"})
+            self.assertEqual(call.call_args.args[1], "list_projects")
+            self.assertEqual(call.call_args.args[2]["team"], "team-id")
 
     def test_open_tickets_details_and_states_merge_team_workflows_by_name(self):
         with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, _n, args: {"id": args["id"], "title": "T"} if args["id"] != "gone" else {}) as call:
@@ -59,9 +68,10 @@ class LinearTest(unittest.TestCase):
             self.assertTrue(all(c.args[2]["includeRelations"] for c in call.call_args_list), "blockers come with the details")
         pages = {"started": [{"id": "A-1", "uuid": "1"}], "unstarted": [{"id": "A-2", "uuid": "2"}, {"id": "A-1", "uuid": "1"}], "backlog": []}
         with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, _n, args: {"issues": pages[args["state"]]}) as call:
-            data = reader.request("/app", {"scope": "mine", "open": True, "state": "ignored"})["data"]
+            data = reader.request("/app", {"scope": "mine", "team": "Acme", "open": True, "state": "ignored"})["data"]
             self.assertEqual([issue["id"] for issue in data["issues"]], ["A-1", "A-2"])
             self.assertEqual([c.args[2]["state"] for c in call.call_args_list], ["started", "unstarted", "backlog"])
+            self.assertTrue(all(c.args[2]["team"] == "Acme" for c in call.call_args_list))
         teams = {"Core": [{"id": "a", "type": "unstarted", "name": "Todo"}, {"id": "b", "type": "started", "name": "In Progress"}],
                  "Web": [{"id": "c", "type": "unstarted", "name": "Todo"}, {"id": "d", "type": "unstarted", "name": "Ready for agent"}, "junk"]}
         with patch.object(reader, "credential", return_value=("secret-token", "test")), patch.object(reader, "call", side_effect=lambda _t, name, args: teams[args["team"]]) as call:
