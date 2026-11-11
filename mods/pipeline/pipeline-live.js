@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, ACTIVE } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, AGENT_OPTIONS, labelFor, ACTIVE } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -73,11 +73,17 @@ export const PLAN_SCHEMA = { type: "object", additionalProperties: false, requir
   tasks: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "waits", "reason"], properties: {
     id: { type: "string" }, waits: { type: "array", items: { type: "string" } }, reason: { type: "string" } } } } } };
 
+const blockerText = (state, task, blocker) => {
+  const inside = blocker.key && state.tasks.find(row => row !== task && row.ticket?.provider === task.ticket?.provider && row.ticket?.key === blocker.key);
+  const where = inside ? `in the pipeline as ${inside.id}, ${labelFor(state, inside.status).toLowerCase()}` : blocker.closed === true ? "closed" : blocker.closed === false ? "still open, outside the pipeline" : "can't be read";
+  return `${blocker.key ?? "a ticket"}${blocker.title ? ` "${blocker.title}"` : ""} (${where})`;
+};
 // What the planner agent reads: the queue, the work already started, and the rules Pipeline keeps whatever it says.
 export function planPrompt(state) {
   const queued = state.tasks.filter(task => task.status === "queued"), started = state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
   const describe = task => [`- ${task.id}: ${task.title}`, `  repositories: ${task.repos.join(", ")} · priority ${task.priority}${task.ticket ? ` · ticket ${task.ticket.key}` : ""}`,
     ...(task.depends.length ? [`  the person has it wait for: ${task.depends.join(", ")}`] : []),
+    ...(task.blockers?.length ? [`  blocked by in ${SOURCES[task.ticket?.provider] ?? "its tracker"}: ${task.blockers.map(blocker => blockerText(state, task, blocker)).join("; ")}`] : []),
     ...(task.description?.trim() ? [`  details: ${task.description.trim().replace(/\s+/g, " ").slice(0, 1200)}`] : [])].join("\n");
   const repos = (state.repositories ?? [{ name: state.repo, path: state.context.cwd }]).map(repo => `- ${repo.name}: ${repo.path}`);
   return [
@@ -87,21 +93,25 @@ export function planPrompt(state) {
     "2. Which queued tasks must wait for another task (queued or already started) to merge first: because they build on its result, or because both would change the same lines and running them in parallel would make the second one conflict. Only add a wait you can justify from the code or the task; independent tasks should run in parallel.",
     "3. One short reason per queued task, in plain words for the person.",
     "Never invent task ids. Waits must not form a circle. Don't change any file.",
+    "Tickets' blockers are already enforced: Pipeline holds a task until each blocker in the pipeline merges and each one outside it is closed. Don't repeat those waits, but plan around them: put the work that unblocks others early.",
     "", "Repositories:", ...repos,
     "", "Queued tasks:", ...queued.map(describe),
     ...(started.length ? ["", "Already started (they hold their files until they merge):", ...started.map(task => `- ${task.id}: ${task.title} (${task.status}, ${task.repos.join(", ")})`)] : []),
   ].join("\n");
 }
+// Both run read-only and headless. Codex takes its schema as a file, so the first argument of its job is the schema itself.
 export function planArgs(state) {
-  const model = state.planner?.model, extra = (state.repositories ?? []).slice(1).map(repo => `--add-dir=${repo.path}`);
-  return ["-p", ...(model ? ["--model", model] : []), "--tools", "Read,Grep,Glob", ...extra, "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
-    "--output-format", "json", "--json-schema", JSON.stringify(PLAN_SCHEMA), planPrompt(state)];
+  const agent = plannerAgent(state), options = AGENT_OPTIONS[agent], tune = { model: state.planner?.model ?? null, effort: state.planner?.effort ?? null };
+  const dirs = options.dirs((state.repositories ?? []).slice(1).map(repo => repo.path));
+  if (agent === "codex") return { agent, args: [JSON.stringify(PLAN_SCHEMA), "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune), ...dirs, planPrompt(state)] };
+  return { agent, args: ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", ...dirs, "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
+    "--output-format", "json", "--json-schema", JSON.stringify(PLAN_SCHEMA), planPrompt(state)] };
 }
-// Claude Code's JSON result, turned into the plan the reducer applies.
-export function readPlan(stdout) {
+// Claude Code wraps the plan in its JSON result; Codex writes the plan itself as its last message.
+export function readPlan(stdout, agent = "claude") {
   let reply;
   try { reply = JSON.parse(stdout); } catch { throw new Error("The planner's answer wasn't readable."); }
-  const plan = reply?.structured_output;
+  const plan = agent === "codex" ? reply : reply?.structured_output;
   if (reply?.is_error || !plan || !Array.isArray(plan.order)) throw new Error(String(reply?.result || "The planner gave no plan.").slice(0, 300));
   const tasks = Array.isArray(plan.tasks) ? plan.tasks.filter(row => row && typeof row.id === "string") : [];
   return { summary: String(plan.summary ?? ""), order: plan.order.map(String),

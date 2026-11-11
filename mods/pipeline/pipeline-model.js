@@ -146,7 +146,10 @@ const startOrder = state => (a, b) => (b.rank ?? 0) - (a.rank ?? 0)
 const planOrder = task => task.plan?.sig === planSig(task) ? task.plan.n : Infinity;
 export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder(state));
 // A queued task needs a new plan when it is new or what the planner read about it changed; a task leaving the queue doesn't.
-export const planSig = task => JSON.stringify([task.title, task.description ?? "", task.repos, task.priority, task.depends]);
+export const planSig = task => JSON.stringify([task.title, task.description ?? "", task.repos, task.priority, task.depends, (task.blockers ?? []).map(blocker => [blocker.key, blocker.closed])]);
+// The planner runs as Claude Code or Codex: the one you pick, else the one tasks start with when it is one of them.
+export const PLANNERS = { claude: "Claude Code", codex: "Codex" };
+export const plannerAgent = state => PLANNERS[state.planner?.agent] ? state.planner.agent : state.agent?.key === "codex" ? "codex" : "claude";
 export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
 export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
 // A failed plan lets the tasks it was asked about start by priority; only a new or changed task asks again.
@@ -675,9 +678,11 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "plannerSetup": {
       if (!next.live) return state;
-      const before = { on: false, model: null, ...next.planner }, value = { ...before };
+      const before = { on: false, agent: null, model: null, effort: null, ...next.planner }, value = { ...before };
       if ("on" in action) value.on = Boolean(action.on);
+      if ("agent" in action && PLANNERS[action.agent] && action.agent !== plannerAgent(next)) Object.assign(value, { agent: action.agent, model: null, effort: null });
       if ("model" in action) value.model = String(action.model ?? "").trim().slice(0, 100) || null;
+      if ("effort" in action) value.effort = /^[a-z]{1,20}$/.test(action.effort ?? "") ? action.effort : null;
       if (JSON.stringify(value) === JSON.stringify(before)) return state;
       next.planner = value;
       if (value.on !== before.on) event(next, value.on ? "An agent plans the queue before work starts." : "Tasks start by priority again, without the planner agent.");
@@ -685,7 +690,7 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "planning": {
       if (!next.live || !next.planner?.on || action.key !== planKey(next)) return state;
-      next.planning = { key: action.key, status: "running", at: now, model: next.planner.model ?? null };
+      next.planning = { key: action.key, status: "running", at: now, agent: plannerAgent(next), model: next.planner.model ?? null };
       break;
     }
     case "planned": {

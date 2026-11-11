@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, fixRequest, rebaseRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -727,7 +727,7 @@ export default class Pipeline extends View {
     canvas.child(svg("mods/pipeline/moon-small.svg").id("pipeline-electron").absolute().left(c.x - SUN - 12).top(c.y - SUN - 12).size(SUN * 2 + 24).text_color(t.muted)
       .when(motion && state.running, el => el.spin(3200)));
     const thinking = state.live && state.planner?.on && plannerBusy(state);
-    const planner = state.live && state.planner?.on ? (thinking ? "planning…" : state.planning?.status === "failed" ? "planner stopped" : planned(state) && state.planning ? `by ${state.planning.model ?? "Claude Code"}` : null) : null;
+    const planner = state.live && state.planner?.on ? (thinking ? "planning…" : state.planning?.status === "failed" ? "planner stopped" : planned(state) && state.planning ? `by ${[PLANNERS[state.planning.agent] ?? "Claude Code", state.planning.model].filter(Boolean).join(" · ")}` : null) : null;
     const resting = !state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle";
     const sun = el => el.absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().bg(t.surface);
     if (!state.live) canvas.child(sun(v_flex()).border_color(t.accent)
@@ -1334,13 +1334,19 @@ export default class Pipeline extends View {
     for (const message of log) body.child(this.label(message, t));
   }
   plannerSettings(body, state, t) {
-    const setup = { on: false, model: null, ...state.planner }, claude = this.agentChoices.some(agent => agent.key === "claude");
-    body.child(this.switchRow("planner", "Plan with an agent", claude ? "Claude Code reads the queue and the repository, orders the tasks and says which must wait for which"
-      : "Needs Claude Code installed on the project's machine", setup.on, cx => this.act({ type: "plannerSetup", on: !setup.on }, cx), t, !claude && !setup.on));
+    const setup = { on: false, model: null, effort: null, ...state.planner }, installed = Object.keys(PLANNERS).filter(key => this.agentChoices.some(agent => agent.key === key));
+    const agent = plannerAgent(state), name = PLANNERS[agent];
+    body.child(this.switchRow("planner", "Plan with an agent", installed.length ? `${name} reads the queue, ticket blockers and the repository, orders the tasks and says which must wait for which`
+      : "Needs Claude Code or Codex installed on the project's machine", setup.on, cx => this.act({ type: "plannerSetup", on: !setup.on }, cx), t, !installed.length && !setup.on));
     if (!setup.on) return;
-    body.child(h_flex().gap(6).flex_wrap()
-      .child(this.button("planner-model-default", "Default", cx => this.act({ type: "plannerSetup", model: null }, cx), t, { small: true, selected: !setup.model, hint: "Claude Code's own default model" }))
-      .children(AGENT_OPTIONS.claude.models.map(model => this.button(`planner-model-${model}`, model, cx => this.act({ type: "plannerSetup", model }, cx), t, { small: true, selected: setup.model === model }))));
+    const chip = (id, text, selected, change, hint) => this.button(`planner-${id}`, text, cx => this.act({ type: "plannerSetup", ...change }, cx), t, { small: true, selected, hint });
+    if (installed.length > 1) body.child(h_flex().gap(6).flex_wrap().children(installed.map(key => chip(`agent-${key}`, PLANNERS[key], agent === key, { agent: key }, `Plan with ${PLANNERS[key]}`))));
+    const models = agent === "codex" ? this.codexModels.map(model => model.slug) : AGENT_OPTIONS.claude.models;
+    const efforts = agent === "codex" && this.codexModels.length ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : AGENT_OPTIONS[agent].efforts;
+    body.child(h_flex().gap(6).flex_wrap().child(chip("model-default", "Default", !setup.model, { model: null }, `${name}'s own default model`))
+      .children(models.map(model => chip(`model-${model}`, model, setup.model === model, { model }))));
+    body.child(h_flex().gap(6).flex_wrap().child(chip("effort-default", "Default effort", !setup.effort, { effort: null }, `${name}'s own default effort`))
+      .children(efforts.map(effort => chip(`effort-${effort}`, effort, setup.effort === effort, { effort }))));
     body.child(this.label("It runs whenever the queue changes, can only read, and new agents wait for its plan. Pipeline still keeps the rules: limits, waits you set, no circles. Start first and Start anyway still win.", t));
   }
   firstButton(task, t) {

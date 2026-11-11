@@ -1378,7 +1378,7 @@ test("the planner's order yields to Start first and Start anyway, and a failed p
 test("the runner asks the planner once the queue settles, read-only, and applies the answer", async () => {
   let state = reduce(reduce(typed("A", "B"), { type: "plannerSetup", on: true, model: "sonnet" }, 0), { type: "addRepository", path: "/work/api" }, 0);
   let clock = 0, calls = [];
-  const world = host(state, { now: () => clock, plan: async (_context, args) => { calls.push(args); return { summary: "B first.", order: ["T-2", "T-1"], waits: {}, reasons: { "T-1": "After B." } }; } });
+  const world = host(state, { now: () => clock, plan: async (_context, job) => { calls.push(job.args); return { summary: "B first.", order: ["T-2", "T-1"], waits: {}, reasons: { "T-1": "After B." } }; } });
   const runner = new live.LiveRunner(world.host);
   const tick = async ms => { clock += ms; const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
   await tick(0); await tick(1000);
@@ -1410,4 +1410,42 @@ test("a plan that was running when Herdr restarted fails, so the queue isn't hel
   new live.LiveRunner(world.host).start();
   assert.equal(world.state().planning.status, "failed");
   assert.equal(model.plannerHolds(world.state()), false);
+});
+
+test("the planner can be Codex: read-only, schema first, with its own model and effort", () => {
+  let state = reduce(reduce(typed("A"), { type: "plannerSetup", on: true, model: "sonnet", effort: "high" }, 0), { type: "addRepository", path: "/work/api" }, 0);
+  assert.equal(model.plannerAgent(state), "claude");
+  assert.deepEqual(live.planArgs(state).args.slice(0, 7), ["-p", "--model", "sonnet", "--effort", "high", "--tools", "Read,Grep,Glob"]);
+  state = reduce(state, { type: "agent", value: { key: "codex", name: "Codex", run: ["codex"] } }, 0);
+  assert.equal(model.plannerAgent(state), "codex", "it follows the task agent when that is Codex");
+  state = reduce(state, { type: "plannerSetup", agent: "codex" }, 0);
+  assert.deepEqual([state.planner.model, state.planner.effort], ["sonnet", "high"], "picking the one it already is changes nothing");
+  state = reduce(state, { type: "plannerSetup", agent: "claude" }, 0);
+  assert.deepEqual([state.planner.agent, state.planner.model, state.planner.effort], ["claude", null, null], "another planner drops the old model and effort");
+  state = reduce(state, { type: "plannerSetup", agent: "codex", model: "gpt-5", effort: "low" }, 0);
+  const job = live.planArgs(state);
+  assert.equal(job.agent, "codex");
+  assert.deepEqual(JSON.parse(job.args[0]), live.PLAN_SCHEMA);
+  assert.deepEqual(job.args.slice(1, -1), ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", "-m", "gpt-5", "-c", 'model_reasoning_effort="low"', "--add-dir=/work/api"]);
+  assert.match(job.args.at(-1), /^You plan the work queue of Herdr Pipeline/);
+  assert.deepEqual(live.readPlan(JSON.stringify({ summary: "s", order: ["T-1"], tasks: [] }), "codex"), { summary: "s", order: ["T-1"], waits: {}, reasons: {} });
+  state = reduce(reduce(state, { type: "planning", key: model.planKey(state) }, 0), { type: "planned", key: model.planKey(state), order: ["T-1"], summary: "s" }, 0);
+  assert.equal(state.planning.agent, "codex");
+});
+
+test("the planner reads each ticket's blockers, and a blocker that changes asks for a new plan", () => {
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", source: "Linear", issues: [
+    { uuid: "u1", identifier: "ENG-1", title: "Schema", priority: { name: "High" }, team: "Eng" },
+    { uuid: "u2", identifier: "ENG-2", title: "API", team: "Eng", blockers: [{ key: "ENG-1", title: "Schema" }, { key: "OPS-9", title: "Provision the database", closed: false }] }] }, 0);
+  state = reduce(state, { type: "plannerSetup", on: true }, 0);
+  const text = live.planPrompt(state);
+  assert.match(text, /- ENG-2: API\n  repositories: shop · priority 1 · ticket ENG-2\n  blocked by in Linear: ENG-1 "Schema" \(in the pipeline as ENG-1, queued\); OPS-9 "Provision the database" \(still open, outside the pipeline\)/);
+  assert.match(text, /Tickets' blockers are already enforced/);
+  const key = model.planKey(state);
+  state = reduce(reduce(state, { type: "planning", key }, 0), { type: "planned", key, order: ["ENG-1", "ENG-2"], summary: "s" }, 0);
+  assert.equal(model.plannerHolds(state), false);
+  assert.deepEqual(model.dependencies(state, row(state, "ENG-2")), ["ENG-1", "OPS-9"], "blockers hold the task with the planner on, as without it");
+  state = reduce(state, { type: "blockers", id: "ENG-2", blockers: [{ key: "ENG-1", title: "Schema" }, { key: "OPS-9", title: "Provision the database", closed: true }] }, 0);
+  assert.equal(model.plannerHolds(state), true, "a blocker that closed asks for a new plan");
+  assert.deepEqual(model.dependencies(state, row(state, "ENG-2")), ["ENG-1"]);
 });

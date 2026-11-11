@@ -994,10 +994,30 @@ test("the planner is switched on in Settings and shows its plan, its reasons and
   view.act({ type: "planning", key }, cx);
   view.act({ type: "planned", key, summary: "B before A.", order: ["T-2", "T-1"], waits: { "T-1": ["T-2"] }, reasons: { "T-1": "It reuses B's helper." } }, cx);
   scene = view.render(cx);
-  assert.match(text(find(scene, "plan")), /The plan · by sonnet .*B before A\./);
+  assert.match(text(find(scene, "plan")), /The plan · by Claude Code · sonnet .*B before A\./);
   assert.match(text(find(scene, "card-T-1")), /Needs T-2/);
   view.inspect("T-1", cx);
   assert.match(text(find(view.render(cx), "plan-reason-T-1")), /Planner: It reuses B's helper\. Waits for T-2\./);
   click(view, "replan");
   assert.equal(view.state().planning, null);
+});
+
+test("the planner's settings offer Claude Code or Codex when both are installed, with their own models and efforts", () => {
+  const view = setupLive();
+  view.codexModels = [{ slug: "gpt-5", name: "GPT-5", efforts: ["low", "high"] }];
+  click(view, "settings");
+  find(view.render(cx), "planner").handlers.on_change(true, cx);
+  let inspector = find(view.render(cx), "inspector");
+  assert.match(text(find(inspector, "planner")), /Claude Code reads the queue, ticket blockers and the repository/);
+  assert.ok(find(inspector, "planner-model-fable") && find(inspector, "planner-effort-max"));
+  click(view, "planner-agent-codex");
+  inspector = find(view.render(cx), "inspector");
+  assert.match(text(find(inspector, "planner")), /Codex reads the queue/);
+  assert.equal(find(inspector, "planner-model-fable"), undefined);
+  click(view, "planner-model-gpt-5");
+  click(view, "planner-effort-low");
+  assert.deepEqual(view.state().planner, { on: true, agent: "codex", model: "gpt-5", effort: "low" });
+  view.agentChoices = [{ key: "aider", name: "Aider", run: ["aider"], installed: true }];
+  view.act({ type: "plannerSetup", on: false }, cx);
+  assert.equal(find(view.render(cx), "planner").styles.disabled[0], true, "without either, it can't be turned on");
 });
