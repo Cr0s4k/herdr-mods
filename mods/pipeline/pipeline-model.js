@@ -419,6 +419,16 @@ function plain(state, picked, now = Date.now()) {
   return state.watch ? `Queue clear. Watching ${state.column} for the next task.` : "Queue clear. Add tasks to keep the planner busy.";
 }
 
+export const TITLE = 90;
+export function typedTask(text) {
+  const full = String(text ?? "").trim(), flat = full.replace(/\s+/g, " ");
+  if (flat.length <= TITLE) return { title: flat, description: "" };
+  const sentence = flat.match(/^(.{12,}?[.!?])(?=\s)/)?.[1];
+  if (sentence && sentence.length <= TITLE) return { title: sentence, description: full.slice(0, 4000) };
+  const space = flat.slice(0, TITLE).lastIndexOf(" "), head = flat.slice(0, space > TITLE / 2 ? space : TITLE - 1).replace(/[\s,;:.-]+$/, "");
+  return { title: `${head}…`, description: full.slice(0, 4000) };
+}
+
 // All mutations go through one reducer; multiple views share one pipeline.
 const liveTask = (state, fields, source) => ({ ...fresh({ repos: [state.repo], priority: 2, depends: [], column: "Ready", description: "", ...fields }, "queued", source),
   workspaces: null, planned: null, prs: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
@@ -541,18 +551,18 @@ export function reduce(state, action, now = Date.now()) {
     case "add": enqueue(next, action.ids ?? [], "Picked"); break;
     case "addAll": enqueue(next, next.tasks.filter(task => task.status === "backlog").map(task => task.id), "Picked"); break;
     case "create": {
-      const title = String(action.title ?? "").replace(/\s+/g, " ").trim().slice(0, 90);
+      const { title, description } = typedTask(action.title);
       if (!title) return state;
       next.created = (next.created ?? 0) + 1;
       if (next.live) {
         const id = `T-${next.created}`;
-        next.tasks.push(liveTask(next, { id, title }, "Typed"));
-        event(next, `${id} joined the queue.`, id);
+        next.tasks.push(liveTask(next, { id, title, description }, "Typed"));
+        event(next, `${id} joined the queue${description ? " · the whole text is in its details" : ""}.`, id);
         break;
       }
       const id = `NEW-${next.created}`;
-      next.tasks.push(fresh({ id, title, repos: guessRepos(title, next.created), priority: 2, depends: [], column: "Ready",
-        description: "Created in Pipeline. The simulation picked its repositories from the title; change them while it waits in the queue." }, "backlog", null));
+      next.tasks.push(fresh({ id, title, repos: guessRepos(description || title, next.created), priority: 2, depends: [], column: "Ready",
+        description: description || "Created in Pipeline. The simulation picked its repositories from the title; change them while it waits in the queue." }, "backlog", null));
       enqueue(next, [id], "Created");
       break;
     }

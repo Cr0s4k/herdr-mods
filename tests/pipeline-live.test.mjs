@@ -60,6 +60,20 @@ test("live dispatch fills parallel slots without spending simulated quota", () =
   assert.match(state.plan, /Starting agents for T-1 \+ T-2/);
 });
 
+test("a long typed task keeps its whole text: a short title on the card, everything in its details and the agent's prompt", () => {
+  const text = "When adding things to pipeline, texts get cut... think of a nice way to handle this. Maybe split the title from the rest so nothing is lost";
+  const state = typed(text), task = row(state, "T-1");
+  assert.equal(task.title, "When adding things to pipeline, texts get cut...");
+  assert.equal(task.description, text);
+  assert.match(state.events[0].message, /T-1 joined the queue · the whole text is in its details\./);
+  const ws = { name: "shop", cwd: "/wt", branch: "pipeline/T-1", target: "main", base: "a".repeat(40) };
+  assert.ok(live.prompt(task, ws).startsWith(`When adding things to pipeline, texts get cut...\n\n${text}\n\nHerdr Pipeline`));
+  const words = model.typedTask(`Make the onboarding flow remember where the person left off and resume there when they come back later`);
+  assert.equal(words.title, "Make the onboarding flow remember where the person left off and resume there when they…");
+  assert.ok(model.typedTask("x".repeat(300)).title.length <= model.TITLE);
+  assert.deepEqual(model.typedTask("  Add   a toggle "), { title: "Add a toggle", description: "" });
+});
+
 test("a launch makes a worktree, starts the chosen agent there and tracks its terminal", async () => {
   const world = host(reduce(typed("Add a dark mode toggle"), { type: "run" }, 0));
   const runner = new live.LiveRunner(world.host);

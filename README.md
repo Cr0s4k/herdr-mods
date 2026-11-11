@@ -170,7 +170,9 @@ Live runs real agents on the project's Git repository, one isolated worktree and
 task, so parallel agents never touch each other or your checkout.
 
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
-   the title and details are its first message. Or bring tickets from **Plane** (P), the
+   the title and details are its first message. Text too long for a title (over 90
+   characters, marked **Title + details** in the field) keeps its first sentence or opening
+   words as the title, and the whole text goes into its details. Or bring tickets from **Plane** (P), the
    project linked to this repository in the Tasks panel: pick open tickets and **Queue**
    them, or **Watch a state** (say Ready) so tickets in it join the queue by themselves within
    a minute, each one once. A Plane task keeps the ticket's key (HMOD-12), priority and

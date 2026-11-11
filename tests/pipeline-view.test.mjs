@@ -105,6 +105,18 @@ test("a typed title becomes a queued task and the field clears for the next one"
   assert.equal(find(view.render(cx), "create"), undefined, "Add appears only while typing");
 });
 
+test("a typed task longer than a title says the rest goes to its details", () => {
+  const view = setup();
+  view.title.set_value("Paginate the orders endpoint");
+  assert.equal(find(view.render(cx), "create-long"), undefined);
+  view.title.set_value("Paginate the orders endpoint. Keep the page size at fifty and return a cursor the web app can pass back for the next page");
+  assert.ok(find(view.render(cx), "create-long"));
+  click(view, "create");
+  const task = view.state().tasks.at(-1);
+  assert.equal(task.title, "Paginate the orders endpoint.");
+  assert.match(task.description, /return a cursor the web app can pass back/);
+});
+
 test("Add all and Generate keep the example backlog supplied", () => {
   const view = setup();
   click(view, "add"); click(view, "add-all");
