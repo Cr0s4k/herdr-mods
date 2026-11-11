@@ -1544,6 +1544,30 @@ test("the planner can be Codex: read-only, schema first, with its own model and 
   assert.equal(state.planning.agent, "codex");
 });
 
+test("Choose for me reads the repository read-only with the AI helper: Haiku unless set, apart from the planner", () => {
+  const facts = { branch: "main", github: false, found: ["npm test"] };
+  let state = createLive(context, 0);
+  const job = live.setupArgs(state, facts);
+  assert.deepEqual([job.agent, job.by], ["claude", "Claude Code · haiku"]);
+  assert.deepEqual(job.args.slice(0, 5), ["-p", "--model", "haiku", "--tools", "Read,Grep,Glob"]);
+  assert.match(job.prompt, /found by file names alone: npm test/);
+  assert.match(job.prompt, /lacks, so choose merge/);
+  state = reduce(state, { type: "plannerSetup", on: true, model: "opus" }, 0);
+  assert.equal(live.setupArgs(state, facts).by, "Claude Code · haiku", "the planner's model is the planner's alone");
+  state = reduce(state, { type: "helperSetup", model: "sonnet", effort: "low" }, 0);
+  assert.deepEqual(live.setupArgs(state, facts).args.slice(0, 5), ["-p", "--model", "sonnet", "--effort", "low"]);
+  assert.equal(state.planner.model, "opus");
+  state = reduce(state, { type: "helperSetup", agent: "codex" }, 0);
+  assert.deepEqual([state.helper.model, state.helper.effort], [null, null], "another agent drops the old model and effort");
+  const codex = live.setupArgs(state, facts);
+  assert.deepEqual([codex.agent, codex.by, codex.args.slice(0, 2)], ["codex", "Codex", ["--sandbox", "read-only"]]);
+  const answer = { check: { value: " make check ", reason: "Makefile" }, tryout: { value: "", reason: "Nothing runs" }, delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" } };
+  assert.equal(live.readSetup({ plan: answer }, false).delivery.value, "merge", "no pull requests without GitHub and gh");
+  assert.deepEqual(live.readSetup({ plan: answer, ms: 4000 }, true), { check: { value: "make check", reason: "Makefile" }, tryout: { value: "", reason: "Nothing runs" },
+    delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" }, ms: 4000 });
+  assert.throws(() => live.readSetup({ plan: null, error: "Not logged in" }, true), /Not logged in/);
+});
+
 test("the planner reads each ticket's blockers, and a blocker that changes asks for a new plan", () => {
   let state = reduce(createLive(context, 0), { type: "addTickets", provider: "linear", source: "Linear", issues: [
     { uuid: "u1", identifier: "ENG-1", title: "Schema", priority: { name: "High" }, team: "Eng" },

@@ -170,10 +170,15 @@ Live runs real agents on the project's Git repository, one isolated worktree and
 task, so parallel agents never touch each other or your checkout.
 
 A space's new live pipeline opens with a **Set up this pipeline** card over its empty canvas:
-the agent, the check command, delivery and where tickets come from, each with a button into its
-Settings section. What Pipeline recognises is offered, never applied: **Use npm test** for a
-check command it finds, **Use pull requests** when the repository is on GitHub and `gh` is
-installed. The card goes away with **Done** or the first **Start pipeline**.
+the AI helper, the agent, the check command, Try it, delivery and where tickets come from, each
+with a button into its Settings section. What Pipeline recognises from file names is offered,
+never applied: **Use npm test** for a check command it finds, **Use pull requests** when the
+repository is on GitHub and `gh` is installed. **Choose for me** (sparkles) asks the AI helper
+to read the repository, read-only, and set the check command, Try it and delivery; each choice
+it made shows its reason under the row. The AI helper is its own setting, apart from the planner:
+Claude Code on Haiku unless **AI helper** in Settings picks another agent, model or effort. A run
+takes about 20 seconds and costs about a cent. The card goes away with **Done** or the first
+**Start pipeline**.
 
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
    the title and details are its first message. Text too long for a title (over 90

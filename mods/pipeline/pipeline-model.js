@@ -159,6 +159,9 @@ export const PLANNERS = { claude: "Claude Code", codex: "Codex" };
 const ran = action => ({ trace: (Array.isArray(action.trace) ? action.trace : []).map(line => String(line).slice(0, 200)).slice(-80),
   ms: Number(action.ms) || null, cost: typeof action.cost === "number" ? action.cost : null, tokens: Number(action.tokens) || null });
 export const plannerAgent = state => PLANNERS[state.planner?.agent] ? state.planner.agent : state.agent?.key === "codex" ? "codex" : "claude";
+// The AI helper is separate from the planner: a small read-only job, so Claude Code starts it on Haiku unless you pick another model.
+export const helperAgent = state => PLANNERS[state.helper?.agent] ? state.helper.agent : state.agent?.key === "codex" ? "codex" : "claude";
+export const helperTuning = state => ({ model: state.helper?.model ?? (helperAgent(state) === "claude" ? "haiku" : null), effort: state.helper?.effort ?? null });
 export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
 export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
 // A failed plan lets the tasks it was asked about start by priority; only a new or changed task asks again.
@@ -741,6 +744,16 @@ export function reduce(state, action, now = Date.now()) {
       if (JSON.stringify(value) === JSON.stringify(before)) return state;
       next.planner = value;
       if (value.on !== before.on) event(next, value.on ? "An agent plans the queue before work starts." : "Tasks start by priority again, without the planner agent.");
+      break;
+    }
+    case "helperSetup": {
+      if (!next.live) return state;
+      const before = { agent: null, model: null, effort: null, ...next.helper }, value = { ...before };
+      if ("agent" in action && PLANNERS[action.agent] && action.agent !== helperAgent(next)) Object.assign(value, { agent: action.agent, model: null, effort: null });
+      if ("model" in action) value.model = String(action.model ?? "").trim().slice(0, 100) || null;
+      if ("effort" in action) value.effort = /^[a-z]{1,20}$/.test(action.effort ?? "") ? action.effort : null;
+      if (JSON.stringify(value) === JSON.stringify(before)) return state;
+      next.helper = value;
       break;
     }
     case "planning": {

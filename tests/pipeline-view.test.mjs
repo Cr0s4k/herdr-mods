@@ -36,6 +36,7 @@ globalThis.__pipelineView = {
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
+  setupArgs: live.setupArgs, readSetup: live.readSetup,
   rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
@@ -45,7 +46,7 @@ globalThis.__pipelineView = {
   shared: key => world.data[key], setShared: (key, value) => { world.data[key] = value; },
   props: () => ({ context: world.context ?? { id: "project", name: "Project" } }), appWindow: () => ({ platform: "linux", active: true }),
   theme: () => new Proxy({}, { get: (_obj, key) => key }),
-  settings: () => ({ zoom: 1.1 }), appHome: () => "/app",
+  settings: () => ({ zoom: 1.1 }), appHome: () => "/app", readTextFile: async () => "planner.py",
   localStorage: { getItem: key => world.storage.get(key) ?? null, setItem: (key, value) => world.storage.set(key, value) },
 };
 const uiSource = (await readFile(new URL("../mods/pipeline/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -610,6 +611,43 @@ test("a new Live pipeline shows a setup card with suggestions until it is dismis
   assert.equal(find(started.render(cx), "setup"), undefined, "starting once means it's set up");
   const quiet = setupLive();
   assert.equal(find(quiet.render(cx), "setup-pr-use"), undefined, "pull requests are only suggested for a GitHub repository with gh");
+});
+
+test("Choose for me applies what the planner's agent picks and says why under each row", async () => {
+  const view = setupLive();
+  view.github = true;
+  let asked;
+  world.exec = (command, args, options) => {
+    if (command !== "python3") return null;
+    asked = { args: JSON.parse(args[2]), options };
+    return { code: 0, stdout: JSON.stringify({ data: { plan: { check: { value: "make check", reason: "The Makefile's check target" }, tryout: { value: "", reason: "It has nothing to run" },
+      delivery: { value: "pr", reason: "CONTRIBUTING asks for pull requests" } }, ms: 9000 } }) };
+  };
+  assert.match(find(view.render(cx), "setup-decide").styles.tooltip[0], /^The AI helper, Claude Code · haiku, reads this repository/);
+  assert.match(text(find(view.render(cx), "setup-helper")), /AI helper .*Claude Code · haiku/);
+  click(view, "setup-helper-change");
+  assert.deepEqual([view.drawer, view.section], ["settings", "helper"]);
+  click(view, "helper-model-sonnet");
+  view.open(null, cx);
+  assert.match(text(find(view.render(cx), "setup-helper")), /Claude Code · sonnet/);
+  click(view, "setup-helper-change"); click(view, "helper-model-haiku"); view.open(null, cx);
+  await settle(view, "setup-decide");
+  world.exec = null;
+  assert.deepEqual([asked.args.cwd, asked.args.args[2], asked.options.cwd], ["/work/shop", "haiku", "/work/shop"]);
+  assert.deepEqual([view.state().check?.command, view.state().tryout ?? null, view.state().delivery], ["make check", null, "pr"]);
+  const card = find(view.render(cx), "setup");
+  assert.match(text(card), /Claude Code · haiku chose what's marked with sparkles in 9 s/);
+  assert.match(text(find(card, "setup-checks")), /The Makefile's check target/);
+  assert.match(text(find(card, "setup-tryout")), /Nothing to run .*It has nothing to run/);
+  assert.match(text(find(card, "setup-delivery")), /CONTRIBUTING asks for pull requests/);
+  view.act({ type: "deliver", value: "merge" }, cx);
+  assert.doesNotMatch(text(find(view.render(cx), "setup-delivery")), /CONTRIBUTING/, "a choice you change drops its reason");
+  world.exec = command => command === "python3" ? { code: 0, stdout: JSON.stringify({ data: { plan: null, error: "Not logged in" } }) } : null;
+  await settle(view, "setup-decide");
+  world.exec = null;
+  assert.match(text(find(view.render(cx), "setup")), /couldn't choose: Not logged in/);
+  view.agentChoices = [];
+  assert.equal(find(view.render(cx), "setup-decide").styles.disabled[0], true, "it needs the agent installed");
 });
 
 test("the check command is set in Live settings, from a suggestion or typed", () => {

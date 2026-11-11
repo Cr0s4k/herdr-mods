@@ -1,4 +1,4 @@
-import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
+import { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, helperAgent, helperTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -168,6 +168,40 @@ export function readPlan(result) {
   return { summary: String(plan.summary ?? ""), order: plan.order.map(String),
     waits: Object.fromEntries(tasks.map(row => [row.id, Array.isArray(row.waits) ? row.waits.map(String) : []])),
     reasons: Object.fromEntries(tasks.map(row => [row.id, String(row.reason ?? "")])), ...seen };
+}
+
+const choice = (what, extra = {}) => ({ type: "object", additionalProperties: false, required: ["value", "reason"],
+  properties: { value: { type: "string", description: what, ...extra }, reason: { type: "string", description: "One short sentence for the person, naming the file it came from." } } });
+export const SETUP_SCHEMA = { type: "object", additionalProperties: false, required: ["check", "tryout", "delivery"], properties: {
+  check: choice("A shell command, or an empty string for none."), tryout: choice("A shell command, or an empty string for none."),
+  delivery: choice("merge or pr.", { enum: ["merge", "pr"] }) } };
+export function setupPrompt(state, facts) {
+  return [
+    "You set up Herdr Pipeline for this repository. Pipeline starts one coding agent per task, each in its own Git worktree of the repository, and brings finished work back to the branch it started from.",
+    "Read the repository as much as you need (you can only read): package scripts, Makefiles, README, CONTRIBUTING, AGENTS.md or CLAUDE.md, CI workflows. Then decide:",
+    "1. check: the command Pipeline runs from the repository root after an agent finishes, before the person reviews. Use what this project runs to verify a change (its tests, plus lint or type checks if the project requires them), preferring its own scripts. It must not need a running server, secrets or network services. Empty if there is none.",
+    "2. tryout: the command that runs the project so the person can try a change by hand, such as its dev server or the app. Empty if there is nothing to run.",
+    `3. delivery: "pr" if this project takes changes through pull requests, "merge" if work merges straight into ${facts.branch ?? "the current branch"}.${facts.github ? "" : " Pull requests need a GitHub origin and gh, which this machine lacks, so choose merge."}`,
+    "Don't change any file.",
+    "", "What Pipeline already knows:",
+    `- current branch: ${facts.branch ?? "unknown"}`,
+    `- origin on GitHub with gh installed: ${facts.github ? "yes" : "no"}`,
+    `- commands found by file names alone: ${facts.found.length ? facts.found.join(", ") : "none"}`,
+    `- set now: check ${state.check?.command ?? "none"}, try it ${state.tryout ?? "none"}, delivery ${state.delivery}`,
+  ].join("\n");
+}
+// The AI helper reads the repository read-only, with its own agent and model.
+export function setupArgs(state, facts) {
+  const agent = helperAgent(state), options = AGENT_OPTIONS[agent], tune = helperTuning(state);
+  const args = agent === "codex" ? ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune)]
+    : ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"];
+  return { agent, args, schema: SETUP_SCHEMA, prompt: setupPrompt(state, facts), by: [PLANNERS[agent], tune.model].filter(Boolean).join(" · ") };
+}
+export function readSetup(result, github) {
+  const picked = result?.plan, part = key => ({ value: String(picked?.[key]?.value ?? "").trim().slice(0, 500), reason: String(picked?.[key]?.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 300) });
+  if (!picked || typeof picked !== "object") throw new Error(String(result?.error || "It gave no answer.").slice(0, 300));
+  const delivery = part("delivery");
+  return { check: part("check"), tryout: part("tryout"), delivery: { ...delivery, value: delivery.value === "pr" && github ? "pr" : "merge" }, ms: Number(result?.ms) || null };
 }
 
 // Agents tick a timer, a token count and a blinking spinner while they wait, so only words count as new output.

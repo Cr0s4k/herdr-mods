@@ -1,9 +1,9 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
-import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
@@ -37,7 +37,7 @@ const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null)
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
 const SECTIONS = {
-  live: { agent: "Agent", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
+  live: { agent: "Agent", helper: "AI helper", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
   simulation: { pipeline: "Pipeline", simulation: "Simulation", general: "General" },
 };
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
@@ -131,7 +131,7 @@ export default class Pipeline extends View {
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
-    this.repo = null; this.agentChoices = []; this.codexModels = []; this.github = false;
+    this.repo = null; this.agentChoices = []; this.codexModels = []; this.github = false; this.deciding = null;
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
     this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
     this.updateStates = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, states: [], error: null }]));
@@ -898,38 +898,83 @@ export default class Pipeline extends View {
     return canvas;
   }
 
+  setupJob(state) {
+    return setupArgs(state, { branch: this.repo?.branch ?? null, github: this.github, found: [...this.checkSuggestions, ...this.trySuggestions] });
+  }
+  decideSetup(cx) {
+    const state = this.state();
+    if (!state?.live || !this.repo?.root || this.deciding?.running) return;
+    const { by, ...job } = this.setupJob(state), root = this.repo.root;
+    this.deciding = { running: true, by };
+    cx.spawn(async cx => {
+      try {
+        const script = await readTextFile(`${appHome()}/mods/pipeline/planner.py`);
+        if (!script) throw new Error("A Pipeline helper is missing. Reinstall the mods.");
+        const ran = await exec("python3", ["-c", script, JSON.stringify({ ...job, cwd: root })], { cwd: root, on: this.context.on, timeout: 320000 });
+        let reply;
+        try { reply = JSON.parse(ran.stdout); } catch { throw new Error(ran.stderr?.trim().slice(-300) || "Python 3 couldn't run on that machine."); }
+        const picked = readSetup(reply.data, this.github);
+        if (picked.check.value) { this.checkInput.set_value(picked.check.value); this.act({ type: "check", command: picked.check.value }, cx); }
+        if (picked.tryout.value) { this.tryInput.set_value(picked.tryout.value); this.act({ type: "tryout", command: picked.tryout.value }, cx); }
+        this.act({ type: "deliver", value: picked.delivery.value }, cx);
+        this.deciding = { by, ...picked };
+      } catch (error) { this.deciding = { by, error: String(error?.message ?? error).slice(0, 300) }; }
+      cx.notify();
+    });
+    cx.notify();
+  }
   setupCard(state, t, g) {
-    const w = Math.min(500, g.w - 60), branch = this.repo?.branch ?? "your branch";
-    const change = (key, label = "Change") => this.button(`setup-${key}-change`, label, cx => this.open("settings", cx, key), t, { small: true, hint: `Open ${SECTIONS.live[key]} in Settings` });
-    const row = (key, title, mark, value, actions) => h_flex().id(`pipeline-setup-${key}`).min_h(34).gap(10).items_center()
-      .child(div().w(16).flex_none().flex().justify_center().child(mark()))
-      .child(div().w(64).flex_none().text_size(12).text_color(t.muted).child(title))
-      .child(div().flex_1().min_w(0).text_size(12).truncate().child(value))
-      .children(actions);
-    const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7);
-    const suggested = this.checkSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const w = Math.min(520, g.w - 60), branch = this.repo?.branch ?? "your branch", ai = this.deciding;
+    const job = this.setupJob(state), canAsk = this.agentChoices.some(agent => agent.key === job.agent) && Boolean(this.repo?.root);
+    const change = (key, section, label = "Change") => this.button(`setup-${key}-change`, label, cx => this.open("settings", cx, section), t, { small: true, hint: `Open ${SECTIONS.live[section]} in Settings` });
+    const use = (id, label, fn, hint) => this.button(`setup-${id}-use`, label, fn, t, { small: true, hint });
+    const chose = (key, value) => ai?.[key] && (ai[key].value ? ai[key].value === value : !value) ? ai[key] : null;
+    const row = (key, title, mark, value, actions, picked) => v_flex().id(`pipeline-setup-${key}`).gap(1)
+      .child(h_flex().min_h(34).gap(10).items_center()
+        .child(div().w(16).flex_none().flex().justify_center().child(picked ? icon("sparkles", 13).text_color(t.accent) : mark()))
+        .child(div().w(64).flex_none().text_size(12).text_color(t.muted).child(title))
+        .child(div().flex_1().min_w(0).text_size(12).truncate().child(value))
+        .children(actions))
+      .when(Boolean(picked?.reason), el => el.child(div().pl(100).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
+    const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
+    const checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
+      row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
+        canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "helper")]),
       row("agent", "Agent", this.agentChoices.length ? ok : todo,
-        this.agentChoices.length ? this.agentLabel(state) : this.repo ? "No coding agent found" : "Looking for agents…", [change("agent")]),
+        this.agentChoices.length ? this.agentLabel(state) : this.repo ? "No coding agent found" : "Looking for agents…", [change("agent", "agent")]),
       row("checks", "Checks", state.check ? ok : todo, state.check?.command ?? "None, so unchecked work reaches review", [
-        ...(!state.check && suggested ? [this.button("setup-check-use", `Use ${suggested}`, cx => { this.checkInput.set_value(suggested); this.act({ type: "check", command: suggested }, cx); }, t,
-          { small: true, primary: true, hint: "Found in this repository. Runs in each finished task's worktree before review" })] : []),
-        change("checks", state.check ? "Change" : "Set")]),
+        ...(!state.check && checkHint ? [use("check", `Use ${checkHint}`, cx => { this.checkInput.set_value(checkHint); this.act({ type: "check", command: checkHint }, cx); },
+          "Found in this repository. Runs in each finished task's worktree before review")] : []),
+        change("checks", "checks", state.check ? "Change" : "Set")], chose("check", state.check?.command)),
+      row("tryout", "Try it", state.tryout ? ok : plain, state.tryout ?? "Nothing to run", [
+        ...(!state.tryout && tryHint ? [use("try", `Use ${tryHint}`, cx => { this.tryInput.set_value(tryHint); this.act({ type: "tryout", command: tryHint }, cx); },
+          "Found in this repository. Runs a task's change in a tab so you can try it")] : []),
+        change("tryout", "checks", state.tryout ? "Change" : "Set")], chose("tryout", state.tryout)),
       row("delivery", "Delivery", ok, state.delivery === "pr" ? `Pull request into ${branch}` : `Merge into ${branch} locally`, [
-        ...(state.delivery !== "pr" && this.github ? [this.button("setup-pr-use", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx), t,
-          { small: true, hint: "This repository is on GitHub and gh is installed, so finished work can open a pull request instead" })] : []),
-        change("delivery")]),
-      row("tickets", "Tickets", watched.length ? ok : () => dot(t.muted, 5),
+        ...(state.delivery !== "pr" && this.github ? [use("pr", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx),
+          "This repository is on GitHub and gh is installed, so finished work can open a pull request instead")] : []),
+        change("delivery", "delivery")], chose("delivery", state.delivery)),
+      row("tickets", "Tickets", watched.length ? ok : plain,
         watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : "Typed here",
         Object.keys(SOURCES).map(provider => this.button(`setup-${provider}`, SOURCES[provider], cx => this.open(provider, cx), t, { small: true, icon: provider, hint: `Queue tickets from ${SOURCES[provider]}` }))),
     ];
-    return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(70, g.center.y - 165)).w(w).p(16).gap(4)
+    const note = ai?.running ? [`${ai.by} is reading the repository. It only reads, and you can keep typing tasks.`, t.accent]
+      : ai?.error ? [`${ai.by} couldn't choose: ${ai.error}`, t.blocked]
+      : ai ? [`${ai.by} chose what's marked with sparkles${ai.ms ? ` in ${Math.max(1, Math.round(ai.ms / 1000))} s` : ""}. Change anything you disagree with.`, t.muted]
+      : ["The defaults work. These are the ones worth a look before the first agent starts.", t.muted];
+    const tall = 420 + ["check", "tryout", "delivery"].filter(key => ai?.[key]?.reason).length * 18;
+    return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(60, Math.min(g.center.y - tall / 2, g.h - tall - 20))).w(w).p(16).gap(4)
       .rounded(10).border_1().border_color(t.border).bg(t.surface).text_color(t.foreground).shadow_lg()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(h_flex().gap(8).items_center().pb(6)
         .child(div().flex_1().text_size(14).font_semibold().child("Set up this pipeline"))
+        .child(this.button("setup-decide", ai?.running ? "Choosing…" : ai && !ai.error ? "Choose again" : "Choose for me", cx => this.decideSetup(cx), t, {
+          small: true, icon: "sparkles", disabled: ai?.running || !canAsk,
+          hint: canAsk ? `The AI helper, ${job.by}, reads this repository, read-only, and picks the check command, Try it and delivery. Uses a little of your ${PLANNERS[job.agent]} usage`
+            : `Needs ${PLANNERS[job.agent]} installed on the project's machine` }))
         .child(this.button("setup-close", "Close setup", cx => this.act({ type: "setupDone" }, cx), t, { small: true, icon: "x", iconOnly: true, hint: "Hide this; everything stays in Settings" })))
-      .child(div().pb(6).text_size(12).line_height(1.45).text_color(t.muted).child("The defaults work. These are the ones worth a look before the first agent starts."))
+      .child(div().pb(6).text_size(12).line_height(1.45).text_color(note[1]).child(note[0]))
       .children(rows)
       .child(h_flex().pt(10).gap(8).items_center()
         .child(this.button("setup-settings", "All settings", cx => this.open("settings", cx, "agent"), t, { small: true, icon: "settings" }))
@@ -1326,7 +1371,8 @@ export default class Pipeline extends View {
       body.child(div().h(1).bg(t.border));
       body.child(this.switchRow("auto-trust", "Trust new worktrees automatically", "Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.",
         Boolean(state.autoTrust), cx => this.act({ type: "autoTrust" }, cx), t));
-    } else if (section === "planner") this.plannerSettings(body, state, t);
+    } else if (section === "helper") this.helperSettings(body, state, t);
+    else if (section === "planner") this.plannerSettings(body, state, t);
     else if (section === "repositories") this.repositories(body, state, t);
     else if (section === "checks") {
       body.child(this.heading("Check before review"));
@@ -1642,6 +1688,21 @@ export default class Pipeline extends View {
       if (this.showPrompt) body.child(v_flex().w_full().p(10).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(11).line_height(1.45)
         .font_family(settings().font_family ?? "JetBrains Mono").children(planning.prompt.split("\n").map(line => div().whitespace_normal().min_h(15).child(line || " "))));
     }
+  }
+  helperSettings(body, state, t) {
+    const installed = Object.keys(PLANNERS).filter(key => this.agentChoices.some(agent => agent.key === key));
+    const agent = helperAgent(state), name = PLANNERS[agent], tune = helperTuning(state);
+    body.child(this.label("Choose for me, on a new pipeline's setup card, asks it to read the repository and pick the check command, Try it and delivery. It can only read, and it is separate from the planner, so a small, quick model fits.", t));
+    if (!installed.length) { body.child(this.label("Needs Claude Code or Codex installed on the project's machine.", t)); return; }
+    const chip = (id, text, selected, change, hint) => this.button(`helper-${id}`, text, cx => this.act({ type: "helperSetup", ...change }, cx), t, { small: true, selected, hint });
+    if (installed.length > 1) body.child(h_flex().gap(6).flex_wrap().children(installed.map(key => chip(`agent-${key}`, PLANNERS[key], agent === key, { agent: key }, `Help with ${PLANNERS[key]}`))));
+    const models = agent === "codex" ? this.codexModels.map(model => model.slug) : AGENT_OPTIONS.claude.models;
+    const efforts = agent === "codex" && this.codexModels.length ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : AGENT_OPTIONS[agent].efforts;
+    body.child(h_flex().gap(6).flex_wrap()
+      .when(agent === "codex", el => el.child(chip("model-default", "Default", !tune.model, { model: null }, `${name}'s own default model`)))
+      .children(models.map(model => chip(`model-${model}`, model, tune.model === model, { model }))));
+    body.child(h_flex().gap(6).flex_wrap().child(chip("effort-default", "Default effort", !tune.effort, { effort: null }, `${name}'s own default effort`))
+      .children(efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
   }
   plannerSettings(body, state, t) {
     const setup = { on: false, model: null, effort: null, ...state.planner }, installed = Object.keys(PLANNERS).filter(key => this.agentChoices.some(agent => agent.key === key));
