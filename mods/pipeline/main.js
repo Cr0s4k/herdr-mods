@@ -753,9 +753,7 @@ export default class Pipeline extends View {
       .child(h_flex().gap(8).items_center()
         .child(planner ? Button.new("pipeline-plan-open").text_size(11).font_medium().text_color(t.muted).tab_index(0).accessibility_label(`The plan · ${planner}. See what the planner did`)
             .tooltip("See what the planner read and why").hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
-            .on_click((_e, cx) => this.open("planner", cx)).child(`The plan · ${planner}`) : div().text_size(11).font_medium().text_color(t.muted).child("The plan"))
-        .when(Boolean(planner) && state.planning && state.planning.status !== "running", el => el.child(this.button("replan", "Plan again", cx => this.act({ type: "replan" }, cx), t,
-          { small: true, icon: "reset", hint: "Ask the planner agent to read the queue and the repository again" }).h(20))))
+            .on_click((_e, cx) => this.open("planner", cx)).child(`The plan · ${planner}`) : div().text_size(11).font_medium().text_color(t.muted).child("The plan")))
       .child(div().text_size(12).line_height(1.45).child(state.plan)));
 
     g.slots.forEach((slot, i) => {

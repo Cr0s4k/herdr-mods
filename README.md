@@ -217,7 +217,7 @@ task, so parallel agents never touch each other or your checkout.
    repositories, and to answer with the
    order to start tasks in, which must wait for which (because one builds on another, or
    both would change the same lines), and a reason for each. The plan appears above the
-   centre with **Plan again**, each queued task's inspector shows its reason, and cards
+   centre, each queued task's inspector shows its reason, and cards
    show the waits. New agents wait for the plan; if planning fails, tasks start by priority
    and only a new or changed task asks again. Pipeline still keeps its own rules: the
    parallel and review limits, waits you set, no circles, and a wait that contradicts the

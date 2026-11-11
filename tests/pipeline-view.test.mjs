@@ -998,7 +998,8 @@ test("the planner is switched on in Settings and shows its plan, its reasons and
   assert.match(text(find(scene, "card-T-1")), /Needs T-2/);
   view.inspect("T-1", cx);
   assert.match(text(find(view.render(cx), "plan-reason-T-1")), /Planner: It reuses B's helper\. Waits for T-2\./);
-  click(view, "replan");
+  click(view, "plan-open");
+  click(view, "planner-again");
   assert.equal(view.state().planning, null);
 });
 
