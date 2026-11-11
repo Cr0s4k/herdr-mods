@@ -49,6 +49,45 @@ export function trustKeys(screen) {
   return [...Array(Math.abs(target - current)).fill(target > current ? "down" : "up"), "enter"];
 }
 
+const OPTION = /^\s*([❯›>]\s*)?(\d+)\.\s+(.+?)\s*$/, RULE = /^\s*[─━═]{8,}\s*$/, DASHES = /^\s*[╌┄─-]{8,}\s*$/, FOOTER = /^\s*(Enter|Esc|Press)\b/i;
+const TYPED = /^(Type something|Type your own|Other)\b/i;
+
+export function screenQuestion(screen) {
+  const lines = String(screen ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split("\n").map(line => line.replace(/^\s*│|│\s*$/g, "").trimEnd());
+  for (let start = lines.length - 1; start >= 0; start--) {
+    if (lines[start].match(OPTION)?.[2] !== "1") continue;
+    const options = [];
+    let marked = -1;
+    for (let i = start; i < lines.length && !FOOTER.test(lines[i]); i++) {
+      const option = lines[i].match(OPTION);
+      if (option && Number(option[2]) === options.length + 1) { if (option[1]) marked = options.length; options.push(option[3]); }
+    }
+    if (options.length < 2 || marked < 0) continue;
+    const above = [];
+    for (let i = start - 1; i >= 0 && above.length < 14 && !RULE.test(lines[i]); i--) above.unshift(DASHES.test(lines[i]) ? "" : lines[i].trim());
+    while (above.length && !above.at(-1)) above.pop();
+    const gap = above.lastIndexOf("");
+    const text = above.slice(gap + 1).join(" "), context = above.slice(0, gap + 1).filter(Boolean);
+    return { text, context, options, marked, typed: options.findIndex(option => TYPED.test(option)) };
+  }
+  return null;
+}
+
+const moves = (from, to) => Array(Math.abs(to - from)).fill(to > from ? "down" : "up");
+
+// Keys that pick an option by its label, read from a fresh screen so a changed menu is never answered blind.
+export function answerKeys(screen, label) {
+  const question = screenQuestion(screen), index = question?.options.indexOf(label) ?? -1;
+  return index < 0 ? null : [...moves(question.marked, index), "enter"];
+}
+
+// Keys that make room for a typed answer: its free-text option, or Esc out of a menu that has none.
+export function replyKeys(screen) {
+  const question = screenQuestion(screen);
+  if (!question) return [];
+  return question.typed < 0 ? ["esc"] : moves(question.marked, question.typed);
+}
+
 export function observe(task, host) {
   const watched = ["working", "input", "review", "testing"].includes(task.status) || (task.status === "failed" && task.reason === "checks");
   if (!task.terminal || task.discard || !watched) return null;

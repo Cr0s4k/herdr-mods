@@ -33,6 +33,7 @@ globalThis.__pipelineView = {
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => world.runs.push([name, args]),
   knownAgents: async () => [], exec: async (...args) => world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
+  screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
   rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
@@ -49,7 +50,7 @@ globalThis.__pipelineView = {
 const uiSource = (await readFile(new URL("../mods/pipeline/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const { default: Pipeline } = await import(`data:text/javascript,${encodeURIComponent(`const { ${Object.keys(globalThis.__pipelineView).join(", ")} } = globalThis.__pipelineView;\n${uiSource}`)}`);
 const timers = [];
-const cx = { notify() {}, spawn() {}, stop_propagation() {}, timer: { after: (_ms, fn) => { timers.push(fn); return { cancel() {} }; }, every: () => ({ cancel() {} }) },
+const cx = { notify() {}, spawn() {}, stop_propagation() {}, sleep: async () => {}, timer: { after: (_ms, fn) => { timers.push(fn); return { cancel() {} }; }, every: () => ({ cancel() {} }) },
   focus_handle: () => ({ focus() {}, release() {}, is_focused: () => true }) };
 function setup() {
   world.data = {}; timers.length = 0;
@@ -466,20 +467,42 @@ test("a finished agent merges from its card; failures retry and discards ask twi
   assert.equal(row(view, "T-3").discard, true);
 });
 
-test("a waiting agent's Answer opens its terminal, and messages are typed into it", async () => {
+test("a waiting agent's question opens in Pipeline, is answered with its menu keys, and messages are typed into it", async () => {
   const view = setupLive();
   view.act({ type: "create", title: "A" }, cx);
   agentTask(view, "T-1", { status: "input" });
   click(view, "answer-T-1");
-  assert.deepEqual(world.runs, [["space.select", { id: "s9" }], ["tab.select", { id: "tb9" }], ["pane.focus", { terminal: "t9" }]]);
-  view.inspect("T-1", cx);
+  assert.equal(view.selected, "T-1");
+  assert.deepEqual(world.runs, []);
+  const spawned = [], later = { ...cx, spawn: fn => spawned.push(fn) };
+  world.screen = "─".repeat(40) + "\n ☐ Color\n\nWhich color do you prefer?\n\n❯ 1. Red\n     The color red\n  2. Blue\n     The color blue\n  3. Type something.\n" + "─".repeat(40) + "\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+  try {
+    view.peek.key = null;
+    view.peekAt(row(view, "T-1"), later);
+    await spawned.shift()(cx);
+    const scene = view.render(cx);
+    assert.deepEqual(["choice-T-1-0", "choice-T-1-1", "choice-T-1-2"].map(id => Boolean(find(scene, id))), [true, true, true]);
+    assert.equal(find(scene, "choice-T-1-3"), undefined, "the free-text option becomes the reply field");
+    world.hc = [];
+    view.answer("T-1", "Blue", later);
+    await spawned.shift()(cx);
+    assert.deepEqual(world.hc.at(-1), ["keys", "t9", "down", "enter"]);
+    assert.equal(view.sent.answer, "Blue");
+    view.answer("T-1", "Green", later, true);
+    await spawned.shift()(cx);
+    assert.deepEqual(world.hc.slice(-2), [["keys", "t9", "down", "down"], ["send", "--force", "t9", "Green"]]);
+    view.answer("T-1", "Purple", later);
+    await spawned.shift()(cx);
+    assert.match(view.sent.error, /question changed/);
+  } finally { world.screen = null; }
   view.message.set_value("Use the home page");
-  const spawned = [];
-  view.send(row(view, "T-1"), { ...cx, spawn: fn => spawned.push(fn) });
+  view.send(row(view, "T-1"), later);
   assert.equal(view.message.value(), "");
-  await spawned[0](cx);
+  await spawned.shift()(cx);
   assert.deepEqual(world.hc.at(-1), ["send", "--force", "t9", "Use the home page"]);
   assert.equal(view.sent.ok, true);
+  click(view, "open-T-1");
+  assert.deepEqual(world.runs, [["space.select", { id: "s9" }], ["tab.select", { id: "tb9" }], ["pane.focus", { terminal: "t9" }]]);
 });
 
 test("every live task state renders in the scene and the inspector, and example keys do nothing", () => {

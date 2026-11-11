@@ -243,8 +243,12 @@ task, so parallel agents never touch each other or your checkout.
    flags; **Default** leaves the agent's own setting. The agent button and each task's
    inspector show what it started with.
 3. The card follows the agent: **Working** with how long its agent has had the task,
-   **Needs you** when it waits for you (click **Answer** to jump to its terminal, or message
-   it from the task's inspector), and **Ready for review** when it finishes. A new worktree first asks whether to trust the folder:
+   **Needs you** when it waits for you, and **Ready for review** when it finishes. **Answer**
+   (or Q) opens what it asks in the task's inspector, the way the simulation does: Pipeline
+   reads the agent's menu off its screen (a question, or a permission to run something),
+   shows the options as buttons (or press their number) and a field for your own answer, and
+   presses the keys in its terminal for you. When a screen has no menu it can read, the
+   inspector shows the end of the screen, **Open agent**, and a field to message it. A new worktree first asks whether to trust the folder:
    click **Trust** on the card, or turn on **Trust new worktrees automatically** in
    Settings.
 4. With a **Check before review** command in Settings (Pipeline suggests one it recognises,

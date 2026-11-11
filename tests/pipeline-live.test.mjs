@@ -299,6 +299,23 @@ test("Trust picks the yes option from wherever the menu's marker is", () => {
   assert.equal(live.trustKeys("Working on it…"), null);
 });
 
+test("an agent's menu is read off its screen: the question, what it is about, and the keys for each answer", () => {
+  const dashes = "╌".repeat(40), rule = "─".repeat(40);
+  const permission = ["❯ Run this exact bash command: date > stamp.txt.", "⏺ Writing current date to stamp.txt", rule, " Bash command", "", " Write current date to stamp.txt", dashes,
+    " date > stamp.txt", dashes, " Do you want to proceed?", " ❯ 1. Yes", "   2. Yes, and always allow access to qa/ from this project", "   3. No", "", " Esc to cancel · Tab to amend"].join("\n");
+  assert.deepEqual(live.screenQuestion(permission), { text: "Do you want to proceed?", context: ["Bash command", "Write current date to stamp.txt", "date > stamp.txt"],
+    options: ["Yes", "Yes, and always allow access to qa/ from this project", "No"], marked: 0, typed: -1 });
+  assert.deepEqual(live.answerKeys(permission, "No"), ["down", "down", "enter"]);
+  assert.deepEqual(live.answerKeys(permission, "Maybe"), null);
+  assert.deepEqual(live.replyKeys(permission), ["esc"]);
+  const question = [rule, " ☐ Color", "", "Which color do you prefer?", "", "  1. Red", "     The color red", "❯ 2. Blue", "  3. Type something.", rule, "  4. Chat about this", "", "Enter to select · ↑/↓ to navigate · Esc to cancel"].join("\n");
+  assert.deepEqual(live.screenQuestion(question), { text: "Which color do you prefer?", context: ["☐ Color"], options: ["Red", "Blue", "Type something.", "Chat about this"], marked: 1, typed: 2 });
+  assert.deepEqual(live.answerKeys(question, "Red"), ["up", "enter"]);
+  assert.deepEqual(live.replyKeys(question), ["down"]);
+  assert.equal(live.screenQuestion("Plan:\n1. Read the code\n2. Fix it\n❯ "), null, "a numbered list without a selection is not a menu");
+  assert.deepEqual(live.replyKeys("❯ "), []);
+});
+
 test("with auto-trust on, the prompt is answered without stopping the task", async () => {
   const screen = "Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder";
   const world = host(reduce(reduce(typed("A"), { type: "autoTrust" }, 0), { type: "run" }, 0), { read: async () => screen });

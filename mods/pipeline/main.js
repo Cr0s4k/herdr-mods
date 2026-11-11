@@ -3,7 +3,7 @@ import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Swi
 import { shared, setShared, theme, props, exec, hc, run, focused, knownAgents, nextCommand, settings, appHome, openOverlay, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, fixRequest, rebaseRequest, commitRequest, changedFiles } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
@@ -31,6 +31,7 @@ const filterLabel = filter => [SCOPES[filter.scope], filter.team?.name, filter.p
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const choices = question => (question?.options ?? []).filter((_, i) => i !== question.typed);
 const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.blocked : task.status === "done" ? t.ansi2
   : task.status === "pr" ? t.ansi4 : ["review", "merging"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
 const toneColor = (tone, t) => ({ blocked: t.blocked, ready: t.ansi2 })[tone] ?? t.muted;
@@ -82,7 +83,7 @@ export default class Pipeline extends View {
     this.title.on("submit", (_e, cx) => this.create(cx));
     this.reply = InputState.new({ placeholder: "Or type your own answer" });
     this.reply.on("change", (_e, cx) => cx.notify());
-    this.reply.on("submit", (_e, cx) => this.answer(this.selected, this.reply.value(), cx));
+    this.reply.on("submit", (_e, cx) => this.answer(this.selected, this.reply.value(), cx, true));
     this.message = InputState.new({ placeholder: "Message the agent" });
     this.message.on("change", (_e, cx) => cx.notify());
     this.message.on("submit", (_e, cx) => this.send(this.state()?.tasks.find(task => task.id === this.selected), cx));
@@ -225,6 +226,29 @@ export default class Pipeline extends View {
     });
     cx.notify();
   }
+  liveQuestion(task) {
+    return task?.status === "input" && this.peek.task === task.id ? this.peek.question : null;
+  }
+  answerAgent(task, value, typed, cx) {
+    if (!task.terminal) return;
+    this.reply.set_value("");
+    this.sent = { id: task.id, pending: true };
+    cx.spawn(async cx => {
+      const failed = error => ({ code: 1, stderr: String(error) });
+      const screen = await hc(["read", task.terminal, "--lines", "60"]).catch(failed);
+      const keys = screen.code === 0 ? (typed ? replyKeys(screen.stdout) : answerKeys(screen.stdout, value)) : null;
+      let result = keys ? keys.length ? await hc(["keys", task.terminal, ...keys]).catch(failed) : { code: 0 }
+        : { code: 1, stderr: "Its question changed. Read it again below." };
+      if (typed && result.code === 0) result = await hc(["send", "--force", task.terminal, value]).catch(failed);
+      this.sent = result.code === 0 ? { id: task.id, ok: true, answer: value } : { id: task.id, error: result.stderr?.trim() || "The agent couldn't be reached." };
+      this.peek = { ...this.peek, question: null };
+      cx.notify();
+      await cx.sleep(800);
+      this.peek = { ...this.peek, key: null };
+      cx.notify();
+    });
+    cx.notify();
+  }
   saveDetails(cx) {
     const task = this.state()?.tasks.find(task => task.id === this.detailsFor);
     if (task && this.details.value() !== (task.description ?? "")) this.act({ type: "describe", id: task.id, text: this.details.value() }, cx);
@@ -235,9 +259,10 @@ export default class Pipeline extends View {
     this.peek = this.peek.task === task.id ? { ...this.peek, key } : { key, task: task.id, screen: [], diff: [] };
     const { on } = this.context;
     cx.spawn(async cx => {
-      const peek = { key, task: task.id, screen: [], diff: [] };
+      const peek = { key, task: task.id, screen: [], diff: [], question: null };
       if (task.terminal && ["input", "working", "review", "pr"].includes(task.status)) {
         const screen = await hc(["read", task.terminal, "--lines", "60"]).catch(() => null);
+        if (task.status === "input" && task.reason !== "trust" && screen?.code === 0) peek.question = screenQuestion(screen.stdout);
         const lines = screen?.code === 0 ? screen.stdout.split("\n").map(line => line.trimEnd()) : [];
         while (lines.length && !lines.at(-1)) lines.pop();
         peek.screen = lines.slice(-14);
@@ -439,8 +464,10 @@ export default class Pipeline extends View {
     const task = this.state()?.tasks.find(needsInput);
     if (task) { this.inspect(task.id, cx); this.handle.focus(); }
   }
-  answer(id, value, cx) {
+  answer(id, value, cx, typed = false) {
     if (!id || !String(value ?? "").trim()) return;
+    const task = this.state()?.live && this.state().tasks.find(task => task.id === id);
+    if (task) { this.answerAgent(task, value.trim(), typed, cx); return; }
     this.act({ type: "answer", id, value }, cx);
     this.reply.set_value("");
     const next = this.state()?.tasks.find(needsInput);
@@ -565,7 +592,7 @@ export default class Pipeline extends View {
       d: () => { if (this.state()?.live && this.drawer === "task") this.viewChanges(this.peek.diff.find(repo => repo.files.length)); },
     };
     const asked = this.drawer === "task" ? this.state()?.tasks.find(task => task.id === this.selected && needsInput(task)) : null;
-    const option = asked?.question?.options[Number(e.keystroke) - 1];
+    const option = choices(asked && (this.state().live ? this.liveQuestion(asked) : asked.question))[Number(e.keystroke) - 1];
     const action = option ? () => this.answer(asked.id, option, cx) : actions[e.keystroke];
     if (action) { action(); cx.stop_propagation(); }
   }
@@ -874,8 +901,8 @@ export default class Pipeline extends View {
     }
     if (asking && task.reason === "trust") wrap.child(this.button(`trust-${task.id}`, "Trust", cx => this.trust(task, cx), t,
       { icon: "check", primary: true, small: true, hint: "Answer “Yes, I trust this folder” in its terminal. The worktree is your repository at its current commit." }).absolute().right(8).bottom(8));
-    else if (asking) wrap.child(this.button(`answer-${task.id}`, "Answer", cx => { if (state.live) this.focusAgent(task); else { this.inspect(task.id, cx); this.handle.focus(); } }, t,
-      { icon: "question", primary: true, small: true, hint: state.live ? "Open its agent's terminal" : task.question?.text ?? "Answer the agent" }).absolute().right(8).bottom(8));
+    else if (asking) wrap.child(this.button(`answer-${task.id}`, "Answer", cx => { this.inspect(task.id, cx); this.handle.focus(); }, t,
+      { icon: "question", primary: true, small: true, hint: state.live ? "Answer its agent here" : task.question?.text ?? "Answer the agent" }).absolute().right(8).bottom(8));
     if (kind === "review" && task.status === "failed" && task.reason === "checks") wrap.child(this.button(`fix-${task.id}`, "Fix", cx => this.fix(task, cx), t,
       { icon: "reset", small: true, primary: true, hint: "Send the check output to its agent to fix" }).absolute().right(8).bottom(8));
     else if (kind === "review" && task.status === "failed") wrap.child(this.button(`retry-${task.id}`, "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t,
@@ -1353,13 +1380,15 @@ export default class Pipeline extends View {
     if (task.terminal && task.status !== "done" && !task.discard) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))
         .child(this.button(`trust-task-${task.id}`, "Trust this worktree", cx => this.trust(task, cx), t, { icon: "check", primary: true, hint: "Answers “Yes, I trust this folder” in its terminal" }));
-      body.child(this.button(`open-${task.id}`, "Open agent", () => this.focusAgent(task), t, { icon: "terminal", primary: task.status === "input", hint: "Show its terminal" }));
-      if (this.peek.screen.length) body.child(this.screen(this.peek.screen, t, task.status === "input" ? "It's waiting for you. The end of its screen:" : "The end of its screen:"));
-      body.child(h_flex().gap(6).items_center()
+      const question = this.liveQuestion(task);
+      if (question) body.child(this.questionCard(task, question, t));
+      body.child(this.button(`open-${task.id}`, "Open agent", () => this.focusAgent(task), t, { icon: "terminal", primary: task.status === "input" && !question, hint: "Show its terminal" }));
+      if (this.peek.screen.length && !question) body.child(this.screen(this.peek.screen, t, task.status === "input" ? "It's waiting for you. The end of its screen:" : "The end of its screen:"));
+      if (!question) body.child(h_flex().gap(6).items_center()
         .child(Input.new(this.message).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Message the agent"))
         .child(this.button(`send-${task.id}`, task.status === "review" ? "Send feedback" : "Send", cx => this.send(task, cx), t,
           { disabled: !this.message.value().trim(), hint: "Types into its terminal and presses Enter" })));
-      if (this.sent?.id === task.id) body.child(this.label(this.sent.error ?? (this.sent.pending ? "Sending…" : "Sent. The card follows what the agent does next."), t));
+      if (this.sent?.id === task.id) body.child(this.label(this.sent.error ?? (this.sent.pending ? "Sending…" : this.sent.answer ? `You answered: “${this.sent.answer}”` : "Sent. The card follows what the agent does next."), t));
     }
     if (trees.length && !["queued", "routing", "done"].includes(task.status) && !task.discard) this.changes(body, task, t, several);
     if (task.status === "testing") body.child(this.label(`Running ${state.check?.command ?? "checks"} in ${several ? `each of its ${trees.length} worktrees` : "its worktree"}…`, t));
@@ -1545,21 +1574,25 @@ export default class Pipeline extends View {
     })));
     body.child(this.label(fixed ? "Its worktrees are already made, so its repositories stay as they are." : "The agent starts in the first one and can open the others. Each gets its own worktree and branch.", t));
   }
+  questionCard(task, question, t) {
+    return v_flex().gap(10).p(12).rounded(8).border_1().border_color(t.blocked).bg(t.blocked + "14")
+      .child(h_flex().gap(6).items_center().child(icon("question", 14).text_color(t.blocked))
+        .child(div().text_size(12).font_semibold().text_color(t.blocked).child(`${task.id} is paused until you answer`)))
+      .when(Boolean(question.context?.length), el => el.child(this.screen(question.context, t)))
+      .child(div().text_size(13).line_height(1.45).child(question.text || "Its agent is waiting for you to pick one."))
+      .children(choices(question).map((option, i) => this.button(`choice-${task.id}-${i}`, `${i + 1}  ${option}`, cx => this.answer(task.id, option, cx), t,
+        { hint: `Answer “${option}” (${i + 1})` }).w_full().justify_start()))
+      .child(h_flex().gap(6).items_center()
+        .child(Input.new(this.reply).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Your own answer"))
+        .child(this.button(`reply-${task.id}`, "Send", cx => this.answer(task.id, this.reply.value(), cx, true), t, { disabled: !this.reply.value().trim(), hint: "Send your answer (Enter)" })));
+  }
   detail(body, state, t, cx) {
     const task = state.tasks.find(task => task.id === this.selected);
     if (!task) { body.child(this.label("Select a task in the scene.", t)); return; }
     if (state.live) { this.liveDetail(body, state, task, t, cx); return; }
     body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
     body.child(h_flex().gap(7).items_center().child(dot(stateColor(task, t))).child(div().text_size(12).child(LABELS[task.status])));
-    if (needsInput(task)) body.child(v_flex().gap(10).p(12).rounded(8).border_1().border_color(t.blocked).bg(t.blocked + "14")
-      .child(h_flex().gap(6).items_center().child(icon("question", 14).text_color(t.blocked))
-        .child(div().text_size(12).font_semibold().text_color(t.blocked).child(`${task.id} is paused until you answer`)))
-      .child(div().text_size(13).line_height(1.45).child(task.question.text))
-      .children(task.question.options.map((option, i) => this.button(`choice-${task.id}-${i}`, `${i + 1}  ${option}`, cx => this.answer(task.id, option, cx), t,
-        { hint: `Answer “${option}” (${i + 1})` }).w_full().justify_start()))
-      .child(h_flex().gap(6).items_center()
-        .child(Input.new(this.reply).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Your own answer"))
-        .child(this.button(`reply-${task.id}`, "Send", cx => this.answer(task.id, this.reply.value(), cx), t, { disabled: !this.reply.value().trim(), hint: "Send your answer (Enter)" }))));
+    if (needsInput(task)) body.child(this.questionCard(task, task.question, t));
     else if (task.answer) body.child(this.label(`You answered: “${task.answer}”`, t));
     body.child(div().text_size(12).line_height(1.5).text_color(t.muted).child(task.description));
     if (["queued", "backlog"].includes(task.status)) {
