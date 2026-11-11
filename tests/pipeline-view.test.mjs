@@ -925,7 +925,7 @@ test("in Live the centre says what waits for you and takes you there", () => {
 test("a stalled agent, its tokens and its own history show on the card and in the inspector", () => {
   const view = setupLive();
   view.act({ type: "create", title: "A" }, cx);
-  agentTask(view, "T-1", { status: "working", worked: true, began: Date.now() - 20 * 60000, stalled: Date.now() - 12 * 60000,
+  agentTask(view, "T-1", { status: "working", worked: true, at: Date.now() - 20 * 60000, stalled: Date.now() - 12 * 60000,
     usage: { written: 3400, read: 120000, cached: 2000000, turns: 1 }, log: ["T-1 is working.", "T-1 joined the queue."] });
   view.inspect("T-1", cx);
   const scene = view.render(cx);
@@ -952,4 +952,29 @@ test("a wide Pipeline has one bar of controls and one status bar; a narrower one
   scene = view.render(cx);
   assert.ok(find(find(scene, "controls"), "add"));
   assert.equal(find(scene, "scene").styles.h[0], 800 - 50 - 46 - 36);
+});
+
+test("after a rebase a task's changes start where it now leaves its target branch, not at its old start commit", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const fork = uiSource.match(/^const FORK = '(.*)';$/m)[1];
+  const root = mkdtempSync(`${tmpdir()}/pipeline-fork-`);
+  const git = (...args) => execFileSync("git", ["-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], { encoding: "utf8" }).trim();
+  const commit = (file, text) => { writeFileSync(`${root}/${file}`, text); git("add", "-A"); git("commit", "-qm", file); return git("rev-parse", "HEAD"); };
+  const forkOf = (base, target) => execFileSync("sh", ["-c", fork, "sh", root, base, target], { encoding: "utf8" }).trim();
+  try {
+    git("init", "-q", "-b", "main");
+    const start = commit("a.txt", "a");
+    git("checkout", "-q", "-b", "task");
+    commit("task.txt", "task");
+    assert.equal(forkOf(start, "main"), start, "an untouched branch starts at its start commit");
+    git("checkout", "-q", "main");
+    const moved = commit("other.txt", "another task's work");
+    git("checkout", "-q", "task");
+    assert.equal(forkOf(start, "main"), start, "main moving on changes nothing");
+    git("rebase", "-q", "main");
+    assert.equal(forkOf(start, "main"), moved, "rebased, the other task's work is no longer shown as this one's");
+    assert.equal(forkOf(start, "gone"), start, "a missing target falls back to the start commit");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

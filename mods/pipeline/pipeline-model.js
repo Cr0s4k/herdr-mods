@@ -149,11 +149,12 @@ export function elapsed(ms) {
   if (minutes < 60) return `${minutes} min`;
   return `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
 }
-// What a task's card says about time: how long its agent has had it, or how long it took.
+// Time counts while an agent works or its checks run, never while the work waits for the person.
+const WORKED = ["working", "testing"];
 export function timing(task, now = Date.now()) {
-  if (!task.began) return null;
-  if (task.status === "done") return task.ended ? `took ${elapsed(task.ended - task.began)}` : null;
-  return ["queued", "routing"].includes(task.status) ? null : elapsed(now - task.began);
+  if (task.status === "done") return task.spent ? `took ${elapsed(task.spent)}` : null;
+  const spent = (task.spent ?? 0) + (WORKED.includes(task.status) && task.at ? Math.max(0, now - task.at) : 0);
+  return spent && !["queued", "routing"].includes(task.status) ? elapsed(spent) : null;
 }
 export const activeTasks = state => state.tasks.filter(task => ACTIVE.includes(task.status));
 export const outstanding = state => state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
@@ -1046,16 +1047,20 @@ export function reduce(state, action, now = Date.now()) {
       if (outstandingCount(next) + task.repos.length > next.reviewLimit) continue;
       const used = new Set(activeTasks(next).map(row => row.slot));
       let slot = 0; while (used.has(slot)) slot++;
-      task.status = "routing"; task.slot = slot; task.since = now; task.attempts++; task.approvals = []; task.began ??= now;
+      task.status = "routing"; task.slot = slot; task.since = now; task.attempts++; task.approvals = [];
       if (task.rank) task.rank = 0;
       if (next.live) { task.launch = null; task.error = null; } else next.quota -= 8;
       picked.push(task.id);
       event(next, `${task.id} entering slot ${slot + 1} · ${task.repos.join(" + ")}`, task.id);
     }
   }
+  const was = new Map(state.tasks.map(task => [task.id, task]));
   for (const task of next.tasks) {
-    if (task.status === "done" && task.began && !task.ended) task.ended = now;
     if (task.stalled && task.status !== "working") task.stalled = null;
+    const old = was.get(task.id);
+    if (!next.live || old?.status === task.status) continue;
+    if (old && WORKED.includes(old.status) && old.at) task.spent = (task.spent ?? 0) + Math.max(0, now - old.at);
+    task.at = now;
   }
   next.plan = explain(next, picked);
   return next;

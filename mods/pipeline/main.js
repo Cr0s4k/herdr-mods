@@ -20,6 +20,8 @@ const CHECK_HINTS = [
 ].join("\n");
 // Prints a folder's repository root, with ~ expanded on the machine the project is on; exit 3 means no such folder.
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
+// Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
+const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule"];
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
 const filterLabel = filter => [SCOPES[filter.scope], filter.project?.name].filter(Boolean).join(" · ");
@@ -236,9 +238,11 @@ export default class Pipeline extends View {
       }
       if (!["queued", "routing", "done"].includes(task.status)) for (const ws of trees) {
         const git = args => exec("git", ["-C", ws.root, ...args], { on }).catch(() => null);
-        const names = await git(["diff", ws.base, "--name-status", "-z", "--no-renames"]), stats = await git(["diff", ws.base, "--numstat", "-z", "--no-renames"]);
+        const forked = await exec("sh", ["-c", FORK, "sh", ws.root, ws.base, ws.target ?? ""], { on }).catch(() => null);
+        const base = forked?.code === 0 && forked.stdout.trim() ? forked.stdout.trim() : ws.base;
+        const names = await git(["diff", base, "--name-status", "-z", "--no-renames"]), stats = await git(["diff", base, "--numstat", "-z", "--no-renames"]);
         const status = await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-        peek.diff.push({ name: ws.name, root: ws.root, base: ws.base, files: changedFiles(names?.stdout, stats?.stdout, status?.stdout) });
+        peek.diff.push({ name: ws.name, root: ws.root, base, files: changedFiles(names?.stdout, stats?.stdout, status?.stdout) });
       }
       if (this.peek.key === key) { this.peek = peek; cx.notify(); }
     });
@@ -867,8 +871,8 @@ export default class Pipeline extends View {
     }
     else if (this.drawer === "prs") rows(state.tasks.filter(task => task.status === "pr"), "No pull requests open. Opened ones wait here until they're merged on GitHub.");
     else if (this.drawer === "done") {
-      const done = state.tasks.filter(task => task.status === "done"), timed = done.filter(task => task.began && task.ended), used = done.filter(task => task.usage);
-      const parts = [timed.length && `${elapsed(timed.reduce((sum, task) => sum + task.ended - task.began, 0))} of agent time`,
+      const done = state.tasks.filter(task => task.status === "done"), timed = done.filter(task => task.spent), used = done.filter(task => task.usage);
+      const parts = [timed.length && `${elapsed(timed.reduce((sum, task) => sum + task.spent, 0))} of agent time`,
         used.length && `${compact(used.reduce((sum, task) => sum + task.usage.written, 0))} tokens written`].filter(Boolean);
       if (state.live && parts.length) body.child(this.label(`${count(done.length, "task")} · ${parts.join(" · ")}`, t));
       rows(state.tasks.filter(task => task.status === "done").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0)), "No completed tasks yet.");

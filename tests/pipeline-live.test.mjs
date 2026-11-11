@@ -1257,17 +1257,24 @@ test("changed files come from git's own lists, with new files the agent hasn't c
   assert.deepEqual(live.changedFiles(undefined, undefined, undefined), []);
 });
 
-test("a task remembers when its agent got it and how long the work took", () => {
-  let state = reduce(typed("One"), { type: "run" }, 60000);
-  assert.equal(row(state, "T-1").began, 60000);
-  assert.equal(model.timing(row(state, "T-1"), 120000), null, "nothing to say while it starts");
-  state = { ...state, tasks: [{ ...state.tasks[0], status: "working" }] };
-  assert.equal(model.timing(row(state, "T-1"), 60000 + 12 * 60000), "12 min");
-  state = { ...state, tasks: [{ ...state.tasks[0], status: "merging", merge: true }] };
-  state = reduce(state, { type: "merged", id: "T-1", target: "main" }, 60000 + 75 * 60000);
-  assert.equal(row(state, "T-1").ended, 60000 + 75 * 60000);
-  assert.equal(model.timing(row(state, "T-1")), "took 1 h 15 min");
-  assert.deepEqual([model.elapsed(20000), model.elapsed(3600000)], ["under a minute", "1 h"]);
+test("a task's time counts while its agent works or checks run, not while it waits for you", () => {
+  const minute = 60000;
+  let state = reduce(reduce(typed("One"), { type: "check", command: "npm test" }, 0), { type: "run" }, 0);
+  assert.equal(model.timing(row(state, "T-1"), 5 * minute), null, "nothing to say while it starts");
+  state = reduce(state, { type: "launched", id: "T-1", space: "s", tab: "tb", terminal: "t9", agent: "Claude Code" }, 1 * minute);
+  assert.equal(model.timing(row(state, "T-1"), 13 * minute), "12 min");
+  state = reduce(state, { type: "observe", id: "T-1", status: "working" }, 2 * minute);
+  state = reduce(state, { type: "observe", id: "T-1", status: "input" }, 11 * minute);
+  assert.equal(model.timing(row(state, "T-1"), 500 * minute), "10 min", "waiting for an answer doesn't count");
+  state = reduce(state, { type: "observe", id: "T-1", status: "working" }, 60 * minute);
+  state = reduce(state, { type: "observe", id: "T-1", status: "review" }, 65 * minute);
+  assert.equal(row(state, "T-1").status, "testing");
+  state = reduce(state, { type: "checkPassed", id: "T-1", run: row(state, "T-1").checkRun }, 70 * minute);
+  assert.equal(row(state, "T-1").spent, 20 * minute, "checks count");
+  state = reduce(state, { type: "approve", id: "T-1" }, 900 * minute);
+  state = reduce(state, { type: "merged", id: "T-1", target: "main" }, 901 * minute);
+  assert.equal(model.timing(row(state, "T-1")), "took 20 min", "a night in review is not agent time");
+  assert.deepEqual([model.elapsed(20000), model.elapsed(3600000), model.elapsed(75 * minute)], ["under a minute", "1 h", "1 h 15 min"]);
 });
 
 test("a working agent whose screen stops changing for ten minutes is flagged, and cleared when it moves again", async () => {
