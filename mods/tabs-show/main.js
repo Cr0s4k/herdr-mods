@@ -177,11 +177,15 @@ export default class Tabs extends View {
       .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => openOverlay({ mod: "toggles", kind: "popup", ...togglesSize() }))
       .child(svg("mods/toggles/toggles.svg").size(14));
-    const questions = Object.values(shared(PIPELINES) ?? {}).reduce((n, state) => n + (state?.tasks ?? []).filter(task => task.status === "input").length, 0);
+    const pipelines = shared(PIPELINES) ?? {};
+    const ownKey = space && spaceKey(pipelines, repository.on || null, repository.cwd || space.folder || "", space.id);
+    const questions = !space ? 0 : Object.entries(pipelines)
+      .filter(([key, state]) => state?.live && (key === ownKey || state.space === space.id))
+      .reduce((n, [, state]) => n + (state.tasks ?? []).filter(task => task.status === "input").length, 0);
     const pipelineButton = Button.new("open-pipeline").h(26).px(8).gap(5).flex_none().flex().items_center().rounded(6)
       .text_size(12).text_color(questions ? t.foreground : t.muted).disabled(!space)
-      .accessibility_label(questions ? `Open Pipeline simulation, ${questions} waiting for your answer` : "Open Pipeline simulation")
-      .tooltip(questions ? `${questions} simulated ${questions === 1 ? "task needs" : "tasks need"} your answer` : "Open the visual Pipeline prototype in its own tab")
+      .accessibility_label(questions ? `Open Pipeline, ${questions} waiting for you` : "Open Pipeline")
+      .tooltip(questions ? `${questions} ${questions === 1 ? "task in this space's Pipeline needs" : "tasks in this space's Pipeline need"} you in its terminal` : "Open this space's Pipeline in its own tab")
       .hover(el => el.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openPipeline())
       .child(svg("mods/pipeline/pipeline.svg").size(14)).child("Pipeline")
       .when(questions > 0, el => el.child(div().px(5).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold()
