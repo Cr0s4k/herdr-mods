@@ -1,14 +1,17 @@
-import { View, div, svg, PathBuilder } from "gpui-kit";
+import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
-const KEYS = { live: "Space start or pause · N new task · arrows or J K walk the tasks · D read the diff · T try it · P Plane · L Linear · Q next agent that needs you · Y merge all · R retry failed · Esc close",
-  simulation: "Space start or pause · N new task · arrows or J K walk the tasks · A examples · Q answer · Y approve all · R retry failed · S speed · Esc close" };
+const SHORTCUTS = [["Space", "Start or pause"], ["N", "New task"], ["↑ ↓ J K", "Walk the tasks"], ["D", "Read the selected task's changes", "live"], ["T", "Try the selected task", "live"],
+  ["P", "Tickets from Plane", "live"], ["L", "Tickets from Linear", "live"], ["A", "Example tasks", "simulation"], ["Q", "Next task that needs you"], ["1–9", "Pick an answer"],
+  ["Y", "Merge or approve everything waiting"], ["R", "Retry failed tasks"], ["S", "Simulation speed", "simulation"], ["?", "Show these keys"], ["Esc", "Close what is open"]];
+const shortcuts = live => SHORTCUTS.filter(([, , only]) => !only || only === (live ? "live" : "simulation"));
+const KEYS = Object.fromEntries(["live", "simulation"].map(mode => [mode, shortcuts(mode === "live").map(([key, what]) => `${key} ${what.toLowerCase()}`).join(" · ")]));
 const COMET = ["●", "•", "·", "", "", ""];
 const CHECK_HINTS = [
   "if [ -f package.json ] && grep -q '\"test\"' package.json; then",
@@ -35,6 +38,11 @@ const TRY_RUN = 'trap : INT; PIPELINE_TASK="$2" sh -c "$1"; exec "${SHELL:-sh}" 
 // Prints a folder's repository root, with ~ expanded on the machine the project is on; exit 3 means no such folder.
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
+const IMAGE_DIR = 'd=$1; [ -n "$d" ] || { mkdir -p "$3" && d=$(mktemp -d "$3/XXXXXX"); } || exit 1; ';
+const IMAGE_COPY = IMAGE_DIR + 'cp -- "$2" "$d/" && printf "%s/%s" "$d" "$(basename -- "$2")"';
+const IMAGE_PASTE = IMAGE_DIR + 'f="$d/pasted-$(date +%H%M%S).png"; osascript -e "on run argv" -e "set f to open for access POSIX file (item 1 of argv) with write permission" '
+  + '-e "write (the clipboard as «class PNGf») to f" -e "close access f" -e "end run" "$f" >/dev/null 2>&1 || { rm -f "$f"; exit 4; }; printf "%s" "$f"';
 const conflicted = task => task.status === "review" && task.error && task.terminal && !task.discard && /rebase|conflict/i.test(task.error);
 const uncommitted = task => task.status === "review" && !task.discard && /task's worktree has uncommitted changes/.test(task.error ?? "");
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
@@ -104,6 +112,9 @@ export default class Pipeline extends View {
     this.reply = InputState.new({ placeholder: "Or type your own answer" });
     this.reply.on("change", (_e, cx) => cx.notify());
     this.reply.on("submit", (_e, cx) => this.answer(this.selected, this.reply.value(), cx, true));
+    this.follow = InputState.new({ placeholder: "What should change?" });
+    this.follow.on("change", (_e, cx) => cx.notify());
+    this.follow.on("submit", (_e, cx) => this.followUp(this.state()?.tasks.find(task => task.id === this.selected), cx));
     this.message = InputState.new({ placeholder: "Message the agent" });
     this.message.on("change", (_e, cx) => cx.notify());
     this.message.on("submit", (_e, cx) => this.send(this.state()?.tasks.find(task => task.id === this.selected), cx));
@@ -523,10 +534,53 @@ export default class Pipeline extends View {
     const opener = appWindow()?.platform === "macos" ? "open" : appWindow()?.platform === "windows" ? "explorer" : "xdg-open";
     exec(opener, [url]).catch(() => {});
   }
+  // Images are copied into Herdr's own folder, so the agent gets one small folder to read and the originals can move.
+  async addImages(task, sources, cx) {
+    const store = `${appHome()}/pipeline-images`, name = path => path.replace(/^.*\//, "");
+    let dir = task.images?.[0]?.path.replace(/\/[^/]+$/, "") ?? "", note = null;
+    if (this.context.on) note = "Images can be added to projects on this computer only.";
+    else for (const source of sources ?? [null]) {
+      if ((this.state()?.tasks.find(row => row.id === task.id)?.images?.length ?? 0) >= IMAGES) { note = `A task takes up to ${IMAGES} images.`; break; }
+      if (source && !IMAGE.test(source)) { note = `${name(source)} isn't a PNG, JPEG, GIF or WebP image.`; continue; }
+      const result = await exec("sh", ["-c", source ? IMAGE_COPY : IMAGE_PASTE, "sh", dir, source ?? "", store]).catch(() => null);
+      const path = result?.code === 0 ? result.stdout.trim() : "";
+      if (!path) { note = source ? `${name(source)} couldn't be copied.` : "The clipboard holds no image. Copy a screenshot first."; continue; }
+      dir = path.replace(/\/[^/]+$/, "");
+      this.act({ type: "image", id: task.id, path }, cx);
+    }
+    this.imageNote = note; cx.notify();
+  }
+  removeImage(task, path, cx) {
+    this.act({ type: "imageRemove", id: task.id, path }, cx);
+    if (path.startsWith(`${appHome()}/pipeline-images/`)) exec("rm", ["-f", path]).catch(() => null);
+  }
+  imagesDetail(body, task, t) {
+    const images = task.images ?? [], full = images.length >= IMAGES;
+    body.child(this.heading("Images"));
+    body.child(v_flex().id(`pipeline-images-${task.id}`).w_full().p(8).gap(8).rounded(6).border_1().border_dashed().border_color(t.border)
+      .on_drop((event, cx) => cx.spawn(cx => this.addImages(task, event.paths, cx)))
+      .children(images.map((item, i) => h_flex().id(`pipeline-image-${task.id}-${i}`).gap(8).items_center()
+        .child(div().w(48).h(34).flex_none().rounded(4).overflow_hidden().bg(t.raised).child(image(item.path).size_full()))
+        .child(div().flex_1().min_w(0).text_size(12).truncate().child(item.path.replace(/^.*\//, "")))
+        .child(this.button(`image-remove-${task.id}-${i}`, "Remove image", cx => this.removeImage(task, item.path, cx), t, { icon: "x", iconOnly: true, small: true, hint: "Remove this image" }))))
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).line_height(1.45).text_color(t.muted).child(full ? `${IMAGES} images is the most a task takes.` : images.length ? "Drop more images here." : "Drop screenshots or mockups here. The agent opens them before it starts."))
+        .when(!full && appWindow()?.platform === "macos", el => el.child(this.button(`image-paste-${task.id}`, "Paste image", cx => cx.spawn(cx => this.addImages(task, null, cx)), t, { small: true, hint: "Adds the image on the clipboard, such as a screenshot you just copied" })))));
+    if (this.imageNote) body.child(div().id(`pipeline-image-note-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(this.imageNote));
+  }
+  followUp(task, cx) {
+    const text = this.follow.value().trim(), before = this.state()?.tasks.length;
+    if (!task || !text) return;
+    this.act({ type: "followUp", id: task.id, text }, cx);
+    const tasks = this.state().tasks;
+    if (tasks.length === before) return;
+    this.follow.set_value("");
+    this.inspect(tasks.at(-1).id, cx);
+  }
   inspect(id, cx) {
     if (this.drawer === "task" && this.detailsFor) this.saveDetails(cx);
     const task = this.state()?.tasks.find(task => task.id === id);
-    this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null;
+    this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null; this.imageNote = null;
     this.detailsFor = task?.status === "queued" && this.state()?.live ? id : null;
     if (this.detailsFor) this.details.set_value(task.description ?? "");
     cx.notify();
@@ -615,13 +669,13 @@ export default class Pipeline extends View {
     const held = state.running && state.tasks.some(task => task.status === "queued" && quotaHeld(state, task, now));
     const unusable = state.live && this.repo?.error;
     info.status = unusable ? "Not a Git repository" : info.questions ? (state.live ? "An agent needs you" : "Waiting for your answer")
-      : !state.running ? (info.active ? (state.live ? "Intake paused · agents keep working" : "Intake paused · finishing active work") : "Paused")
+      : !state.running ? (info.active ? (state.live ? "Paused · agents finish their work" : "Paused · finishing started work") : "Paused")
       : held ? (state.live ? "Held by a usage limit" : "Waiting for quota") : info.active ? (state.live ? "Agents working" : "Pipeline running")
-      : info.approvals ? (state.live ? "Waiting for your review" : "Waiting for your approval") : info.queued ? "Waiting" : "Watching for work";
+      : info.approvals ? (state.live ? "Waiting for your review" : "Waiting for your approval") : info.queued ? "Waiting" : "Idle";
     info.color = held || info.failed || info.questions || unusable ? t.blocked : state.running ? t.accent : t.muted;
     const narrow = this.size.width < 820, compact = this.size.width < 640, wide = this.size.width >= ONE_ROW;
     // Herdr paints running animations above later siblings, so the scene holds still under the settings modal and the setup card.
-    const covered = this.drawer === "settings" || Boolean(state.live && state.setup);
+    const covered = this.drawer === "settings" || Boolean(this.keysShown) || Boolean(state.live && state.setup);
     const root = v_flex().id("pipeline-root").size_full().min_w(0).min_h(0).bg(t.canvas).text_color(t.foreground).text_size(13)
       .track_focus(this.handle)
       .on_size_change((bounds, cx) => {
@@ -642,17 +696,21 @@ export default class Pipeline extends View {
           .when(this.size.width <= 1180, node => node.absolute().right(0).top(0).bottom(0)))))
       .child(this.status(state, t, info, motion))
       .when(this.drawer === "settings", el => el.child(this.settingsModal(state, t)
-        .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))));
+        .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))))
+      .when(Boolean(this.keysShown), el => el.child(this.keysModal(state, t)));
     for (const key of [...this.bars.keys()]) if (!this.seen.has(key)) this.bars.delete(key);
     return root;
   }
 
   key(e, cx) {
     if (e.key === "escape") {
-      if (this.drawer) this.open(null, cx); else { this.handle.focus(); cx.notify(); }
+      if (this.keysShown) { this.keysShown = false; cx.notify(); }
+      else if (this.drawer) this.open(null, cx); else { this.handle.focus(); cx.notify(); }
       cx.stop_propagation(); return;
     }
     if (!this.handle.is_focused() || this.drawer === "settings" || (this.state()?.live && ["a", "s"].includes(e.keystroke))) return;
+    if (["?", "shift-/", "shift-?"].includes(e.keystroke)) { this.keysShown = !this.keysShown; cx.notify(); cx.stop_propagation(); return; }
+    if (this.keysShown) return;
     const move = { down: 1, right: 1, j: 1, up: -1, left: -1, k: -1 }[e.keystroke];
     if (move) { this.step(move, cx); cx.stop_propagation(); return; }
     const source = { p: "plane", l: "linear" }[e.keystroke];
@@ -672,6 +730,20 @@ export default class Pipeline extends View {
     const option = choices(asked && (this.state().live ? this.liveQuestion(asked) : asked.question))[Number(e.keystroke) - 1];
     const action = option ? () => this.answer(asked.id, option, cx) : actions[e.keystroke];
     if (action) { action(); cx.stop_propagation(); }
+  }
+
+  keysModal(state, t) {
+    const close = cx => { this.keysShown = false; cx.notify(); };
+    return div().id("pipeline-keys-modal").absolute().inset_0().flex().items_center().justify_center().bg("#00000080")
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); close(cx); })
+      .child(v_flex().id("pipeline-keys-panel").w(Math.min(380, this.size.width - 32)).max_h(this.size.height - 32).rounded(10).overflow_hidden().bg(t.surface).border_1().border_color(t.border).text_color(t.foreground)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(h_flex().px(16).py(11).gap(10).items_center().flex_none().border_b(1).border_color(t.border)
+          .child(div().flex_1().font_semibold().text_size(14).child("Keys"))
+          .child(this.button("close-keys", "Close keys", close, t, { icon: "x", iconOnly: true, small: true, hint: "Close (Esc)" })))
+        .child(v_flex().id("pipeline-keys-list").px(16).py(12).gap(7).overflow_y_scrollbar().children(shortcuts(state.live).map(([key, what]) => h_flex().gap(12).items_center().text_size(12)
+          .child(div().w(72).flex_none().child(h_flex().child(div().px(6).h(20).flex().items_center().rounded(4).bg(t.raised).border_1().border_color(t.border).text_size(11).font_medium().child(key))))
+          .child(div().flex_1().min_w(0).text_color(t.muted).child(what))))));
   }
 
   header(state, t, narrow, compact, wide) {
@@ -698,13 +770,13 @@ export default class Pipeline extends View {
   runButton(state, t, compact) {
     const primary = !state.running, next = this.upcoming(state);
     return h_flex().flex_none().items_center()
-      .child(this.button("run", compact ? (state.running ? "Pause" : "Start") : state.running ? "Pause intake" : "Start pipeline", cx => this.toggleRun(cx), t,
+      .child(this.button("run", state.running ? "Pause" : compact ? "Start" : "Start pipeline", cx => this.toggleRun(cx), t,
         { icon: state.running ? "pause" : "play", primary, segment: "left", disabled: Boolean(state.live && this.repo?.error && !state.running),
-          hint: `${state.running ? "Pause intake; active work finishes" : state.live ? "Start an agent for each queued task, up to the parallel limit" : "Start dispatching queued work"} (Space)` }))
+          hint: `${state.running ? "Pause: no new task starts, and work already started finishes" : state.live ? "Start an agent for each queued task, up to the parallel limit" : "Start dispatching queued work"} (Space)` }))
       .when(primary, el => el.child(div().w(1).h(32).flex_none().flex().items_center().bg(t.accent).child(div().w(1).h(16).bg(t.accent_foreground).opacity(0.35))))
       .child(this.button("schedule", next ? next.time : "Schedule", cx => this.open(this.drawer === "schedule" ? null : "schedule", cx), t,
         { icon: "clock", iconOnly: !next, primary, segment: "right", selected: this.drawer === "schedule",
-          hint: next ? `${next.kind === "start" ? "Starts" : "Pauses intake"} every day at ${next.time}. Click to change the schedule` : state.schedule ? "Schedule: nothing more today until you start or pause by hand" : "Schedule a daily start and pause" }));
+          hint: next ? `${next.kind === "start" ? "Starts" : "Pauses"} every day at ${next.time}. Click to change the schedule` : state.schedule ? "Schedule: nothing more today until you start or pause by hand" : "Schedule a daily start and pause" }));
   }
 
   commands(state, t) {
@@ -765,6 +837,7 @@ export default class Pipeline extends View {
           : `Merge every finished branch into ${this.repo?.branch ?? "your branch"}, one at a time (Y)` })))
       .when(info.failed > 0, el => el.child(this.button("retry-all", `Retry ${info.failed} failed`, cx => this.act({ type: "retry" }, cx), t,
         { icon: "reset", small: true, hint: "Return failed tasks to the queue (R)" })))
+      .child(this.button("keys", "Keys", cx => { this.keysShown = !this.keysShown; cx.notify(); }, t, { icon: "question", small: true, iconOnly: true, hint: "Keyboard shortcuts (?)" }))
       .when(Boolean(state.live), el => el.child(div().flex_none().child(this.repo?.error ?? `${state.delivery === "pr" ? "Opens pull requests into" : "Merges into"} ${this.repo?.branch ?? "your branch"}${state.delivery !== "pr" && state.pushAfterMerge ? " · pushes to origin" : ""}`)))
       .when(Boolean(state.live && state.unpushed?.length), el => el.child(this.unpushed(state, t)))
       .when(Boolean(state.live && afterFailed(state).length), el => el.child(this.afterFailure(state, t)))
@@ -919,7 +992,7 @@ export default class Pipeline extends View {
     canvas.child(svg("mods/pipeline/moon-small.svg").id("pipeline-electron").absolute().left(c.x - SUN - 12).top(c.y - SUN - 12).size(SUN * 2 + 24).text_color(t.muted)
       .when(motion && state.running, el => el.spin(3200)));
     const { thinking, heading } = this.planHeading(state);
-    const resting = !state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle";
+    const resting = !state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Starting next" : "Idle";
     const sun = el => el.absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().bg(t.surface);
     if (!state.live) canvas.child(sun(v_flex()).border_color(t.accent)
       .items_center().justify_center().gap(5).child(icon("pipeline", 24).text_color(t.accent))
@@ -956,8 +1029,7 @@ export default class Pipeline extends View {
       const occupied = state.tasks.some(task => ACTIVE.includes(task.status) && task.status !== "routing" && task.slot === i);
       canvas.child(v_flex().absolute().left(slot.x - cw / 2).top(slot.y - CARD.h / 2).w(cw).h(CARD.h).gap(4).items_center().justify_center()
         .rounded(9).border_1().border_dashed().border_color(t.border).bg(t.canvas)
-        .when(!occupied, el => el.child(div().text_size(11).text_color(t.muted).child(`Slot ${i + 1}`))
-          .child(div().text_size(11).text_color(t.muted).child(i >= state.parallel ? "Finishing active work" : launching ? `Launching ${launching.id}` : "Available"))));
+        .when(!occupied, el => el.child(div().text_size(11).text_color(t.muted).child(i >= state.parallel ? "Not used" : launching ? `Starting ${launching.id}` : "Free"))));
     });
 
     canvas.child(this.button("queue", `Queue · ${g.queue.length}`, cx => this.open("queue", cx), t, { hint: "Every queued task" }).absolute().left(30).top(14));
@@ -974,7 +1046,7 @@ export default class Pipeline extends View {
       .absolute().left(30).top(92 + g.queueShown.length * 76 - 16).w(cw));
     if (!g.review.length && !g.prs.length) canvas.child(v_flex().absolute().right(30).top(70).w(cw).gap(6)
       .child(icon("check", 17).text_color(t.muted))
-      .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.live ? "Finished work docks here for your review and merge." : "Checked changes dock here for approval and merge.")));
+      .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.live ? "Finished work lands here for you to read and merge." : "Checked changes land here for approval and merge.")));
     if (g.review.length > g.reviewShown.length && g.reviewFits > 1) canvas.child(this.button("review-more", `+${g.review.length - g.reviewShown.length} more in review`, cx => this.open("review", cx), t)
       .absolute().right(30).top(92 + g.reviewShown.length * 88 - 20).w(cw));
     if (g.prs.length > g.prShown.length && g.prFits > 1) canvas.child(this.button("pr-more", `+${g.prs.length - g.prShown.length} more pull requests`, cx => this.open("prs", cx), t)
@@ -983,7 +1055,7 @@ export default class Pipeline extends View {
     for (const node of g.nodes) canvas.child(this.node(node, state, t, motion, now, cx, node.task === g.doneShown[0]));
     if (setup) canvas.child(this.setupCard(state, t, g));
     canvas.child(this.button("history", `${count(info.done, "task")} completed`, cx => this.open("done", cx), t, { icon: "check", small: true }).absolute().right(24).bottom(12));
-    canvas.child(div().absolute().left(30).bottom(17).text_size(11).text_color(t.muted).child("Click a task, or use the arrow keys, to inspect it. Keys are listed in Settings."));
+    canvas.child(div().absolute().left(30).bottom(17).text_size(11).text_color(t.muted).child("Click a task or use the arrow keys. Press ? for every key."));
     return canvas;
   }
 
@@ -1316,7 +1388,7 @@ export default class Pipeline extends View {
     body.child(this.heading("Example board column"));
     for (const column of ["Ready", "Backlog"]) body.child(this.button(`column-${column}`, column, cx => this.act({ type: "column", value: column }, cx), t, { selected: state.column === column }));
     body.child(this.button("watch-toggle", state.watch ? "Stop watching" : `Watch ${state.column}`, cx => this.act({ type: "watch" }, cx), t, { icon: "eye", primary: !state.watch }));
-    body.child(this.label(state.watch ? `Watching ${state.column}. New tasks join even while intake is paused.` : "Turn on watch to pick up matching tasks automatically.", t));
+    body.child(this.label(state.watch ? `Watching ${state.column}. New tasks join even while paused.` : "Turn on watch to pick up matching tasks automatically.", t));
     body.child(this.button("arrival", `Move example task to ${state.column}`, cx => this.act({ type: "arrival" }, cx), t, { icon: "plus", disabled: !state.tasks.some(task => task.status === "backlog") }));
     body.child(this.label("This button simulates someone moving a task on the board. No external task service is changed.", t));
   }
@@ -1326,10 +1398,10 @@ export default class Pipeline extends View {
     return time ? { kind, time, at: nextScheduled({ schedule: { [kind]: time } }).at } : null;
   }
   schedule(body, state, t) {
-    body.child(this.label(state.live ? "Every day at these times Pipeline starts the pipeline or pauses its intake for you, as the Start and Pause buttons do. Agents already working keep going after a pause."
-      : "Every day at these times the pipeline starts or pauses its intake for you, as the Start and Pause buttons do. Active work finishes after a pause.", t));
+    body.child(this.label(state.live ? "Every day at these times Pipeline starts or pauses the pipeline for you, as the Start and Pause buttons do. Agents already working keep going after a pause."
+      : "Every day at these times the pipeline starts or pauses for you, as the Start and Pause buttons do. Active work finishes after a pause.", t));
     for (const [kind, title, hint] of [["start", "Start at", state.live ? "Agents start for queued tasks, up to the parallel limit." : "The planner starts dispatching queued work."],
-      ["pause", "Pause intake at", state.live ? "No new agents start until the next start." : "No new work enters until the next start."]]) {
+      ["pause", "Pause at", state.live ? "No new agents start until the next start." : "No new work enters until the next start."]]) {
       const input = this.times[kind], saved = state.schedule?.[kind] ?? "";
       body.child(v_flex().gap(7).child(this.heading(title)).child(this.label(hint, t))
         .child(h_flex().gap(6).items_center()
@@ -1341,7 +1413,7 @@ export default class Pipeline extends View {
     }
     const next = this.upcoming(state);
     const day = next && new Date(next.at).toDateString() === new Date().toDateString() ? "today" : "tomorrow";
-    body.child(this.label(next ? `Next: ${next.kind === "start" ? "starts" : "pauses intake"} ${day} at ${next.time}.`
+    body.child(this.label(next ? `Next: ${next.kind === "start" ? "starts" : "pauses"} ${day} at ${next.time}.`
       : state.schedule ? `${state.running ? "Running" : "Paused"} now, with no scheduled ${state.running ? "pause" : "start"}.` : "Nothing scheduled.", t));
     body.child(this.label("Times are this computer's local time and repeat daily. Start or pause by hand whenever you like; the schedule acts again at its next time. If Herdr is closed when a time comes round, the latest missed time applies when it opens.", t));
   }
@@ -1666,6 +1738,7 @@ export default class Pipeline extends View {
       body.child(this.heading("Details for the agent"));
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
       body.child(this.label("The title and these details are the agent's first message. Saved when you leave the field.", t));
+      this.imagesDetail(body, task, t);
       body.child(this.label(waitingReason(state, task), t));
       if (state.planner?.on && task.plan?.reason && task.plan.sig === planSig(task)) body.child(div().id(`pipeline-plan-reason-${task.id}`).text_size(12).line_height(1.45)
         .child(`Planner: ${task.plan.reason}${task.plan.waits.length ? ` Waits for ${task.plan.waits.join(", ")}.` : ""}`));
@@ -1751,8 +1824,15 @@ export default class Pipeline extends View {
       body.child(this.button(`after-now-${task.id}`, "Run again", cx => this.act({ type: "afterMergeNow" }, cx), t, { icon: "reset", hint: `Runs ${state.afterMerge} again in ${after.root}` }));
     }
     if (task.status === "done" && (task.landed?.length || task.reverted)) this.revertDetail(body, state, task, t);
+    if (task.status === "done") body.child(this.heading("Follow up"))
+      .child(h_flex().gap(6).items_center()
+        .child(Input.new(this.follow).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("What should change"))
+        .child(this.button(`follow-${task.id}`, "Queue it", cx => this.followUp(task, cx), t, { disabled: !this.follow.value().trim(),
+          hint: `Queues a new task that knows what ${task.id} was, what its agent reported and where its commits are` })))
+      .child(this.label(`A new task for a fresh agent, starting from ${targetOf(task) ?? "your branch"} as it is now.`, t));
     if (task.status === "done" && task.prs) for (const [name, pr] of Object.entries(task.prs)) body.child(this.button(`pr-link-${task.id}${several ? `-${name}` : ""}`, `${several ? `${name} · ` : ""}Pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", hint: pr.url }));
     if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, trees.length ? `Retry in the same worktree${trees.length > 1 ? "s" : ""}` : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
+    if (task.images?.length && task.status !== "queued") body.child(this.label(`Its agent was given ${count(task.images.length, "image")}: ${task.images.map(item => item.path.replace(/^.*\//, "")).join(", ")}`, t));
     if (task.status === "queued" && !trees.length) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
     else if (!["merging", "pr", "done"].includes(task.status) && !task.discard) {
       const sure = this.confirm === task.id;

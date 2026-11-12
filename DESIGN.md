@@ -144,7 +144,7 @@ Connection paths and clickable task nodes share these coordinates. Preserve that
 
 ### Narrow panes and zoom
 
-Below width 820, the header hides its standalone Motion action; motion remains available in Settings. The controls row and the status bar scroll horizontally. Keyboard hints live in Settings.
+Below width 820, the header hides its standalone Motion action; motion remains available in Settings. The controls row and the status bar scroll horizontally. Keyboard hints live in the keys overlay (`?`, or the status bar's small Keys action: a 380-wide panel on the Settings backdrop, one row per key with the key in a raised chip) and in Settings.
 
 The inspector is 330 wide, capped at the pane width minus 16. Above width 1180 it sits beside the scene and its width is subtracted from the available canvas width. At or below that threshold it overlays the scene's right edge. Its body owns vertical scrolling; task rows must retain their content height so every queue entry stays reachable.
 
@@ -206,7 +206,7 @@ All motion is native; the script never renders frames.
 - The inspector fades in over 160 ms `ease-out`: it renders once transparent, then a follow-up render targets full opacity.
 - Stage progress bars render the current progress, then a single follow-up render targets full width with a linear transition for the remaining stage time. A bar's identity includes its stage start, so speed changes and resumed pauses relaunch it.
 - Busy paths carry comet particles: glyph samples along the curve run `frames()` with phase-shifted lists on Herdr's shared clock, so the head travels one way with a two-step tail. Dispatch is accent, checks ansi5 and merges ansi2.
-- While intake runs, a moon orbits the planner ring (spin 7000 ms), an electron circles closer (3200 ms) and a corona pulses outwards (3200 ms). Paused, they rest.
+- While the pipeline runs, a moon orbits the planner ring (spin 7000 ms), an electron circles closer (3200 ms) and a corona pulses outwards (3200 ms). Paused, they rest.
 - A starfield (about one star per 11000 square units) and completed stars twinkle with opacity loops; review cards waiting for you carry a still ansi5 halo (only a task that needs you pulses); active cards spin a small satellite.
 
 Motion runs only when the local motion preference is on, system Reduce Motion is off and the app window is active. Outside Pipeline, working spinners go through `spin()` in `ui.js`, which leaves them still under Reduce Motion. The current system preference check is macOS-specific. Turning motion off removes particles and loops, keeps every label and state, and shows progress at the last render.

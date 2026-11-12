@@ -2,6 +2,7 @@
 export const STORE = "pipeline.prototype.v1";
 export const LIVE = "live:";
 export const VERSION = 5;
+export const IMAGES = 4;
 // Pipelines saved before they were per space are keyed by machine and folder alone; one belongs to the space that started it.
 export const pipelineId = (on, cwd, space) => JSON.stringify([on ?? null, cwd, space]);
 export function spaceKey(all, on, cwd, space) {
@@ -313,7 +314,7 @@ export function waitingReason(state, task, now = Date.now()) {
   const waits = waitsFor(state, task), tasks = waits.filter(wait => wait.kind === "task"), tickets = waits.filter(wait => wait.kind === "ticket");
   if (waits.length) return `Waiting for ${[tasks.length && `${tasks.map(wait => wait.id).join(", ")} to merge`,
     tickets.length && `${tickets.map(wait => wait.id).join(", ")} to close in ${SOURCES[task.ticket?.provider] ?? "its tracker"}`].filter(Boolean).join(" and ")}`;
-  if (!state.running) return "Intake paused";
+  if (!state.running) return "Paused";
   if (plannerHolds(state)) return "Waiting for the planner";
   const limit = limitHolding(state, task, now);
   if (limit) return `Held by ${limitName(limit)}${limit.resets ? ` until ${resetTime(limit.resets, now)}` : ""}`;
@@ -413,7 +414,7 @@ function plain(state, picked, now = Date.now()) {
     : `${asking.join(", ")} ${asking.length === 1 ? "is paused until you answer. Its slot stays" : "are paused until you answer. Their slots stay"} reserved.`;
   if (state.live && !state.running && !state.tasks.length) return "Type a task, then start the pipeline. Each task gets its own agent, branch and worktree.";
   const starts = state.schedule?.start ? ` Starts by itself at ${state.schedule.start}.` : "";
-  if (!state.running) return outstanding(state).length ? `Intake paused. Active work and approved merges can finish.${starts}` : starts ? `Ready.${starts}` : "Ready. Start the pipeline and the planner picks independent work first.";
+  if (!state.running) return outstanding(state).length ? `Paused. Work already started and approved merges finish.${starts}` : starts ? `Ready.${starts}` : "Ready. Start the pipeline and the planner picks independent work first.";
   if (ready.length && !state.live && quotaHeld(state)) return `Holding new work to protect your quota reserve. Reset the example quota to resume.${holding}`;
   const limit = ready.length && ready.every(task => limitHolding(state, task, now)) && limitHolding(state, ready[0], now);
   if (limit) return `Holding new agents: ${limitName(limit)} is at ${Math.round(limitUsed(limit, now))}%, past the ${limitHold(state)}% you hold at.${limit.resets ? ` It resets at ${resetTime(limit.resets, now)}.` : ""} Agents already working keep going.${holding}`;
@@ -432,6 +433,18 @@ export function typedTask(text) {
   if (sentence && sentence.length <= TITLE) return { title: sentence, description: full.slice(0, 4000) };
   const space = flat.slice(0, TITLE).lastIndexOf(" "), head = flat.slice(0, space > TITLE / 2 ? space : TITLE - 1).replace(/[\s,;:.-]+$/, "");
   return { title: `${head}…`, description: full.slice(0, 4000) };
+}
+
+// A follow-up starts from the branch as it is now, so it is told what the earlier task was and where its commits are.
+function followUpDetails(origin, extra) {
+  const ticket = origin.ticket, landed = origin.landed ?? [], prs = Object.values(origin.prs ?? {});
+  return [extra || null,
+    `This follows up on ${origin.id} "${origin.title}", which ${origin.reverted ? "was merged and then reverted" : "is merged"}${origin.target ? ` (into ${origin.target})` : ""}. Your worktree starts from the branch as it is now.`,
+    origin.description?.trim() ? `What ${origin.id} asked for:\n${origin.description.trim().slice(0, 1500)}` : null,
+    origin.summary ? `What its agent reported:\n${origin.summary}` : null,
+    landed.length ? `Its commits: ${landed.map(repo => `${landed.length > 1 ? `${repo.name} ` : ""}${repo.from.slice(0, 7)}..${repo.to.slice(0, 7)}`).join(", ")} (git log -p <range> shows them).` : null,
+    prs.length ? `Its pull request${prs.length > 1 ? "s" : ""}: ${prs.map(pr => pr.url).join(", ")}` : null,
+    ticket?.key ? `${SOURCES[ticket.provider] ?? "Ticket"} ${ticket.key}${ticket.url ? `: ${ticket.url}` : ""}` : null].filter(Boolean).join("\n\n").slice(0, 6000);
 }
 
 // All mutations go through one reducer; multiple views share one pipeline.
@@ -533,7 +546,7 @@ export function reduce(state, action, now = Date.now()) {
       next.running = !next.running;
       if (next.live && action.space) next.space = action.space;
       if (next.running) delete next.setup;
-      event(next, next.running ? (next.live ? "Started. Agents start for queued tasks, up to the parallel limit." : "Planner started. Looking for independent work.") : "Intake paused. Active work will finish.");
+      event(next, next.running ? (next.live ? "Started. Agents start for queued tasks, up to the parallel limit." : "Planner started. Looking for independent work.") : "Paused. Work already started will finish.");
       break;
     case "schedule": {
       const value = { ...(next.schedule ?? { start: null, pause: null }) };
@@ -550,7 +563,7 @@ export function reduce(state, action, now = Date.now()) {
       // Times that already passed today wait for tomorrow instead of firing the moment they're saved.
       next.scheduled = lastScheduled(next, now)?.at ?? null;
       if (next.live && action.space) next.space = action.space;
-      const parts = [value.start && `starts at ${value.start}`, value.pause && `pauses intake at ${value.pause}`].filter(Boolean);
+      const parts = [value.start && `starts at ${value.start}`, value.pause && `pauses at ${value.pause}`].filter(Boolean);
       event(next, parts.length ? `Every day the pipeline ${parts.join(" and ")}.` : "Schedule cleared.");
       break;
     }
@@ -562,7 +575,7 @@ export function reduce(state, action, now = Date.now()) {
       if (next.running === running) break;
       next.running = running;
       if (running) delete next.setup;
-      event(next, running ? `Scheduled start at ${due.time} · planner started.` : `Scheduled pause at ${due.time} · intake paused. Active work will finish.`);
+      event(next, running ? `Scheduled start at ${due.time} · planner started.` : `Scheduled pause at ${due.time} · paused. Work already started will finish.`);
       break;
     }
     case "add": enqueue(next, action.ids ?? [], "Picked"); break;
@@ -581,6 +594,15 @@ export function reduce(state, action, now = Date.now()) {
       next.tasks.push(fresh({ id, title, repos: guessRepos(description || title, next.created), priority: 2, depends: [], column: "Ready",
         description: description || "Created in Pipeline. The simulation picked its repositories from the title; change them while it waits in the queue." }, "backlog", null));
       enqueue(next, [id], "Created");
+      break;
+    }
+    case "followUp": {
+      const origin = row(action.id), { title, description } = typedTask(action.text);
+      if (!next.live || origin?.status !== "done" || !title) return state;
+      next.created = (next.created ?? 0) + 1;
+      const id = `T-${next.created}`, known = (next.repositories ?? []).map(repo => repo.name), repos = origin.repos.filter(name => known.includes(name));
+      next.tasks.push({ ...liveTask(next, { id, title, description: followUpDetails(origin, description), ...(repos.length ? { repos } : {}) }, `Follow-up to ${origin.id}`), follows: origin.id });
+      event(next, `${id} joined the queue as a follow-up to ${origin.id}.`, id);
       break;
     }
     case "generate": {
@@ -815,6 +837,18 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || Boolean(next.quiet) === value) return state;
       next.quiet = value;
       event(next, value ? "Pipeline no longer notifies you." : "Pipeline notifies you when work needs you.");
+      break;
+    }
+    case "image": {
+      const task = row(action.id), path = String(action.path ?? "");
+      if (!next.live || task?.status !== "queued" || started(task) || !path || (task.images ?? []).length >= IMAGES || task.images?.some(image => image.path === path)) return state;
+      task.images = [...(task.images ?? []), { path }];
+      break;
+    }
+    case "imageRemove": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "queued" || !task.images?.some(image => image.path === action.path)) return state;
+      task.images = task.images.filter(image => image.path !== action.path);
       break;
     }
     case "describe": {

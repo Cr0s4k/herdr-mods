@@ -76,6 +76,12 @@ Task cards are 164 wide below 1320 px of window width, 188 up to 1500 and 212 be
 
 `delivery.py merge` returns `landed`: `{name, root, branch, from, to}` for each repository it fast-forwarded in that call, saved as `task.landed` by `merged`. `canRevert` is a live, done task with `landed` that is neither reverting nor reverted. The `revert` action sets `task.revert`; the runner's Git queue runs `delivery.py revert`, which checks every repository first (on `branch`, no uncommitted tracked changes, `to` still an ancestor of HEAD), then `git revert --no-commit from..to` and one commit per repository, aborting on a conflict. `reverted` sets `task.reverted`, records pushes when `pushAfterMerge` is on and queues the After merge command for each landed root; `revertFailed` keeps the reason in `task.revertError`.
 
+### Follow-ups and images
+
+`followUp` (`{id, text}`) on a done task pushes a queued live task titled from the text (`typedTask`), with `follows` set and `followUpDetails` as its description: the origin's title and state, its description, `summary`, `landed` ranges, pull requests and ticket. It keeps the origin's repositories that are still listed.
+
+`task.images` (`[{path}]`, at most `IMAGES`) is set by `image` and `imageRemove` while a task is queued and has no worktree. The view copies a dropped file (`on_drop`) or the clipboard's PNG (`osascript`, macOS) into `<appHome>/pipeline-images/<random>/`, one folder per task, and refuses on a project with `context.on`. `prompt` lists the paths, and the launch adds the folder to `agentRun`'s extra directories (`--add-dir` for Claude Code and Codex). Files stay after the task ends.
+
 ## Next milestone
 
 Pull requests on hosts other than GitHub.

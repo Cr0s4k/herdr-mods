@@ -27,7 +27,7 @@ function native() {
 const path = () => new Proxy({}, { get: (_target, key) => key === "build" ? () => ({}) : () => path() });
 globalThis.__pipelineView = {
   TextareaState: { new: () => globalThis.__pipelineView.InputState.new() },
-  ...model, ...geometry, View: class {}, div: native, svg: native, h_flex: native, v_flex: native,
+  ...model, ...geometry, View: class {}, div: native, svg: native, image: native, h_flex: native, v_flex: native,
   Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) },
   InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => { world.runs.push([name, args]); world.onRun?.(name, args); },
@@ -807,7 +807,7 @@ test("the Schedule drawer saves, rejects and clears daily times", () => {
   assert.equal(view.times.start.value(), "22:00");
   assert.ok(find(view.render(cx), "schedule").nodes.includes("22:00"), "the clock beside Start shows the next start");
   click(view, "run");
-  assert.match(find(view.render(cx), "schedule").styles.tooltip[0], /Pauses intake|Schedule:/, "while running the clock shows the next pause, if any");
+  assert.match(find(view.render(cx), "schedule").styles.tooltip[0], /Pauses every day|Schedule:/, "while running the clock shows the next pause, if any");
   click(view, "run");
   view.times.pause.set_value("whenever"); view.times.pause.emit("blur", cx);
   assert.match(text(find(view.render(cx), "inspector")), /Use a time like/);
@@ -1456,4 +1456,70 @@ test("review shows the agent's summary, and a merged task offers Revert, asked t
   scene = view.render(cx);
   assert.equal(find(scene, "revert-T-1"), undefined);
   assert.match(text(scene), /Reverted with a new commit on main/);
+});
+
+test("? shows every key for this mode in an overlay, and Esc closes it before anything else", () => {
+  const view = setupLive();
+  assert.equal(find(view.render(cx), "keys-modal"), undefined);
+  press(view, "?");
+  let keys = text(find(view.render(cx), "keys-list"));
+  assert.match(keys, /Space\s+Start or pause/);
+  assert.match(keys, /P\s+Tickets from Plane/);
+  assert.doesNotMatch(keys, /Simulation speed|Example tasks/);
+  press(view, "space");
+  assert.equal(view.state().running, false, "keys do nothing behind the overlay");
+  press(view, "escape");
+  assert.equal(find(view.render(cx), "keys-modal"), undefined);
+  click(view, "keys");
+  assert.ok(find(view.render(cx), "keys-modal"), "the status bar button opens it too");
+  const demo = setup();
+  press(demo, "?");
+  keys = text(find(demo.render(cx), "keys-list"));
+  assert.match(keys, /S\s+Simulation speed/);
+  assert.doesNotMatch(keys, /Tickets from Plane/);
+});
+
+test("a completed task takes a follow-up: a new queued task that carries what the first one was and reported", () => {
+  const view = setupLive();
+  view.title.set_value("Add a dark mode toggle");
+  click(view, "create");
+  Object.assign(row(view, "T-1"), { status: "done", finished: 1, target: "main", description: "Use the system preference first.", summary: "Changed: Added the toggle.\nChecked: npm test passes.",
+    landed: [{ name: "shop", root: "/work/shop", branch: "main", from: "a".repeat(40), to: "b".repeat(40) }] });
+  view.inspect("T-1", cx);
+  assert.equal(find(view.render(cx), "follow-T-1").styles.disabled[0], true, "nothing to queue until something is typed");
+  view.follow.set_value("The toggle should remember the choice");
+  click(view, "follow-T-1");
+  const task = row(view, "T-2");
+  assert.deepEqual([task.status, task.title, task.follows, task.source, task.repos], ["queued", "The toggle should remember the choice", "T-1", "Follow-up to T-1", ["shop"]]);
+  assert.match(task.description, /^This follows up on T-1 "Add a dark mode toggle", which is merged \(into main\)/);
+  assert.match(task.description, /What T-1 asked for:\nUse the system preference first\./);
+  assert.match(task.description, /What its agent reported:\nChanged: Added the toggle\./);
+  assert.match(task.description, /Its commits: aaaaaaa\.\.bbbbbbb/);
+  assert.deepEqual([view.selected, view.follow.value(), view.details.value()], ["T-2", "", task.description], "it opens the new task with its details ready to edit");
+  assert.equal(find(view.render(cx), "follow-T-2"), undefined, "only completed tasks take a follow-up");
+});
+
+test("a queued task takes dropped or pasted images, copies them into Herdr's folder and lists them for the agent", async () => {
+  const view = setupLive();
+  view.title.set_value("Match the mockup");
+  click(view, "create");
+  view.inspect("T-1", cx);
+  const calls = [];
+  world.exec = (command, args) => { calls.push([command, args.slice(3)]); return args[4] ? { code: 0, stdout: `/home/pipeline-images/abc/${args[4].replace(/^.*\//, "")}` } : { code: 4, stdout: "" }; };
+  const run = async fn => { const jobs = []; fn({ ...cx, spawn: job => jobs.push(job({ ...cx })) }); await Promise.all(jobs); };
+  await run(spawning => find(view.render(cx), "images-T-1").handlers.on_drop({ paths: ["/Users/me/Desktop/mock.png", "/Users/me/notes.txt"] }, spawning));
+  assert.deepEqual(row(view, "T-1").images, [{ path: "/home/pipeline-images/abc/mock.png" }]);
+  assert.match(text(find(view.render(cx), "image-note-T-1")), /notes\.txt isn't a PNG, JPEG, GIF or WebP image/);
+  await run(spawning => find(view.render(cx), "images-T-1").handlers.on_drop({ paths: ["/Users/me/Desktop/two.jpg"] }, spawning));
+  assert.equal(calls.at(-1)[1][0], "/home/pipeline-images/abc", "later images join the first one's folder");
+  assert.equal(find(view.render(cx), "image-note-T-1"), undefined);
+  const live = await import("../mods/pipeline/pipeline-live.js");
+  assert.match(live.prompt(row(view, "T-1"), [{ name: "shop", cwd: "/wt", branch: "b", target: "main", base: "a".repeat(40) }], "merge"),
+    /The person attached images to this task\. Open them before you start:\n- \/home\/pipeline-images\/abc\/mock\.png\n- \/home\/pipeline-images\/abc\/two\.jpg\n/);
+  click(view, "image-remove-T-1-0");
+  assert.deepEqual(row(view, "T-1").images, [{ path: "/home/pipeline-images/abc/two.jpg" }]);
+  row(view, "T-1").status = "working";
+  view.act({ type: "image", id: "T-1", path: "/x/late.png" }, cx);
+  assert.equal(row(view, "T-1").images.length, 1, "a started task takes no more images");
+  world.exec = null;
 });

@@ -167,7 +167,7 @@ Review, and the same cards, buttons and inspector. Pipeline remembers the choice
 In the sidebar, a space lists its **Pipeline** above its agents while the Pipeline tab is open
 there, the live pipeline is started, or it has tasks that aren't merged yet. It spins while the
 pipeline is started; click it to open the pipeline in that space. The × that appears on hover
-closes the pipeline after a confirmation that lists what goes: it stops intake and clears the
+closes the pipeline after a confirmation that lists what goes: it stops the pipeline and clears the
 schedule and ticket watches, removes queued tasks, stops the agents still at work and deletes their
 worktrees and branches, and closes the Pipeline tab. Tasks merging or waiting on a pull request stay.
 
@@ -191,7 +191,11 @@ takes about 20 seconds and costs about a cent. The card goes away with **Done** 
 before the card existed.
 
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
-   the title and details are its first message. Text too long for a title (over 90
+   the title and details are its first message. Under the details, **Images** takes up to
+   four screenshots or mockups (PNG, JPEG, GIF, WebP): drop them from Finder, or **Paste
+   image** for one on the clipboard (macOS). Pipeline copies them into
+   `~/.config/herdr-app/pipeline-images`, lists them in the agent's first message and gives
+   Claude Code and Codex that folder to read. A project on another machine takes none. Text too long for a title (over 90
    characters, marked **Title + details** in the field) keeps its first sentence or opening
    words as the title, and the whole text goes into its details. Or bring tickets with
    **Add from tickets**, which opens the tracker this pipeline used last and switches between
@@ -382,6 +386,11 @@ stopped or asks to trust its worktree, and a pull request that turns ready to me
 blocked, is closed or is merged. Clicking one opens Pipeline. **Notify me** in Settings
 turns them off. Completed tasks say how long they took.
 
+**Follow up** in a completed task's inspector queues a new task from what you type: a fresh
+agent that starts from the branch as it is now, with details that say what the first task
+was, what its agent reported, where its commits are, and its pull request or ticket. It opens
+in the queue, where the details can be edited before it starts.
+
 A working agent redraws its terminal all the time. When one shows nothing new for ten
 minutes, its card turns to **No output for 12 min** and Pipeline notifies you that it may be
 stuck; the flag clears by itself when the screen moves again. For Claude Code and Codex, a
@@ -417,13 +426,13 @@ change. Codex's limits come from its newest session on that machine, so they are
 
 ### Schedule
 
-The clock on the right half of the **Start pipeline** button opens the schedule, which sets a daily **Start at** and **Pause intake at** time (22:00, 7:30
+The clock on the right half of the **Start pipeline** button opens the schedule, which sets a daily **Start at** and **Pause at** time (22:00, 7:30
 or 9pm), in Live and Simulation. When a time comes round, Pipeline does what the Start or
 Pause button does: a pause stops new work entering, and agents already working keep going.
 Either time can be left empty. Starting or pausing by hand still works; the schedule acts
 again at its next time. A time that already passed when you save it waits until tomorrow.
 The clock shows the next time that changes anything: beside Start pipeline the next start,
-beside Pause intake the next pause.
+beside Pause the next pause.
 Times are the computer's local time and need Herdr open; if Herdr was closed, the latest
 missed time applies when it opens.
 
@@ -441,7 +450,7 @@ arrival.
 
 **Start pipeline** (Space) sends work to the planner at the centre. Tasks appear as comets
 on its orbit, launch into the work slots around it, and particles stream along the busy
-paths while a stage bar fills. Checked work docks in **Review**: approve a task with the
+paths while a stage bar fills. Checked work lands in **Review**: approve a task with the
 **Approve** button on its card, or everything at once with **Approve N tasks** in the status
 strip (Y). Merged tasks become stars in the completed constellation. Dependencies wait
 for their prerequisite changes to merge, and the plan above the planner says why anything
@@ -456,10 +465,11 @@ own answer, and the task resumes where it stopped and the next question opens. S
 has **Simulate a question** to make the next working task ask. Real agents will appear in
 the sidebar on their own; this only simulates that moment.
 
-Pipeline keeps two bars around the scene: controls on top (the New task field and intake
+Pipeline keeps two bars around the scene: controls on top (the New task field and its
 buttons sit beside the title in a wide window, and on their own row in a narrow one) and one
 status bar at the bottom with the state, counts, the latest activity (click it for the log)
-and the actions that wait for you. Settings lists the keys.
+and the actions that wait for you. **?** (or the small button at the end of the status bar)
+shows every key for the mode you are in; Esc closes it. Settings lists them too.
 
 Keys, with the scene focused: Space start/pause, N new task, the arrow keys (or J and K)
 to walk the tasks in the order the scene shows them, A examples (in Live: P for

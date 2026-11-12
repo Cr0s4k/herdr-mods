@@ -1783,3 +1783,11 @@ test("Revert undoes a merged task with the commits the merge landed, pushes when
   assert.match(world.state().events[0].message, /T-1 reverted with a new commit · pushed to origin\./);
   assert.equal(model.canRevert(world.state(), task), false, "a reverted task isn't reverted twice");
 });
+
+test("an agent started on a task with images is given their folder to read", async () => {
+  let state = reduce(typed("A"), { type: "image", id: "T-1", path: "/home/pipeline-images/abc/mock.png" }, 0);
+  state = reduce(reduce(state, { type: "image", id: "T-1", path: "/home/pipeline-images/abc/two.png" }, 0), { type: "run" }, 0);
+  const world = host(state);
+  await step(new live.LiveRunner(world.host));
+  assert.deepEqual(world.started[0].run, ["claude", "--add-dir=/home/pipeline-images/abc"]);
+});
