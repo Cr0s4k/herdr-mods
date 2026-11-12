@@ -61,8 +61,10 @@ def rebase(item):
 
 
 def land(item):
+    item["from"] = git(item["top"], "rev-parse", "HEAD")
     if git(item["top"], "merge", "-q", "--ff-only", item["branch"], optional=True) is None:
         raise ValueError(item["target"] + " moved in a way the branch can't fast-forward onto. Ask the agent to rebase onto " + item["target"] + ", then merge again.")
+    item["to"] = git(item["top"], "rev-parse", "HEAD")
 
 
 def merge(payload):
@@ -95,7 +97,36 @@ def merge(payload):
             break
     first = items[0]
     return {"target": first["target"], "targets": {item["name"]: item["target"] for item in items if item["changed"]},
-            "merged": merged, "failed": failed, "commit": git(first["top"], "rev-parse", "HEAD"), "already": not pending}
+            "merged": merged, "failed": failed, "commit": git(first["top"], "rev-parse", "HEAD"), "already": not pending,
+            "landed": [{"name": item["name"], "root": item["top"], "branch": item["target"], "from": item["from"], "to": item["to"]} for item in pending if item.get("to")]}
+
+
+def revert(payload):
+    """Undo a merged task with one new commit per repository. Every repository is checked before any is changed."""
+    repos, several = payload["repos"], len(payload["repos"]) > 1
+
+    def fail(repo, text):
+        raise ValueError((repo["name"] + ": " if several and repo.get("name") else "") + text)
+
+    for repo in repos:
+        top, branch = repo["root"], repo["branch"]
+        current = git(top, "symbolic-ref", "--short", "HEAD", optional=True)
+        if current != branch:
+            fail(repo, "Your project folder is on " + (current or "a detached HEAD") + ", and the task merged into " + branch + ". Check out " + branch + ", then revert again.")
+        if git(top, "status", "--porcelain", "--untracked-files=no"):
+            fail(repo, "Your project folder has uncommitted changes on " + branch + ". Commit or stash them, then revert again.")
+        if git(top, "merge-base", "--is-ancestor", repo["to"], "HEAD", optional=True) is None:
+            fail(repo, "The task's commits are no longer on " + branch + ", so there is nothing to revert.")
+    reverted = []
+    for repo in repos:
+        top = repo["root"]
+        if git(top, "revert", "--no-commit", repo["from"] + ".." + repo["to"], optional=True) is None:
+            git(top, "revert", "--abort", optional=True)
+            done = (" and ".join(reverted) + " reverted, but ") if reverted else ""
+            fail(repo, done + "later work changed the same lines, so Git can't undo the task on its own. Nothing changed here. Revert it by hand: git revert " + repo["from"][:7] + ".." + repo["to"][:7])
+        git(top, "commit", "-q", "-m", "Revert " + payload["title"])
+        reverted.append(repo.get("name") or top)
+    return {"reverted": reverted, "commit": git(repos[0]["root"], "rev-parse", "HEAD")}
 
 
 def push_error(stderr, remote, branch):
@@ -176,13 +207,17 @@ def publish(payload):
     return found
 
 
-# The agent writes the description inside the worktree's Git folder, so it is never committed.
-def written(worktree):
-    path = worktree.is_dir() and git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-pr.md", optional=True)
+# The agent writes the description and its summary inside the worktree's Git folder, so they are never committed.
+def written(worktree, name="herdr-pr.md"):
+    path = worktree.is_dir() and git(worktree, "rev-parse", "--path-format=absolute", "--git-path", name, optional=True)
     try:
         return Path(path).read_text().strip() if path else None
     except OSError:
         return None
+
+
+def summary(payload):
+    return {"text": (written(Path(payload["worktree"]), "herdr-summary.md") or "")[:6000]}
 
 
 FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
@@ -253,7 +288,7 @@ def remove(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit}
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit, "revert": revert, "summary": summary}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))

@@ -282,7 +282,11 @@ before the card existed.
    you**) the task stops as **Checks failed** with the output and **Fix**, **Review anyway**
    and **Run checks again**. Checks run in the worktree with your environment, for up to 10
    minutes, beside merges and launches rather than in front of them.
-5. Review the work: the inspector lists the files the task changed since it started, with
+5. Review the work: **Summary from the agent** in the inspector is what its agent wrote before
+   it stopped, in at most three short lines: **Changed**, **Checked** and, when there is one,
+   **Unsure**. Agents are asked for it in their first message and write it into Git's own
+   folder, so it is never committed; Pipeline reads it when the agent's turn ends and keeps
+   it on the task after the merge. An agent that writes none leaves the box out. The inspector lists the files the task changed since it started, with
    lines added and removed. Click a file, or **Read the changes** (D), to read the full diff
    in the changes dialog, file by file. The list is there while the agent works too; the
    round arrow reads it again. Send feedback if it needs another pass, then
@@ -303,6 +307,15 @@ before the card existed.
    task id in `$PIPELINE_TASK`. Ctrl-C leaves a shell in the worktree; pressing it again shows
    that tab; it closes when the task merges or is discarded. Several branches running at once
    is up to the command, for example a dev server that picks a free port.
+
+   **Revert** in a completed task's inspector (asked twice) undoes a task merged locally with
+   one new commit, `Revert T-1 <title>`, on the branch it merged into: only that task's
+   commits, with work merged since left alone and no history rewritten. The commit is pushed
+   when merges are, and the After merge command runs again. It refuses, changing nothing and
+   saying why, while your project folder has uncommitted changes, is on another branch, or
+   later work changed the same lines (it then names the `git revert` to run by hand). The
+   task stays in Completed, marked **Reverted**; its ticket is not moved back. Tasks merged
+   before Pipeline recorded their commits, and tasks delivered as pull requests, have no Revert.
 
    Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
    finishes with passing checks (or with no check set) merges straight away. Work you sent

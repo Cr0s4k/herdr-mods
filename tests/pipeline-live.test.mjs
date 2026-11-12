@@ -87,7 +87,7 @@ test("a launch makes a worktree, starts the chosen agent there and tracks its te
   assert.equal(world.scripts[0][1].provider, "pipeline");
   assert.deepEqual(world.started, [{ task: "T-1", workspaces: model.workspacesOf(task), agent: "Claude Code", run: ["claude"], space: undefined }]);
   assert.equal(task.own, "space", "without a known space, the agent gets its own");
-  assert.match(live.prompt(task, model.workspacesOf(task)), /^Add a dark mode toggle\n\nHerdr Pipeline made an isolated Git worktree[\s\S]*merges it into main\.$/);
+  assert.match(live.prompt(task, model.workspacesOf(task)), /^Add a dark mode toggle\n\nHerdr Pipeline made an isolated Git worktree[\s\S]*merges it into main\.\n\nBefore you stop, write a short summary for the person who reviews this to the file `git rev-parse --git-path herdr-summary\.md` prints[\s\S]*At most three lines[\s\S]*\nChanged: [\s\S]*\nChecked: [\s\S]*\nUnsure: [\s\S]*$/);
 });
 
 test("a chosen agent wins over the first installed one, and a missing agent fails the launch clearly", async () => {
@@ -1718,4 +1718,68 @@ test("the runner reads limits once per machine every five minutes, when asked, a
   assert.equal(reads, 5);
   await tick(70000 + model.LIMIT_READ);
   assert.equal(reads, 7);
+});
+
+test("the agent's summary is read when its turn ends and stays on the task after the merge removes its worktree", async () => {
+  let text = "Added the toggle.\n\nNot sure about the default.";
+  const world = host(reduce(typed("A"), { type: "run" }, 0), { async delivery(_context, payload) {
+    world.scripts.push(["delivery", payload]);
+    return payload.op === "summary" ? { text } : { target: "main", landed: [{ name: "shop", root: "/work/shop", branch: "main", from: "a".repeat(40), to: "b".repeat(40) }] };
+  } });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "working" }];
+  await step(runner);
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "summary").length, 0, "nothing is read while it works");
+  world.agents = [{ address: "t9", status: "done" }];
+  await step(runner); await step(runner);
+  assert.equal(row(world.state(), "T-1").summary, text);
+  await step(runner);
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "summary").length, 1, "once per turn");
+  assert.equal(world.scripts.find(([, payload]) => payload.op === "summary")[1].worktree, "/wt/T-1-a");
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.workspaces, task.summary], ["done", null, text]);
+});
+
+test("Revert undoes a merged task with the commits the merge landed, pushes when merges are pushed, and runs After merge again", async () => {
+  const landed = [{ name: "shop", root: "/work/shop", branch: "main", from: "a".repeat(40), to: "b".repeat(40) }];
+  let refuse = "Your project folder has uncommitted changes on main. Commit or stash them, then revert again.";
+  const start = reduce(reduce(reduce(typed("A"), { type: "afterMerge", command: "./install.sh" }, 0), { type: "pushAfterMerge" }, 0), { type: "run" }, 0);
+  const world = host(start, { check: async () => ({ code: 0, output: "" }), async delivery(_context, payload) {
+    world.scripts.push(["delivery", payload]);
+    if (payload.op === "revert" && refuse) throw new Error(refuse);
+    return payload.op === "push" ? { pushed: true, remote: "origin", branch: "main" } : { target: "main", landed };
+  } });
+  assert.equal(world.state().pushAfterMerge, true);
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "working" }];
+  await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
+  await step(runner);
+  assert.equal(model.canRevert(world.state(), row(world.state(), "T-1")), false, "only merged work can be reverted");
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner); await step(runner);
+  assert.deepEqual([row(world.state(), "T-1").landed, world.state().afterRuns], [landed, []]);
+  assert.equal(model.canRevert(world.state(), row(world.state(), "T-1")), true);
+  world.store = { [id]: reduce(world.state(), { type: "revert", id: "T-1" }, 0) };
+  assert.equal(reduce(world.state(), { type: "revert", id: "T-1" }, 0), world.state(), "asked once");
+  world.scripts = [];
+  await step(runner);
+  let task = row(world.state(), "T-1");
+  assert.deepEqual([task.revert, task.reverted, task.revertError], [false, undefined, refuse]);
+  assert.deepEqual(world.scripts.map(([, payload]) => payload.op), ["revert"], "a refused revert pushes nothing");
+  refuse = null;
+  world.store = { [id]: reduce(world.state(), { type: "revert", id: "T-1" }, 0) };
+  world.scripts = [];
+  await step(runner);
+  task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.revert, Boolean(task.reverted), task.revertError], ["done", false, true, null]);
+  assert.deepEqual(world.scripts.map(([, payload]) => [payload.op, payload.title ?? payload.branch]), [["revert", "T-1 A"], ["push", "main"]]);
+  assert.deepEqual(world.scripts[0][1].repos, landed);
+  assert.deepEqual(world.state().afterRuns, [{ repo: "shop", root: "/work/shop", task: "T-1", error: null }], "the folder is installed again from the reverted state");
+  assert.match(world.state().events[0].message, /T-1 reverted with a new commit · pushed to origin\./);
+  assert.equal(model.canRevert(world.state(), task), false, "a reverted task isn't reverted twice");
 });

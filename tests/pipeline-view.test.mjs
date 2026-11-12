@@ -1426,3 +1426,34 @@ test("one tickets button opens the tracker used last, and the drawer switches be
   assert.equal(view.drawer, "linear", "it comes back to the tracker used last");
   world.storage.delete("tickets:shop");
 });
+
+test("review shows the agent's summary, and a merged task offers Revert, asked twice", () => {
+  const view = setupLive();
+  view.title.set_value("Add a dark mode toggle");
+  click(view, "create");
+  const task = row(view, "T-1");
+  Object.assign(task, { status: "review", summary: "Changed: Added the toggle.\nChecked: npm test passes.\nUnsure: Not sure about the default." });
+  view.inspect("T-1", cx);
+  let scene = view.render(cx);
+  assert.match(text(find(scene, "summary-T-1")), /Changed\s+Added the toggle\.\s+Checked\s+npm test passes\.\s+Unsure\s+Not sure about the default\./);
+  assert.equal(find(scene, "revert-T-1"), undefined, "nothing to revert before it merges");
+  Object.assign(task, { status: "done", finished: 1, landed: [{ name: "shop", root: "/work/shop", branch: "main", from: "a", to: "b" }] });
+  scene = view.render(cx);
+  assert.ok(find(scene, "summary-T-1"), "the summary stays on the completed task");
+  click(view, "revert-T-1");
+  assert.equal(row(view, "T-1").revert, undefined, "the first click only asks");
+  assert.match(text(view.render(cx)), /Click again to undo this task's changes on main with one new commit/);
+  click(view, "revert-T-1");
+  assert.equal(row(view, "T-1").revert, true);
+  scene = view.render(cx);
+  assert.equal(find(scene, "revert-T-1"), undefined);
+  assert.match(text(scene), /Reverting on main…/);
+  view.act({ type: "revertFailed", id: "T-1", error: "Your project folder has uncommitted changes on main." }, cx);
+  scene = view.render(cx);
+  assert.match(text(find(scene, "revert-error-T-1")), /Not reverted\. Your project folder has uncommitted changes on main\./);
+  click(view, "revert-T-1"); click(view, "revert-T-1");
+  view.act({ type: "reverted", id: "T-1" }, cx);
+  scene = view.render(cx);
+  assert.equal(find(scene, "revert-T-1"), undefined);
+  assert.match(text(scene), /Reverted with a new commit on main/);
+});

@@ -142,6 +142,50 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(self.git(self.repo, "rev-parse", "HEAD"), head)
         self.assertEqual(self.git(self.tree, "status", "--porcelain"), "")
 
+    def landed(self, *commits):
+        for name, text in commits or (("notes.txt", "notes\n"),):
+            self.agent_commits(name, text)
+        landed = delivery.merge(self.payload("merge"))["landed"]
+        return {"op": "revert", "title": "T-1 Add notes", "repos": landed}
+
+    def test_a_merge_says_which_commits_it_landed_and_revert_undoes_them_in_one_commit(self):
+        before = self.git(self.repo, "rev-parse", "HEAD")
+        payload = self.landed(("notes.txt", "notes\n"), ("app.txt", "one\nTWO\nthree\n"))
+        self.assertEqual([(repo["branch"], repo["from"]) for repo in payload["repos"]], [("main", before)])
+        (self.repo / "later.txt").write_text("later\n")
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-qm", "Later work")
+        delivery.revert(payload)
+        self.assertFalse((self.repo / "notes.txt").exists())
+        self.assertEqual((self.repo / "app.txt").read_text(), "one\ntwo\nthree\n")
+        self.assertEqual((self.repo / "later.txt").read_text(), "later\n")
+        self.assertEqual(self.git(self.repo, "log", "-1", "--format=%s"), "Revert T-1 Add notes")
+        self.assertEqual(self.git(self.repo, "rev-list", "--count", payload["repos"][0]["to"] + "..HEAD"), "2")
+
+    def test_revert_refuses_a_dirty_folder_another_branch_and_conflicting_later_work(self):
+        payload = self.landed(("app.txt", "one\nagent\nthree\n"))
+        (self.repo / "app.txt").write_text("dirty\n")
+        with self.assertRaisesRegex(ValueError, "uncommitted changes on main"):
+            delivery.revert(payload)
+        self.git(self.repo, "checkout", "-q", "--", "app.txt")
+        self.git(self.repo, "checkout", "-q", "-b", "other")
+        with self.assertRaisesRegex(ValueError, "is on other, and the task merged into main"):
+            delivery.revert(payload)
+        self.git(self.repo, "checkout", "-q", "main")
+        (self.repo / "app.txt").write_text("one\nlater\nthree\n")
+        self.git(self.repo, "commit", "-qam", "Later work")
+        head = self.git(self.repo, "rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "later work changed the same lines"):
+            delivery.revert(payload)
+        self.assertEqual(self.git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "")
+
+    def test_the_agent_summary_is_read_from_the_worktree_git_folder(self):
+        self.assertEqual(delivery.summary({"worktree": str(self.tree)}), {"text": ""})
+        Path(self.git(self.tree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-summary.md")).write_text("Added notes.\n\nNot sure about the name.\n")
+        self.assertEqual(delivery.summary({"worktree": str(self.tree)})["text"], "Added notes.\n\nNot sure about the name.")
+        self.assertEqual(self.git(self.tree, "status", "--porcelain"), "")
+
     def test_merging_again_after_an_interruption_is_safe(self):
         self.agent_commits()
         delivery.merge(self.payload("merge"))

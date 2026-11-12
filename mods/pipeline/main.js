@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -50,7 +50,7 @@ const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).fl
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const choices = question => (question?.options ?? []).filter((_, i) => i !== question.typed);
-const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.blocked : task.status === "done" ? t.ansi2
+const stateColor = (task, t) => ["failed", "input"].includes(task.status) ? t.blocked : task.status === "done" ? (task.reverted ? t.muted : t.ansi2)
   : task.status === "pr" ? t.ansi4 : ["review", "merging"].includes(task.status) ? t.ansi5 : ACTIVE.includes(task.status) ? t.accent : t.muted;
 const toneColor = (tone, t) => ({ blocked: t.blocked, ready: t.ansi2 })[tone] ?? t.muted;
 function cardStatus(state, task) {
@@ -60,6 +60,7 @@ function cardStatus(state, task) {
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
   if (state.live && task.status === "pr") return prNeeds(task).label;
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
+  if (state.live && task.status === "done" && (task.revert || task.reverted)) return task.revert ? "Reverting…" : "Reverted";
   if (state.live && task.status === "done" && afterFailed(state).some(entry => entry.task === task.id)) return "Merged · after-merge failed";
   const pushed = state.live && task.status === "done" && pushNote(task);
   if (pushed) return `Merged${task.repos.length < 2 && task.target ? ` into ${task.target}` : ""} · ${pushed.text}`;
@@ -1676,6 +1677,12 @@ export default class Pipeline extends View {
       if (task.description) body.child(div().text_size(12).line_height(1.5).text_color(t.muted).child(task.description));
       if (several) body.child(this.label(`Repositories: ${task.repos.join(" + ")}`, t));
     }
+    if (task.summary && task.status !== "queued") body.child(this.heading("Summary from the agent"))
+      .child(v_flex().id(`pipeline-summary-${task.id}`).w_full().p(10).gap(2).rounded(6).border_1().border_color(t.border).bg(t.surface).text_size(12).line_height(1.5)
+        .children(task.summary.split("\n").filter(line => line.trim()).map(line => {
+          const [, label, rest] = line.match(/^\s*(Changed|Checked|Unsure):\s*(.*)$/) ?? [];
+          return label ? h_flex().gap(8).items_start().child(div().w(56).flex_none().text_color(label === "Unsure" ? t.ansi3 : t.muted).child(label)).child(div().flex_1().min_w(0).child(rest)) : div().child(line);
+        })));
     if (task.terminal && task.status !== "done" && !task.discard) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))
         .child(this.button(`trust-task-${task.id}`, "Trust this worktree", cx => this.trust(task, cx), t, { icon: "check", primary: true, hint: "Answers “Yes, I trust this folder” in its terminal" }));
@@ -1743,6 +1750,7 @@ export default class Pipeline extends View {
       body.child(div().id(`pipeline-after-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Merged, but ${state.afterMerge} failed. ${after.error}`));
       body.child(this.button(`after-now-${task.id}`, "Run again", cx => this.act({ type: "afterMergeNow" }, cx), t, { icon: "reset", hint: `Runs ${state.afterMerge} again in ${after.root}` }));
     }
+    if (task.status === "done" && (task.landed?.length || task.reverted)) this.revertDetail(body, state, task, t);
     if (task.status === "done" && task.prs) for (const [name, pr] of Object.entries(task.prs)) body.child(this.button(`pr-link-${task.id}${several ? `-${name}` : ""}`, `${several ? `${name} · ` : ""}Pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", hint: pr.url }));
     if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, trees.length ? `Retry in the same worktree${trees.length > 1 ? "s" : ""}` : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
     if (task.status === "queued" && !trees.length) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
@@ -1759,6 +1767,17 @@ export default class Pipeline extends View {
     const log = taskLog(state, task).slice(0, 12);
     if (log.length) body.child(this.heading("Task history"));
     for (const message of log) body.child(this.label(message, t));
+  }
+  revertDetail(body, state, task, t) {
+    const where = [...new Set((task.landed ?? []).map(repo => repo.branch))].join(" + "), sure = this.confirm === `revert-${task.id}`;
+    if (task.reverted) { body.child(this.label(`Reverted with a new commit on ${where}. Its commits stay in the history.`, t)); return; }
+    if (task.revert) { body.child(this.label(`Reverting on ${where}…`, t)); return; }
+    if (task.revertError) body.child(div().id(`pipeline-revert-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Not reverted. ${task.revertError}`));
+    body.child(this.button(`revert-${task.id}`, sure ? `Undo it on ${where}` : "Revert", cx => {
+      if (sure) { this.confirm = null; this.act({ type: "revert", id: task.id }, cx); } else { this.confirm = `revert-${task.id}`; cx.notify(); }
+    }, t, { icon: "reset", hint: sure ? "Adds one commit that undoes this task's changes. Never rewrites history." : "Undo this task's changes with a new commit" }));
+    if (sure) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Click again to undo this task's changes on ${where} with one new commit. Work merged since stays.`
+      + `${state.pushAfterMerge ? " The commit is pushed." : ""}${state.afterMerge ? ` Then ${state.afterMerge} runs again.` : ""}`));
   }
   plannerView(body, state, t) {
     const planning = state.planning, now = Date.now();

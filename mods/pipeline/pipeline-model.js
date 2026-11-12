@@ -512,6 +512,7 @@ function afterDue(state, task, names) {
     if (root) state.afterRuns = [...(state.afterRuns ?? []).filter(entry => entry.root !== root), { repo: ws.name, root, task: task.id, error: null }];
   }
 }
+export const canRevert = (state, task) => Boolean(state?.live && task?.status === "done" && task.landed?.length && !task.revert && !task.reverted);
 export const afterFailed = state => (state?.afterRuns ?? []).filter(entry => entry.error);
 const pushEvent = note => note ? ` · ${note.text}${note.ok ? "" : ` · ${note.error}`}` : "";
 export const unpushedLabel = state => (state.unpushed ?? []).map(entry => (state.repositories?.length ?? 1) > 1 ? `${entry.branch} in ${entry.repo}` : entry.branch).join(", ");
@@ -1093,8 +1094,41 @@ export function reduce(state, action, now = Date.now()) {
       Object.assign(task, { status: "done", merge: false, commit: false, finished: ++next.sequence, error: null, target: action.target ?? null });
       recordPushes(next, task, action.pushes);
       afterDue(next, task, action.repos);
+      const landed = (action.landed ?? []).filter(repo => repo?.root && repo.branch && repo.from && repo.to && repo.from !== repo.to)
+        .map(repo => ({ name: repo.name ?? null, root: String(repo.root), branch: String(repo.branch), from: String(repo.from), to: String(repo.to) }));
+      if (landed.length) task.landed = landed;
       event(next, `${task.id} merged into ${action.target}${pushEvent(action.pushes?.length ? pushNote(task) : null)}`.replace(/\.*$/, "."), task.id);
       ticketUpdate(next, task, "merge");
+      break;
+    }
+    case "revert": {
+      const task = row(action.id);
+      if (!canRevert(next, task)) return state;
+      Object.assign(task, { revert: true, revertError: null });
+      event(next, `${task.id} · reverting it on ${task.landed.map(repo => repo.branch).filter((branch, i, all) => all.indexOf(branch) === i).join(" + ")}.`, task.id);
+      break;
+    }
+    case "reverted": {
+      const task = row(action.id);
+      if (!next.live || !task?.revert) return state;
+      Object.assign(task, { revert: false, reverted: now, revertError: null });
+      recordPushes(next, task, action.pushes);
+      if (next.afterMerge) for (const repo of task.landed)
+        next.afterRuns = [...(next.afterRuns ?? []).filter(entry => entry.root !== repo.root), { repo: repo.name, root: repo.root, task: task.id, error: null }];
+      event(next, `${task.id} reverted with a new commit${pushEvent(action.pushes?.length ? pushNote(task) : null)}`.replace(/\.*$/, "."), task.id);
+      break;
+    }
+    case "revertFailed": {
+      const task = row(action.id);
+      if (!next.live || !task?.revert) return state;
+      Object.assign(task, { revert: false, revertError: String(action.error || "Git could not revert it.").slice(0, 600) });
+      event(next, `${task.id} not reverted · ${task.revertError}`, task.id);
+      break;
+    }
+    case "summary": {
+      const task = row(action.id), text = String(action.text ?? "").trim().slice(0, 6000);
+      if (!next.live || !task || !text || task.summary === text) return state;
+      task.summary = text;
       break;
     }
     case "mergeFailed": {
