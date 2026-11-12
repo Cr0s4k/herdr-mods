@@ -616,6 +616,8 @@ export default class Pipeline extends View {
       : info.approvals ? (state.live ? "Waiting for your review" : "Waiting for your approval") : info.queued ? "Waiting" : "Watching for work";
     info.color = held || info.failed || info.questions || unusable ? t.blocked : state.running ? t.accent : t.muted;
     const narrow = this.size.width < 820, compact = this.size.width < 640, wide = this.size.width >= ONE_ROW;
+    // Herdr paints running animations above later siblings, so the scene holds still under the settings modal and the setup card.
+    const covered = this.drawer === "settings" || Boolean(state.live && state.setup);
     const root = v_flex().id("pipeline-root").size_full().min_w(0).min_h(0).bg(t.canvas).text_color(t.foreground).text_size(13)
       .track_focus(this.handle)
       .on_size_change((bounds, cx) => {
@@ -629,7 +631,7 @@ export default class Pipeline extends View {
       .when(!wide, el => el.child(this.commands(state, t)))
       .child(h_flex().relative().flex_1().min_h(0).min_w(0)
         .child(div().id("pipeline-viewport").flex_1().min_w(0).h_full().overflow_scrollbar()
-          .child(this.scene(state, t, info, motion, now, cx)))
+          .child(this.scene(state, t, info, motion && !covered, now, cx)))
         .when(Boolean(this.drawer) && this.drawer !== "settings", el => el.child(this.inspector(state, t, cx)
           .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))
           .when(this.size.width > 1180, node => node.relative())
