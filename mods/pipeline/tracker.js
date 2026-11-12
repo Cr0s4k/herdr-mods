@@ -42,7 +42,7 @@ export const liveHost = {
       const result = await exec("sh", ["-c", command], { cwd, on: context.on, timeout: 600000 });
       return { code: result.code, output: [result.stdout, result.stderr].map(part => (part ?? "").trimEnd()).filter(Boolean).join("\n") };
     } catch (error) {
-      return { code: -1, output: /timeout|timed out/i.test(String(error)) ? "The check ran longer than 10 minutes and was stopped." : String(error?.message ?? error) };
+      return { code: -1, output: /timeout|timed out/i.test(String(error)) ? "The command ran longer than 10 minutes and was stopped." : String(error?.message ?? error) };
     }
   },
   keys: async (terminal, keys) => { const result = await hc(["keys", terminal, ...keys]); if (result.code !== 0) throw new Error(result.stderr); },

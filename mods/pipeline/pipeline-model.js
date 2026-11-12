@@ -275,6 +275,8 @@ export function liveNotices(before, after) {
       if (need.label !== last.label && need.tone !== "wait" && need.tone !== last.tone) say(`pull request · ${need.label.toLowerCase()}`, task.title, need.tone === "ready" ? "success" : "warning");
     }
   }
+  for (const entry of afterFailed(after)) if (!afterFailed(before).some(old => old.root === entry.root && old.task === entry.task))
+    notices.push({ title: `${entry.task} merged, but ${after.afterMerge} failed`, body: entry.error.split("\n").pop(), level: "error", task: entry.task });
   return notices;
 }
 export const LIMITED = { claude: "Claude", codex: "Codex" };
@@ -502,6 +504,15 @@ export function pushNote(task) {
   return { ok: false, text: `${several ? `${failed.map(([name]) => name).join(" + ")} ` : ""}not pushed`,
     error: failed.map(([name, push]) => `${several ? `${name}: ` : ""}${push.error}`).join(" ") };
 }
+// One run per folder covers every merge before it. A failed run waits for Run again.
+function afterDue(state, task, names) {
+  if (!state.afterMerge) return;
+  for (const ws of workspacesOf(task).filter(ws => !names || names.includes(ws.name))) {
+    const root = ws.source ?? state.context?.cwd;
+    if (root) state.afterRuns = [...(state.afterRuns ?? []).filter(entry => entry.root !== root), { repo: ws.name, root, task: task.id, error: null }];
+  }
+}
+export const afterFailed = state => (state?.afterRuns ?? []).filter(entry => entry.error);
 const pushEvent = note => note ? ` · ${note.text}${note.ok ? "" : ` · ${note.error}`}` : "";
 export const unpushedLabel = state => (state.unpushed ?? []).map(entry => (state.repositories?.length ?? 1) > 1 ? `${entry.branch} in ${entry.repo}` : entry.branch).join(", ");
 
@@ -898,6 +909,38 @@ export function reduce(state, action, now = Date.now()) {
       event(next, command ? `Try it: ${command}.` : "No Try it command.");
       break;
     }
+    case "afterMerge": {
+      if (!next.live) return state;
+      const command = String(action.command ?? "").trim().slice(0, 500) || null;
+      if (command === (next.afterMerge ?? null)) return state;
+      next.afterMerge = command;
+      if (!command) next.afterRuns = [];
+      event(next, command ? `After each merge: ${command}.` : "Nothing runs after a merge.");
+      break;
+    }
+    case "afterMergeNow": {
+      if (!next.live || !next.afterMerge || !afterFailed(next).length) return state;
+      next.afterRuns = next.afterRuns.map(entry => ({ ...entry, error: null }));
+      event(next, `Running ${next.afterMerge} again.`);
+      break;
+    }
+    case "afterMergeRan": {
+      if (!next.live || !next.afterMerge || !action.results?.length) return state;
+      const several = (next.repositories?.length ?? 1) > 1;
+      for (const result of action.results) {
+        const entry = (next.afterRuns ?? []).find(entry => entry.root === result.root && !entry.error);
+        if (!entry) continue;
+        const where = several ? ` in ${entry.repo}` : "";
+        if (result.code === 0) {
+          next.afterRuns = next.afterRuns.filter(other => other !== entry);
+          event(next, `Ran ${next.afterMerge}${where} after ${entry.task} merged.`, entry.task);
+        } else {
+          entry.error = String(result.output || "It gave no output.").trim().slice(-1500);
+          event(next, `${next.afterMerge} failed${where} after ${entry.task} merged · ${entry.error.split("\n").pop().slice(0, 300)}`, entry.task);
+        }
+      }
+      break;
+    }
     case "tried": {
       const task = row(action.id);
       if (!next.live || !task || task.tried === action.tab) return state;
@@ -1045,6 +1088,7 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "merging") return state;
       Object.assign(task, { status: "done", merge: false, commit: false, finished: ++next.sequence, error: null, target: action.target ?? null });
       recordPushes(next, task, action.pushes);
+      afterDue(next, task, action.repos);
       event(next, `${task.id} merged into ${action.target}${pushEvent(action.pushes?.length ? pushNote(task) : null)}`.replace(/\.*$/, "."), task.id);
       ticketUpdate(next, task, "merge");
       break;

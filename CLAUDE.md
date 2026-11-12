@@ -24,8 +24,9 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
   it replaces the mods every session is running with your unmerged branch, and the last install
   wins. Run the tests and `herdr-app check` instead, on a copy made the way install makes it
   (`rsync -a --copy-links mods/<mod>/ <scratch>/<mod>/`; a mod with symlinked modules fails the
-  check in place), and say in your report that the change still needs an install from the main
-  checkout after merging.
+  check in place). Pipeline's After merge command (`./install.sh`, in Settings → Delivery)
+  installs the merged state from the main checkout; where it isn't set, say in your report
+  that the change still needs an install from the main checkout after merging.
 - Mods sharing state use `shared(key)` / `setShared(key, value)`; there is no command to set it
   from outside. To test, drop a throwaway mod that calls it in `init` and open it with
   `herdr-app do tab.new '{"name":"t","mod":"<mod>"}'`, then remove both.

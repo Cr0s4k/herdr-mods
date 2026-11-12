@@ -170,11 +170,13 @@ Live runs real agents on the project's Git repository, one isolated worktree and
 task, so parallel agents never touch each other or your checkout.
 
 A space's new live pipeline opens with a **Set up this pipeline** card over its empty canvas:
-the AI helper, the agent, the check command, Try it, delivery and where tickets come from, each
+the AI helper, the agent, the check command, Try it, delivery, the After merge command and
+where tickets come from, each
 with a button into its Settings section. What Pipeline recognises from file names is offered,
 never applied: **Use npm test** for a check command it finds, **Use pull requests** when the
 repository is on GitHub and `gh` is installed. **Choose for me** (sparkles) asks the AI helper
-to read the repository, read-only, and set the check command, Try it and delivery; each choice
+to read the repository, read-only, and set the check command, Try it, delivery and the After
+merge command; each choice
 it made shows its reason under the row. The AI helper is its own setting, apart from the planner:
 Claude Code on Haiku unless **AI helper** in Settings picks another agent, model or effort. A run
 takes about 20 seconds and costs about a cent. The card goes away with **Done** or the first
@@ -295,6 +297,16 @@ takes about 20 seconds and costs about a cent. The card goes away with **Done** 
    Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
    finishes with passing checks (or with no check set) merges straight away. Work you sent
    on with **Review anyway**, and a merge that was refused, still wait for you.
+
+   When merged work only takes effect once something is run (an install or deploy script),
+   set an **After merge** command (Settings, Delivery; Pipeline suggests an executable
+   `./install.sh` or `./deploy.sh`, or a Makefile `install` or `deploy` target). It runs in
+   your project folder, never a worktree, once the merges waiting have landed, in each
+   repository a task merged into; one run covers every merge before it, so several spaces'
+   tasks merging into the same folder each leave it installed from the merged state. If it
+   fails the merge stays, the task's card says **Merged · after-merge failed**, you get a
+   notification, and **Run again** in the status bar or the task's inspector runs it again.
+   It is not used with pull requests, where nothing merges locally.
 
    To review on GitHub instead, set **Delivery** to **Open a pull request** in Settings. The
    approve action becomes **Open PR**: Pipeline pushes the branch to `origin` and runs

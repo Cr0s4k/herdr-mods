@@ -172,8 +172,8 @@ export function readPlan(result) {
 
 const choice = (what, extra = {}) => ({ type: "object", additionalProperties: false, required: ["value", "reason"],
   properties: { value: { type: "string", description: what, ...extra }, reason: { type: "string", description: "One short sentence for the person, naming the file it came from." } } });
-export const SETUP_SCHEMA = { type: "object", additionalProperties: false, required: ["check", "tryout", "delivery"], properties: {
-  check: choice("A shell command, or an empty string for none."), tryout: choice("A shell command, or an empty string for none."),
+export const SETUP_SCHEMA = { type: "object", additionalProperties: false, required: ["check", "tryout", "delivery", "after"], properties: {
+  check: choice("A shell command, or an empty string for none."), tryout: choice("A shell command, or an empty string for none."), after: choice("A shell command, or an empty string for none."),
   delivery: choice("merge or pr.", { enum: ["merge", "pr"] }) } };
 export function setupPrompt(state, facts) {
   return [
@@ -182,12 +182,13 @@ export function setupPrompt(state, facts) {
     "1. check: the command Pipeline runs from the repository root after an agent finishes, before the person reviews. Use what this project runs to verify a change (its tests, plus lint or type checks if the project requires them), preferring its own scripts. It must not need a running server, secrets or network services. Empty if there is none.",
     "2. tryout: the command that runs the project so the person can try a change by hand, such as its dev server or the app. Empty if there is nothing to run.",
     `3. delivery: "pr" if this project takes changes through pull requests, "merge" if work merges straight into ${facts.branch ?? "the current branch"}.${facts.github ? "" : " Pull requests need a GitHub origin and gh, which this machine lacks, so choose merge."}`,
+    "4. after: the command Pipeline runs in the project folder after it merges a task there, when merged work only takes effect once something is run: an install or deploy script the project's own instructions say to run after every change. Empty for most projects, and empty when delivery is pr.",
     "Don't change any file.",
     "", "What Pipeline already knows:",
     `- current branch: ${facts.branch ?? "unknown"}`,
     `- origin on GitHub with gh installed: ${facts.github ? "yes" : "no"}`,
     `- commands found by file names alone: ${facts.found.length ? facts.found.join(", ") : "none"}`,
-    `- set now: check ${state.check?.command ?? "none"}, try it ${state.tryout ?? "none"}, delivery ${state.delivery}`,
+    `- set now: check ${state.check?.command ?? "none"}, try it ${state.tryout ?? "none"}, delivery ${state.delivery}, after merge ${state.afterMerge ?? "none"}`,
   ].join("\n");
 }
 // The AI helper reads the repository read-only, with its own agent and model.
@@ -201,7 +202,8 @@ export function readSetup(result, github) {
   const picked = result?.plan, part = key => ({ value: String(picked?.[key]?.value ?? "").trim().slice(0, 500), reason: String(picked?.[key]?.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 300) });
   if (!picked || typeof picked !== "object") throw new Error(String(result?.error || "It gave no answer.").slice(0, 300));
   const delivery = part("delivery");
-  return { check: part("check"), tryout: part("tryout"), delivery: { ...delivery, value: delivery.value === "pr" && github ? "pr" : "merge" }, ms: Number(result?.ms) || null };
+  const way = delivery.value === "pr" && github ? "pr" : "merge", after = part("after");
+  return { check: part("check"), tryout: part("tryout"), delivery: { ...delivery, value: way }, after: way === "pr" ? { value: "", reason: "" } : after, ms: Number(result?.ms) || null };
 }
 
 // Agents tick a timer, a token count and a blinking spinner while they wait, so only words count as new output.
@@ -364,12 +366,14 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) {
       const task = state.tasks.find(task => task.discard) ?? state.tasks.find(task => task.status === "merging" && task.merge);
       const retry = !task && state.unpushed?.some(entry => entry.retry);
-      const launch = !task && !retry && state.tasks.find(task => task.status === "routing" && !task.launch);
-      if (!task && !retry && !launch) continue;
+      const after = !task && !retry && Boolean(state.afterMerge) && state.afterRuns?.some(entry => !entry.error);
+      const launch = !task && !retry && !after && state.tasks.find(task => task.status === "routing" && !task.launch);
+      if (!task && !retry && !after && !launch) continue;
       this.busy = true;
       cx.spawn(async cx => {
         try {
           if (retry) await this.pushAgain(id);
+          else if (after) await this.runAfter(id);
           else if (launch) await this.launch(id, launch, cx);
           else if (task.discard) await this.discard(id, task);
           else await this.merge(id, task);
@@ -530,7 +534,7 @@ export class LiveRunner {
       const pushes = [];
       if (state.pushAfterMerge) for (const ws of workspaces.filter(ws => (result.merged ?? [ws.name]).includes(ws.name)))
         pushes.push(await this.push(context, { name: ws.name, root: ws.source ?? context.cwd, branch: targets[ws.name] ?? result.target }));
-      this.apply(id, { type: "merged", id: task.id, target, ...(state.pushAfterMerge ? { pushes } : {}) });
+      this.apply(id, { type: "merged", id: task.id, target, repos: workspaces.map(ws => ws.name).filter(name => (result.merged ?? [name]).includes(name)), ...(state.pushAfterMerge ? { pushes } : {}) });
     } catch (error) {
       this.apply(id, { type: "mergeFailed", id: task.id, error: error?.message || String(error) });
       return;
@@ -554,6 +558,17 @@ export class LiveRunner {
     for (const entry of state.unpushed.filter(entry => entry.retry))
       results.push(await this.push(state.context, { name: entry.repo, root: entry.root ?? state.context.cwd, branch: entry.branch }));
     this.apply(id, { type: "pushed", results });
+  }
+
+  // Runs in the Git queue, after the merges waiting there, so it sees a folder no merge is changing.
+  // Its entries stay due until it reports, so a run cut short by Pipeline's own reload starts again.
+  async runAfter(id) {
+    const state = this.host.shared(STORE)[id], results = [];
+    for (const entry of state.afterRuns.filter(entry => !entry.error)) {
+      const result = await this.host.check(state.context, entry.root, state.afterMerge).catch(error => ({ code: -1, output: error?.message || String(error) }));
+      results.push({ root: entry.root, code: result.code, output: tail(result.output, 12) });
+    }
+    this.apply(id, { type: "afterMergeRan", results });
   }
 
   async publish(state, task, workspaces) {

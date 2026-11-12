@@ -1,7 +1,7 @@
 import { View, div, svg, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -24,6 +24,10 @@ const TRY_HINTS = [
   "  for s in dev start preview; do grep -q \"\\\"$s\\\":\" package.json && echo \"$pm run $s\"; done; fi",
   'if [ -f Makefile ]; then for s in run dev preview; do grep -q "^$s:" Makefile && echo "make $s"; done; fi',
   "if [ -f Cargo.toml ]; then echo 'cargo run'; fi",
+].join("\n");
+const AFTER_HINTS = [
+  'for f in install.sh deploy.sh; do [ -x "$f" ] && echo "./$f"; done',
+  'if [ -f Makefile ]; then for s in install deploy; do grep -q "^$s:" Makefile && echo "make $s"; done; fi',
 ].join("\n");
 const GITHUB = "git remote get-url origin 2>/dev/null | grep -q github.com && command -v gh >/dev/null";
 // Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
@@ -56,6 +60,7 @@ function cardStatus(state, task) {
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
   if (state.live && task.status === "pr") return prNeeds(task).label;
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
+  if (state.live && task.status === "done" && afterFailed(state).some(entry => entry.task === task.id)) return "Merged · after-merge failed";
   const pushed = state.live && task.status === "done" && pushNote(task);
   if (pushed) return `Merged${task.repos.length < 2 && task.target ? ` into ${task.target}` : ""} · ${pushed.text}`;
   if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
@@ -111,6 +116,11 @@ export default class Pipeline extends View {
     this.tryInput.on("blur", (_e, cx) => this.saveTry(cx));
     this.tryInput.on("change", (_e, cx) => cx.notify());
     this.trySuggestions = [];
+    this.afterInput = InputState.new({ placeholder: "Nothing. For example: ./install.sh" });
+    this.afterInput.on("submit", (_e, cx) => this.saveAfter(cx));
+    this.afterInput.on("blur", (_e, cx) => this.saveAfter(cx));
+    this.afterInput.on("change", (_e, cx) => cx.notify());
+    this.afterSuggestions = [];
     this.times = {};
     for (const [kind, placeholder] of [["start", "Not scheduled. For example: 22:00"], ["pause", "Not scheduled. For example: 7:00"]]) {
       const input = this.times[kind] = InputState.new({ placeholder });
@@ -167,7 +177,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.tryInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -217,6 +227,8 @@ export default class Pipeline extends View {
         this.checkSuggestions = (found?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
         const runs = await exec("sh", ["-c", TRY_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.trySuggestions = (runs?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
+        const after = await exec("sh", ["-c", AFTER_HINTS], { cwd: this.repo.root, on }).catch(() => null);
+        this.afterSuggestions = (after?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
         const hub = await exec("sh", ["-c", GITHUB], { cwd: this.repo.root, on }).catch(() => null);
         this.github = hub?.code === 0;
       }
@@ -351,6 +363,11 @@ export default class Pipeline extends View {
     if (!state?.live || this.tryInput.value().trim() === (state.tryout ?? "")) return;
     this.act({ type: "tryout", command: this.tryInput.value() }, cx);
   }
+  saveAfter(cx) {
+    const state = this.state();
+    if (!state?.live || this.afterInput.value().trim() === (state.afterMerge ?? "")) return;
+    this.act({ type: "afterMerge", command: this.afterInput.value() }, cx);
+  }
   tryTask(task, cx) {
     const command = this.state()?.tryout, ws = task && workspacesOf(task)[0];
     if (!command || !ws || task.discard) return;
@@ -399,6 +416,7 @@ export default class Pipeline extends View {
     if (drawer === "settings" && this.state()?.live) {
       this.checkInput.set_value(this.state().check?.command ?? "");
       this.tryInput.set_value(this.state().tryout ?? "");
+      this.afterInput.set_value(this.state().afterMerge ?? "");
       this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
       if (drawer !== this.drawer) this.loadUpdateStates(cx);
     }
@@ -730,6 +748,7 @@ export default class Pipeline extends View {
         { icon: "reset", small: true, hint: "Return failed tasks to the queue (R)" })))
       .when(Boolean(state.live), el => el.child(div().flex_none().child(this.repo?.error ?? `${state.delivery === "pr" ? "Opens pull requests into" : "Merges into"} ${this.repo?.branch ?? "your branch"}${state.delivery !== "pr" && state.pushAfterMerge ? " · pushes to origin" : ""}`)))
       .when(Boolean(state.live && state.unpushed?.length), el => el.child(this.unpushed(state, t)))
+      .when(Boolean(state.live && afterFailed(state).length), el => el.child(this.afterFailure(state, t)))
       .when(!state.live, el => el.child(this.button("delivery", state.delivery === "pr" ? "PR approval" : "Auto-merge", cx => this.act({ type: "delivery", value: state.delivery === "pr" ? "direct" : "pr" }, cx), t,
         { small: true, selected: state.delivery === "direct", hint: state.delivery === "pr" ? "New changes wait for your approval. Click to merge after checks pass." : "New changes merge after checks pass. Click to require approval." })));
   }
@@ -741,6 +760,14 @@ export default class Pipeline extends View {
       .child(div().flex_none().text_color(t.blocked).child(`${unpushedLabel(state)} ${several ? "are" : "is"} ahead of ${remotes}`))
       .child(this.button("push-now", pushing ? "Pushing…" : "Push now", cx => this.act({ type: "pushNow" }, cx), t,
         { icon: "reset", small: true, disabled: pushing, hint: `Last push failed: ${entries.map(entry => `${several ? `${entry.branch} in ${entry.repo}: ` : ""}${entry.error}`).join(" ")} Click to push again. Pipeline never forces or pulls.` }));
+  }
+
+  afterFailure(state, t) {
+    const failed = afterFailed(state);
+    return h_flex().id("pipeline-after-failed").gap(8).items_center().flex_none()
+      .child(div().flex_none().text_color(t.blocked).child(`${state.afterMerge} failed after ${failed.map(entry => entry.task).join(", ")} merged`))
+      .child(this.button("after-now", "Run again", cx => this.act({ type: "afterMergeNow" }, cx), t,
+        { icon: "reset", small: true, hint: `${failed.map(entry => entry.error.split("\n").pop()).join(" ")} The merge stays. Click to run it again in ${failed.length > 1 ? "those folders" : "your project folder"}.` }));
   }
 
   bar(task, state, width, color, motion, now, cx) {
@@ -899,7 +926,7 @@ export default class Pipeline extends View {
   }
 
   setupJob(state) {
-    return setupArgs(state, { branch: this.repo?.branch ?? null, github: this.github, found: [...this.checkSuggestions, ...this.trySuggestions] });
+    return setupArgs(state, { branch: this.repo?.branch ?? null, github: this.github, found: [...this.checkSuggestions, ...this.trySuggestions, ...this.afterSuggestions] });
   }
   decideSetup(cx) {
     const state = this.state();
@@ -917,6 +944,7 @@ export default class Pipeline extends View {
         if (picked.check.value) { this.checkInput.set_value(picked.check.value); this.act({ type: "check", command: picked.check.value }, cx); }
         if (picked.tryout.value) { this.tryInput.set_value(picked.tryout.value); this.act({ type: "tryout", command: picked.tryout.value }, cx); }
         this.act({ type: "deliver", value: picked.delivery.value }, cx);
+        if (picked.after.value) { this.afterInput.set_value(picked.after.value); this.act({ type: "afterMerge", command: picked.after.value }, cx); }
         this.deciding = { by, ...picked };
       } catch (error) { this.deciding = { by, error: String(error?.message ?? error).slice(0, 300) }; }
       cx.notify();
@@ -932,12 +960,12 @@ export default class Pipeline extends View {
     const row = (key, title, mark, value, actions, picked) => v_flex().id(`pipeline-setup-${key}`).gap(1)
       .child(h_flex().min_h(34).gap(10).items_center()
         .child(div().w(16).flex_none().flex().justify_center().child(picked ? icon("sparkles", 13).text_color(t.accent) : mark()))
-        .child(div().w(64).flex_none().text_size(12).text_color(t.muted).child(title))
+        .child(div().w(72).flex_none().text_size(12).text_color(t.muted).child(title))
         .child(div().flex_1().min_w(0).text_size(12).truncate().child(value))
         .children(actions))
-      .when(Boolean(picked?.reason), el => el.child(div().pl(100).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
+      .when(Boolean(picked?.reason), el => el.child(div().pl(108).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
-    const checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
         canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "helper")]),
@@ -955,6 +983,10 @@ export default class Pipeline extends View {
         ...(state.delivery !== "pr" && this.github ? [use("pr", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx),
           "This repository is on GitHub and gh is installed, so finished work can open a pull request instead")] : []),
         change("delivery", "delivery")], chose("delivery", state.delivery)),
+      ...(state.delivery === "pr" ? [] : [row("after", "After merge", state.afterMerge ? ok : plain, state.afterMerge ?? "Nothing to run", [
+        ...(!state.afterMerge && afterHint ? [use("after", `Use ${afterHint}`, cx => { this.afterInput.set_value(afterHint); this.act({ type: "afterMerge", command: afterHint }, cx); },
+          "Found in this repository. Runs in your project folder after each merge, so merged work is installed")] : []),
+        change("after", "delivery", state.afterMerge ? "Change" : "Set")], chose("after", state.afterMerge))]),
       row("tickets", "Tickets", watched.length ? ok : plain,
         watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : "Typed here",
         Object.keys(SOURCES).map(provider => this.button(`setup-${provider}`, SOURCES[provider], cx => this.open(provider, cx), t, { small: true, icon: provider, hint: `Queue tickets from ${SOURCES[provider]}` }))),
@@ -963,7 +995,7 @@ export default class Pipeline extends View {
       : ai?.error ? [`${ai.by} couldn't choose: ${ai.error}`, t.blocked]
       : ai ? [`${ai.by} chose what's marked with sparkles${ai.ms ? ` in ${Math.max(1, Math.round(ai.ms / 1000))} s` : ""}. Change anything you disagree with.`, t.muted]
       : ["The defaults work. These are the ones worth a look before the first agent starts.", t.muted];
-    const tall = 420 + ["check", "tryout", "delivery"].filter(key => ai?.[key]?.reason).length * 18;
+    const tall = 420 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
     return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(60, Math.min(g.center.y - tall / 2, g.h - tall - 20))).w(w).p(16).gap(4)
       .rounded(10).border_1().border_color(t.border).bg(t.surface).text_color(t.foreground).shadow_lg()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -1411,6 +1443,19 @@ export default class Pipeline extends View {
       body.child(this.label(state.delivery === "pr"
         ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh, described by the agent. It waits while the agent has uncommitted changes. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
         : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while the agent or your project folder has uncommitted changes, or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
+      if (state.delivery !== "pr") {
+        body.child(div().h(1).bg(t.border));
+        body.child(this.heading("After merge"));
+        body.child(this.label("Runs in your project folder once merges have landed, in each repository a task merged into: an install or deploy script, so merged work takes effect without you. One run covers every merge before it. If it fails, the merge stays and the status bar offers Run again.", t));
+        body.child(h_flex().gap(6).items_center()
+          .child(Input.new(this.afterInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+            .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("After merge command"))
+          .child(this.button("after-save", "Save", cx => this.saveAfter(cx), t, { small: true, disabled: this.afterInput.value().trim() === (state.afterMerge ?? "") })));
+        const afters = this.afterSuggestions.filter(command => command !== state.afterMerge);
+        if (afters.length) body.child(h_flex().gap(6).flex_wrap().children(afters.map(command => this.button(`after-use-${command}`, `Use ${command}`, cx => {
+          this.afterInput.set_value(command); this.act({ type: "afterMerge", command }, cx);
+        }, t, { small: true, hint: "Found in this repository" }))));
+      }
       body.child(div().h(1).bg(t.border));
       this.stepper(body, "Branches waiting for review", "New agents wait while this many finished branches are unmerged.", state.reviewLimit, "reviewLimit", 1, 10, t);
     } else if (section === "tickets") this.ticketUpdates(body, state, t);
@@ -1623,6 +1668,11 @@ export default class Pipeline extends View {
       body.child(div().id(`pipeline-push-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Merged, not pushed. ${pushed.error}`));
       if (state.unpushed?.length) body.child(this.button(`push-now-${task.id}`, state.unpushed.every(entry => entry.retry) ? "Pushing…" : "Push now", cx => this.act({ type: "pushNow" }, cx), t,
         { icon: "reset", disabled: state.unpushed.every(entry => entry.retry), hint: "Push again. Each push carries everything merged since, and never forces." }));
+    }
+    const after = task.status === "done" && afterFailed(state).find(entry => entry.task === task.id);
+    if (after) {
+      body.child(div().id(`pipeline-after-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Merged, but ${state.afterMerge} failed. ${after.error}`));
+      body.child(this.button(`after-now-${task.id}`, "Run again", cx => this.act({ type: "afterMergeNow" }, cx), t, { icon: "reset", hint: `Runs ${state.afterMerge} again in ${after.root}` }));
     }
     if (task.status === "done" && task.prs) for (const [name, pr] of Object.entries(task.prs)) body.child(this.button(`pr-link-${task.id}${several ? `-${name}` : ""}`, `${several ? `${name} · ` : ""}Pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", hint: pr.url }));
     if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, trees.length ? `Retry in the same worktree${trees.length > 1 ? "s" : ""}` : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));

@@ -55,6 +55,6 @@ if [ "${1:-}" = "--watch" ]; then
     fi
   done
 else
-  herdr-app do layout.switch "{\"name\":\"$layout\"}" >/dev/null || true
+  [ "$(herdr-app status 2>/dev/null | jq -r '.layout // empty' 2>/dev/null)" = "$layout" ] || herdr-app do layout.switch "{\"name\":\"$layout\"}" >/dev/null || true
   echo "Installed. Herdr is on the $layout layout; ctrl-shift-l switches layouts."
 fi

@@ -176,6 +176,49 @@ test("merging lands the branch, closes the agent's space and removes the worktre
   assert.match(world.state().events[0].message + world.state().events[1].message, /merged into main/);
 });
 
+test("the After merge command runs in the project folder once merges land, and a failure keeps the merge and waits for Run again", async () => {
+  const runs = [], said = [];
+  let result = { code: 1, output: "copying\nherdr-app: not running" };
+  const world = host(reduce(reduce(typed("A"), { type: "afterMerge", command: " ./install.sh " }, 0), { type: "run" }, 0), {
+    check: async (_context, cwd, command) => { runs.push([cwd, command]); return result; }, announce: (_id, notice) => said.push([notice.title, notice.body]) });
+  assert.equal(world.state().afterMerge, "./install.sh");
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "working" }];
+  await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
+  await step(runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  assert.equal(row(world.state(), "T-1").status, "done");
+  assert.deepEqual([runs, world.state().afterRuns], [[], [{ repo: "shop", root: "/work/shop", task: "T-1", error: null }]], "it waits for the merge to finish");
+  await step(runner);
+  assert.deepEqual(runs, [["/work/shop", "./install.sh"]]);
+  assert.equal(row(world.state(), "T-1").status, "done", "the merge stays");
+  assert.deepEqual(model.afterFailed(world.state()).map(entry => entry.error), ["copying\nherdr-app: not running"]);
+  assert.match(world.state().events[0].message, /\.\/install\.sh failed after T-1 merged · herdr-app: not running/);
+  assert.deepEqual(said.at(-1), ["T-1 merged, but ./install.sh failed", "herdr-app: not running"]);
+  await step(runner);
+  assert.equal(runs.length, 1, "a failed run waits for you");
+  result = { code: 0, output: "Installed." };
+  world.store = { [id]: reduce(world.state(), { type: "afterMergeNow" }, 0) };
+  await step(runner);
+  assert.deepEqual([runs.length, world.state().afterRuns], [2, []]);
+  assert.match(world.state().events[0].message, /Ran \.\/install\.sh after T-1 merged\./);
+});
+
+test("one After merge run covers every merge before it, and no command means no run", () => {
+  const merged = (state, task) => reduce({ ...state, tasks: state.tasks.map(row => row.id === task ? { ...row, status: "merging", workspaces: { shop: { source: "/work/shop", root: `/wt/${task}` } } } : row) },
+    { type: "merged", id: task, target: "main", repos: ["shop"] }, 0);
+  let state = merged(typed("A", "B"), "T-1");
+  assert.equal(state.afterRuns, undefined);
+  state = reduce(state, { type: "afterMerge", command: "make install" }, 0);
+  state = reduce(merged(state, "T-1"), { type: "afterMergeRan", results: [{ root: "/work/shop", code: 2, output: "boom" }] }, 0);
+  state = merged(state, "T-2");
+  assert.deepEqual(state.afterRuns, [{ repo: "shop", root: "/work/shop", task: "T-2", error: null }], "a newer merge replaces the failed run for that folder");
+  assert.deepEqual(reduce(state, { type: "afterMerge", command: "" }, 0).afterRuns, [], "clearing the command drops what was due");
+});
+
 test("a refused merge returns the task to review with the reason", async () => {
   const world = host(reduce(typed("A"), { type: "run" }, 0), { delivery: async () => { throw new Error("Your project folder has uncommitted changes on main."); } });
   const runner = new live.LiveRunner(world.host);
@@ -1561,10 +1604,12 @@ test("Choose for me reads the repository read-only with the AI helper: Haiku unl
   assert.deepEqual([state.helper.model, state.helper.effort], [null, null], "another agent drops the old model and effort");
   const codex = live.setupArgs(state, facts);
   assert.deepEqual([codex.agent, codex.by, codex.args.slice(0, 2)], ["codex", "Codex", ["--sandbox", "read-only"]]);
-  const answer = { check: { value: " make check ", reason: "Makefile" }, tryout: { value: "", reason: "Nothing runs" }, delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" } };
+  const answer = { check: { value: " make check ", reason: "Makefile" }, tryout: { value: "", reason: "Nothing runs" }, delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" },
+    after: { value: "./install.sh", reason: "CLAUDE.md says to install after every change" } };
   assert.equal(live.readSetup({ plan: answer }, false).delivery.value, "merge", "no pull requests without GitHub and gh");
+  assert.equal(live.readSetup({ plan: answer }, false).after.value, "./install.sh");
   assert.deepEqual(live.readSetup({ plan: answer, ms: 4000 }, true), { check: { value: "make check", reason: "Makefile" }, tryout: { value: "", reason: "Nothing runs" },
-    delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" }, ms: 4000 });
+    delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" }, after: { value: "", reason: "" }, ms: 4000 });
   assert.throws(() => live.readSetup({ plan: null, error: "Not logged in" }, true), /Not logged in/);
 });
 

@@ -591,12 +591,17 @@ test("a new Live pipeline shows a setup card with suggestions until it is dismis
   assert.match(text(find(card, "setup-agent")), /Claude Code/);
   assert.match(text(find(card, "setup-checks")), /unchecked/);
   assert.match(text(find(card, "setup-delivery")), /Merge into main locally/);
+  view.afterSuggestions = ["./install.sh"];
+  click(view, "setup-after-use");
+  assert.equal(view.state().afterMerge, "./install.sh");
+  assert.match(text(find(view.render(cx), "setup-after")), /\.\/install\.sh/);
   click(view, "setup-check-use");
   assert.deepEqual(view.state().check, { command: "npm test", fix: true });
   assert.equal(find(view.render(cx), "setup-check-use"), undefined, "a used suggestion leaves");
   click(view, "setup-pr-use");
   assert.equal(view.state().delivery, "pr");
   assert.match(text(find(view.render(cx), "setup-delivery")), /Pull request into main/);
+  assert.equal(find(view.render(cx), "setup-after"), undefined, "nothing merges locally with pull requests");
   click(view, "setup-checks-change");
   assert.deepEqual([view.drawer, view.section], ["settings", "checks"]);
   view.open(null, cx);
@@ -1329,6 +1334,21 @@ test("the map shows the plan as one clickable line, and the Plan pane has all of
   live.act({ type: "create", title: "A" }, cx);
   click(live, "plan-open");
   assert.match(text(find(live.render(cx), "inspector")), /Right now .*The planner agent is off: tasks start by Start first, then priority, then arrival\./);
+});
+
+test("the After merge command is set under Delivery, and a failed run offers Run again in the status bar", () => {
+  const view = setupLive();
+  view.open("settings", cx, "delivery");
+  view.afterInput.set_value("./install.sh");
+  click(view, "after-save");
+  assert.equal(view.state().afterMerge, "./install.sh");
+  view.open(null, cx);
+  const key = view.storeKey();
+  world.data[model.STORE] = { ...world.data[model.STORE], [key]: { ...view.state(), afterRuns: [{ repo: "shop", root: "/work/shop", task: "T-1", error: "rsync: failed" }] } };
+  assert.match(text(find(view.render(cx), "after-failed")), /\.\/install\.sh failed after T-1 merged/);
+  click(view, "after-now");
+  assert.deepEqual(view.state().afterRuns.map(entry => entry.error), [null]);
+  assert.equal(find(view.render(cx), "after-failed"), undefined);
 });
 
 test("Settings opens as a modal over the whole view, by section, and closes from its backdrop", () => {
