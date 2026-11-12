@@ -901,6 +901,10 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.setup) return state;
       delete next.setup;
       break;
+    case "setupShow":
+      if (!next.live || next.setup) return state;
+      next.setup = true;
+      break;
     case "tryout": {
       if (!next.live) return state;
       const command = String(action.command ?? "").trim().slice(0, 500) || null;

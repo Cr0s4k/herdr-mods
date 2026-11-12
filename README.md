@@ -179,8 +179,9 @@ to read the repository, read-only, and set the check command, Try it, delivery a
 merge command; each choice
 it made shows its reason under the row. The AI helper is its own setting, apart from the planner:
 Claude Code on Haiku unless **AI helper** in Settings picks another agent, model or effort. A run
-takes about 20 seconds and costs about a cent. The card goes away with **Done** or the first
-**Start pipeline**.
+takes about 20 seconds and costs about a cent. The card goes away with **Done** or the next
+**Start pipeline**; **Show setup** (Settings, General) brings it back, also on a pipeline made
+before the card existed.
 
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
    the title and details are its first message. Text too long for a title (over 90

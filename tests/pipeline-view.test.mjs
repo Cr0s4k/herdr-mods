@@ -610,6 +610,11 @@ test("a new Live pipeline shows a setup card with suggestions until it is dismis
   view.open(null, cx);
   click(view, "setup-done");
   assert.equal(find(view.render(cx), "setup"), undefined);
+  view.open("settings", cx, "general");
+  click(view, "setup-show");
+  assert.equal(view.drawer, null);
+  assert.ok(find(view.render(cx), "setup"), "Show setup brings the card back");
+  click(view, "setup-done");
   const started = setupLive();
   started.toggleRun(cx);
   started.toggleRun(cx);

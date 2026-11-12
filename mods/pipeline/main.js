@@ -903,7 +903,7 @@ export default class Pipeline extends View {
     if (g.prs.length) canvas.child(h_flex().absolute().right(30).top(g.prTop).w(cw).h(24).gap(8).items_center()
       .child(div().flex_1().h(1).bg(t.border))
       .child(this.button("pr-list", `Pull requests · ${g.prs.length}`, cx => this.open("prs", cx), t, { small: true, hint: "Open on GitHub: what each one waits for" })));
-    const setup = state.live && state.setup && !state.running;
+    const setup = state.live && state.setup;
     if (!g.queue.length && !setup) canvas.child(v_flex().absolute().left(30).top(70).w(cw).gap(6)
       .child(div().text_size(13).child(state.watch ? `Watching ${state.column}` : "Queue is clear"))
       .child(div().text_size(12).line_height(1.45).text_color(t.muted).child(state.live ? "Type a task above. Each one gets its own agent, branch and worktree."
@@ -1463,6 +1463,9 @@ export default class Pipeline extends View {
       body.child(this.switchRow("notify", "Notify me", "When checks fail, a merge is refused, a pull request needs you or finished work is ready, while you're looking elsewhere",
         !state.quiet, cx => this.act({ type: "quiet" }, cx), t));
       body.child(this.motionSwitch(t));
+      body.child(h_flex().gap(10).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child("The card a new pipeline opens with: checks, Try it, delivery and After merge at a glance, with Choose for me."))
+        .child(this.button("setup-show", "Show setup", cx => { this.act({ type: "setupShow" }, cx); this.open(null, cx); }, t, { small: true, icon: "sparkles", disabled: Boolean(state.setup) })));
       body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
       body.child(this.heading("Keys")).child(this.label(KEYS.live, t));
     }
