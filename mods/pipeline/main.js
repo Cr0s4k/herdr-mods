@@ -149,6 +149,7 @@ export default class Pipeline extends View {
     try { this.linearFilter = { ...this.linearFilter, ...JSON.parse(localStorage.getItem(`linear:${this.id}`) ?? "{}") }; } catch (_) { /* A damaged filter falls back to My tickets. */ }
     this.projects = null; this.teams = null;
     this.motion = localStorage.getItem("motion") !== "false";
+    this.layout = localStorage.getItem("layout") === "board" ? "board" : "map";
     this.reducedMotion = false;
     const all = shared(STORE) ?? {}, saved = all[this.id];
     if (saved?.version !== VERSION && !newer(saved)) setShared(STORE, { ...all, [this.id]: saved ? migrate(saved) : createPipeline(this.context) });
@@ -552,6 +553,7 @@ export default class Pipeline extends View {
     this.act({ type: "speed", value: SPEEDS[(SPEEDS.indexOf(current) + 1) % SPEEDS.length] }, cx);
   }
   toggleMotion(cx) { this.motion = !this.motion; localStorage.setItem("motion", String(this.motion)); cx.notify(); }
+  toggleLayout(cx) { this.layout = this.layout === "map" ? "board" : "map"; localStorage.setItem("layout", this.layout); cx.notify(); }
   animated() { return this.motion && !this.reducedMotion && appWindow()?.active !== false; }
 
   button(id, label, fn, t, options = {}) {
@@ -631,7 +633,7 @@ export default class Pipeline extends View {
       .when(!wide, el => el.child(this.commands(state, t)))
       .child(h_flex().relative().flex_1().min_h(0).min_w(0)
         .child(div().id("pipeline-viewport").flex_1().min_w(0).h_full().overflow_scrollbar()
-          .child(this.scene(state, t, info, motion && !covered, now, cx)))
+          .child(this.layout === "map" ? this.scene(state, t, info, motion && !covered, now, cx) : this.board(state, t, info, motion && !covered, now, cx)))
         .when(Boolean(this.drawer) && this.drawer !== "settings", el => el.child(this.inspector(state, t, cx)
           .when(motion, node => node.opacity(this.entering ? 0 : 1).transition("opacity", { duration: 160, easing: "ease-out" }))
           .when(this.size.width > 1180, node => node.relative())
@@ -674,14 +676,17 @@ export default class Pipeline extends View {
     return h_flex().h(50).px(20).gap(10).items_center().flex_none()
       .child(icon("pipeline", 20).text_color(t.accent))
       .when(!compact, el => el.child(div().text_size(16).font_semibold().flex_none().child("Pipeline")))
-      .child(this.button("mode", "Simulation", cx => this.setMode(state.live ? "simulation" : "live", cx), t, { icon: state.live ? "live" : "flask", iconOnly: true, disabled: !state.live && !this.context.cwd,
-        hint: state.live ? "Live: real agents, each in its own Git worktree. Click for the simulation"
-          : this.context.cwd ? "Simulation: example tasks and simulated agents. Click for Live" : "Simulation: open Pipeline from a project to run real agents" }))
+      .when(!state.live, el => el.child(h_flex().id("pipeline-demo-badge").h(24).px(8).gap(5).items_center().flex_none().rounded(12).bg(t.ansi3 + "26").text_color(t.ansi3).text_size(11).font_medium()
+        .tooltip(this.context.cwd ? "Example tasks and pretend agents. Nothing real is touched" : "Example tasks and pretend agents. Open Pipeline from a project to run real agents")
+        .child(icon("flask", 12)).child("Demo")))
+      .when(!state.live && Boolean(this.context.cwd), el => el.child(this.button("mode", "Exit demo", cx => this.setMode("live", cx), t, { icon: "x", small: true, iconOnly: compact, hint: "Back to your pipeline: real agents on this project" })))
       .when(wide, el => el.children(this.controls(state, t)).child(div().flex_1()))
       .when(!wide, el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(state.live
         ? `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}${(state.repositories?.length ?? 1) > 1 ? ` + ${state.repositories.length - 1} more ${state.repositories.length === 2 ? "repository" : "repositories"}` : ""} · ${this.agentLabel(state)} in its own worktree per task`
         : `${state.context.name} · example repositories: ${REPOS.join(", ")}`)))
       .when(!state.live && !compact, el => el.child(this.button("speed", `${state.speed}×`, cx => this.speed(cx), t, { icon: "bolt", selected: state.speed > 1, hint: `Simulation speed ${state.speed}× (S)` })))
+      .child(this.button("layout", "View", cx => this.toggleLayout(cx), t, { icon: this.layout === "map" ? "columns" : "pipeline", iconOnly: true,
+        hint: this.layout === "map" ? "Show the board: Queue, Working and Review as columns" : "Show the map: work flowing through the agents" }))
       .when(!narrow, el => el.child(this.button("motion", "Motion", cx => this.toggleMotion(cx), t,
         { icon: "motion", iconOnly: true, selected: this.motion && !this.reducedMotion, hint: this.reducedMotion ? "System Reduce Motion is enabled" : `${this.motion ? "Turn off" : "Turn on"} animation` })))
       .child(this.button("settings", "Settings", cx => this.open(this.drawer === "settings" ? null : "settings", cx), t, { icon: "settings", iconOnly: true, selected: this.drawer === "settings", hint: "Pipeline settings" }))
@@ -788,6 +793,51 @@ export default class Pipeline extends View {
     return fill.w(width).transition("width", { duration: this.bars.get(key), easing: "linear" });
   }
 
+  planHeading(state) {
+    const thinking = state.live && state.planner?.on && plannerBusy(state);
+    const planner = state.live && state.planner?.on ? (thinking ? "planning…" : state.planning?.status === "failed" ? "planner stopped" : planned(state) && state.planning ? `by ${[PLANNERS[state.planning.agent] ?? "Claude Code", state.planning.model].filter(Boolean).join(" · ")}` : null) : null;
+    return { thinking, heading: planner ? `The plan · ${planner}` : "The plan" };
+  }
+
+  board(state, t, info, motion, now, cx) {
+    const drawerWidth = this.drawer && this.drawer !== "settings" && this.size.width > 1180 ? 330 : 0;
+    const w = Math.max(680, this.size.width - drawerWidth), h = Math.max(320, this.size.height - BAR - STATUS - (this.size.width >= ONE_ROW ? 0 : CONTROLS));
+    const col = Math.floor((w - 40 - 24) / 3), cw = this.cardW = col - 22, tall = h - 60;
+    const card = (task, kind) => {
+      const ch = kind === "review" || needsInput(task) ? CARD.review : CARD.h;
+      return div().relative().w(cw).h(ch).flex_none().child(this.node({ task, x: cw / 2, y: ch / 2, kind }, state, t, motion, now, cx));
+    };
+    const note = text => div().px(2).py(4).text_size(12).line_height(1.45).text_color(t.muted).child(text);
+    const head = (title, tally) => h_flex().h(24).px(4).gap(6).items_center().flex_none()
+      .child(div().text_size(12).font_medium().child(title)).child(div().text_size(12).text_color(t.muted).child(String(tally)));
+    const column = (key, title, tally, rows) => v_flex().id(`pipeline-column-${key}`).w(col).h(tall).p(6).gap(4).flex_none().rounded(10).border_1().border_color(t.border)
+      .child(head(title, tally))
+      .child(v_flex().id(`pipeline-column-${key}-rows`).flex_1().min_h(0).p(4).gap(10).overflow_y_scrollbar().children(rows));
+    const queue = queueOrder(state), active = activeTasks(state).sort((a, b) => a.slot - b.slot);
+    const review = state.tasks.filter(task => ["review", "merging", "failed"].includes(task.status)), prs = state.tasks.filter(task => task.status === "pr");
+    const free = Array.from({ length: Math.max(0, state.parallel - active.length) }, (_, i) => div().id(`pipeline-free-${i}`).w(cw).h(40).flex_none().flex().items_center().justify_center()
+      .rounded(9).border_1().border_dashed().border_color(t.border).text_size(11).text_color(t.muted).child("Free"));
+    const { thinking, heading } = this.planHeading(state);
+    const setup = state.live && state.setup;
+    return v_flex().id("pipeline-board").relative().w(w).h(h).px(20).pb(14).gap(10).flex_none()
+      .child(h_flex().h(36).gap(10).items_center().flex_none()
+        .child(Button.new("pipeline-plan-open").flex_1().min_w(0).h(28).px(6).gap(8).flex().items_center().justify_start().rounded(6).text_size(12).text_color(t.foreground).tab_index(0)
+          .accessibility_label(`${heading}: ${state.plan}. Read the plan`).tooltip("Read the plan").hover(el => el.bg(t.hover)).focus(el => el.bg(t.hover))
+          .on_click((_e, cx) => this.open(this.drawer === "planner" ? null : "planner", cx))
+          .child(dot(thinking ? t.accent : state.planning?.status === "failed" && state.planner?.on ? t.blocked : t.muted, 5))
+          .child(div().flex_none().font_medium().text_color(t.muted).child(heading))
+          .child(div().min_w(0).truncate().child(state.plan)))
+        .child(this.button("history", `${count(info.done, "task")} completed`, cx => this.open("done", cx), t, { icon: "check", small: true })))
+      .child(h_flex().gap(12).items_start().flex_none()
+        .child(column("queue", "Queue", queue.length, queue.length ? queue.map(task => card(task, "card"))
+          : [note(state.watch ? `Watching ${state.column}. New example tasks enter here.` : state.live ? "Type a task above. Each one gets its own agent, branch and worktree." : "Type a task above or press A for examples.")]))
+        .child(column("working", "Working", `${active.length}/${state.parallel}`, [...active.map(task => card(task, "card")), ...free]))
+        .child(column("review", "Review", review.length, [
+          ...(review.length || prs.length ? review.map(task => card(task, "review")) : [note(state.live ? "Finished work lands here for you to read and merge." : "Checked changes land here for approval and merge.")]),
+          ...(prs.length ? [head("Pull requests", prs.length), ...prs.map(task => card(task, "review"))] : [])])))
+      .when(Boolean(setup), el => el.child(this.setupCard(state, t, { w, h, center: { x: w / 2, y: h / 2 } })));
+  }
+
   scene(state, t, info, motion, now, cx) {
     const drawerWidth = this.drawer && this.drawer !== "settings" && this.size.width > 1180 ? 330 : 0;
     const cw = this.cardW = cardWidth(this.size.width);
@@ -856,8 +906,7 @@ export default class Pipeline extends View {
       .when(motion && state.running, el => el.spin(7000)));
     canvas.child(svg("mods/pipeline/moon-small.svg").id("pipeline-electron").absolute().left(c.x - SUN - 12).top(c.y - SUN - 12).size(SUN * 2 + 24).text_color(t.muted)
       .when(motion && state.running, el => el.spin(3200)));
-    const thinking = state.live && state.planner?.on && plannerBusy(state);
-    const planner = state.live && state.planner?.on ? (thinking ? "planning…" : state.planning?.status === "failed" ? "planner stopped" : planned(state) && state.planning ? `by ${[PLANNERS[state.planning.agent] ?? "Claude Code", state.planning.model].filter(Boolean).join(" · ")}` : null) : null;
+    const { thinking, heading } = this.planHeading(state);
     const resting = !state.running ? "Paused" : info.active ? `${info.active}/${state.parallel} busy` : info.queued ? "Choosing work" : "Idle";
     const sun = el => el.absolute().left(c.x - SUN).top(c.y - SUN).size(SUN * 2).rounded(SUN).border_1().bg(t.surface);
     if (!state.live) canvas.child(sun(v_flex()).border_color(t.accent)
@@ -881,7 +930,6 @@ export default class Pipeline extends View {
           .child(div().text_color(t.muted).text_size(11).child(resting))));
     }
     const planLeft = Math.max(30 + cw + 20, c.x - 120);
-    const heading = planner ? `The plan · ${planner}` : "The plan";
     canvas.child(div().id("pipeline-plan").absolute().left(planLeft).top(14).w(Math.max(200, Math.min(420, g.w - 30 - cw - 20 - planLeft)))
       .child(Button.new("pipeline-plan-open").w_full().px(10).py(7).rounded(7).border_1().border_color(this.drawer === "planner" ? t.accent : t.border).bg(t.surface).text_color(t.foreground).tab_index(0)
         .accessibility_label(`${heading}: ${state.plan}. Read the plan`).tooltip("Read the plan").hover(el => el.bg(t.hover)).focus(el => el.border_color(t.accent))
@@ -1468,6 +1516,9 @@ export default class Pipeline extends View {
       body.child(h_flex().gap(10).items_center()
         .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child("The card a new pipeline opens with: checks, Try it, delivery and After merge at a glance, with Choose for me."))
         .child(this.button("setup-show", "Show setup", cx => { this.act({ type: "setupShow" }, cx); this.open(null, cx); }, t, { small: true, icon: "sparkles", disabled: Boolean(state.setup) })));
+      body.child(h_flex().gap(10).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child("See how Pipeline works with example tasks and pretend agents. Nothing real is touched, and this pipeline keeps running."))
+        .child(this.button("demo", "Try a demo", cx => this.setMode("simulation", cx), t, { small: true, icon: "flask" })));
       body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
       body.child(this.heading("Keys")).child(this.label(KEYS.live, t));
     }

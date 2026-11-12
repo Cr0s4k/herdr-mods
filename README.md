@@ -154,8 +154,15 @@ does not itself install those skills for either agent.
 ## Pipeline
 
 **Pipeline** in the top toolbar opens a visual task pipeline for the current project in its
-own tab. The icon button in the header toggles between **Simulation** (flask: example tasks
-and pretend agents) and **Live** (broadcast: real coding agents on your repository).
+own tab. Opened from a project it is **Live**: real coding agents on your repository.
+**Try a demo** (Settings, General) switches to the **Simulation**, example tasks and pretend
+agents, marked **Demo** in the header; **Exit demo** there returns to your pipeline, which
+keeps running meanwhile. Without a project folder Pipeline is the demo only.
+
+The view button beside Settings switches between the **map** (the default: work flowing
+through the agents at the centre) and the **board**: Queue, Working and Review as three
+columns, with the plan as one line above them, pull requests under their own heading in
+Review, and the same cards, buttons and inspector. Pipeline remembers the choice.
 
 In the sidebar, a space lists its **Pipeline** above its agents while the Pipeline tab is open
 there, the live pipeline is started, or it has tasks that aren't merged yet. It spins while the

@@ -397,10 +397,12 @@ test("Live keeps its own pipeline beside the simulation, and typed tasks become 
   for (const id of ["add", "watch", "speed", "delivery"]) assert.equal(find(scene, id), undefined, `${id} is simulation only`);
   assert.ok(find(scene, "agent"));
   assert.equal(text(find(scene, "quota")).trim(), "Limits", "Live's gauge reads real usage limits, not the example quota");
-  assert.match(find(scene, "mode").styles.tooltip[0], /^Live/);
-  click(view, "mode");
+  assert.equal(find(scene, "mode"), undefined, "Live's header has no demo switch");
+  assert.equal(find(scene, "demo-badge"), undefined);
+  view.open("settings", cx, "general"); click(view, "demo");
   assert.equal(view.state().live, undefined);
-  assert.match(find(view.render(cx), "mode").styles.tooltip[0], /^Simulation/);
+  assert.equal(view.drawer, null, "the demo opens with Settings closed");
+  assert.ok(find(view.render(cx), "demo-badge"), "the demo says it is one");
   click(view, "mode");
   assert.equal(row(view, "T-1").title, "Add a dark mode toggle");
 });
@@ -416,7 +418,9 @@ test("a project folder opens in Live unless this copy switched to the simulation
 
 test("Live needs a project folder", () => {
   const view = setup();
-  assert.equal(find(view.render(cx), "mode").styles.disabled[0], true);
+  const scene = view.render(cx);
+  assert.ok(find(scene, "demo-badge"));
+  assert.equal(find(scene, "mode"), undefined, "without a project there is no pipeline to exit to");
 });
 
 test("the agent setting picks which program each task starts", () => {
@@ -1381,4 +1385,26 @@ test("Settings opens as a modal over the whole view, by section, and closes from
   view.size = { width: 500, height: 600 };
   view.open("settings", cx);
   assert.ok(find(find(view.render(cx), "settings-nav"), "settings-general"), "a narrow modal lists its sections in a row");
+});
+
+test("the map is the default view and the header button switches to the board and back", () => {
+  world.storage.delete("layout");
+  const view = setup();
+  assert.ok(find(view.render(cx), "scene"), "a new Pipeline opens on the map");
+  click(view, "layout");
+  assert.equal(world.storage.get("layout"), "board");
+  inReview(view, ["DEMO-101"]); row(view, "DEMO-102").status = "pr";
+  for (const width of [340, 780, 1450]) { view.size = { width, height: 700 }; assert.ok(view.render(cx)); }
+  let scene = view.render(cx);
+  assert.ok(find(scene, "board") && !find(scene, "scene"));
+  assert.ok(find(find(scene, "column-review"), "approve-DEMO-101"), "a reviewed task keeps its approve button in the Review column");
+  assert.match(text(find(scene, "column-review")), /Pull requests 1/);
+  assert.equal(findAll(scene, "free-").length, view.state().parallel - findAll(find(scene, "column-working"), "node-").length);
+  click(view, "layout");
+  scene = view.render(cx);
+  assert.ok(find(scene, "scene") && !find(scene, "board"));
+  assert.equal(world.storage.get("layout"), "map");
+  world.storage.set("layout", "board");
+  assert.ok(find(setup().render(cx), "board"), "the choice is remembered");
+  world.storage.delete("layout");
 });
