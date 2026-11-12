@@ -366,10 +366,12 @@ test("Live's usage limits drawer shows both agents' limits, and the hold decides
   click(view, "run");
   assert.equal(row(view, "T-1").status, "queued");
   let scene = view.render(cx);
-  assert.equal(text(find(scene, "quota")).trim(), "Claude 93%");
+  assert.match(text(find(scene, "agent")), /2 parallel · 93% used$/);
+  assert.equal(find(scene, "quota"), undefined, "usage is on the status chip, not a button of its own");
   assert.match(text(scene), /Held by a usage limit/);
   assert.match(text(scene), /Held by usage limit/);
-  click(view, "quota");
+  click(view, "agent");
+  assert.equal(view.section, "limits", "while a limit holds tasks the chip opens Usage limits");
   scene = view.render(cx);
   assert.match(text(scene), /Usage limits/);
   assert.match(text(scene), /93% · resets/);
@@ -396,7 +398,9 @@ test("Live keeps its own pipeline beside the simulation, and typed tasks become 
   const scene = view.render(cx);
   for (const id of ["add", "watch", "speed", "delivery"]) assert.equal(find(scene, id), undefined, `${id} is simulation only`);
   assert.ok(find(scene, "agent"));
-  assert.equal(text(find(scene, "quota")).trim(), "Limits", "Live's gauge reads real usage limits, not the example quota");
+  assert.equal(text(find(scene, "agent")).trim(), "Claude Code · 2 parallel", "no usage shows until the limits are read");
+  for (const id of ["quota", "parallel", "plane", "linear"]) assert.equal(find(scene, id), undefined, `${id} has no toolbar button of its own`);
+  assert.equal(text(find(scene, "tickets")).trim(), "Add from tickets");
   assert.equal(find(scene, "mode"), undefined, "Live's header has no demo switch");
   assert.equal(find(scene, "demo-badge"), undefined);
   view.open("settings", cx, "general"); click(view, "demo");
@@ -427,7 +431,7 @@ test("the agent setting picks which program each task starts", () => {
   const view = setupLive();
   click(view, "agent"); click(view, "agent-codex");
   assert.deepEqual(view.state().agent, { key: "codex", name: "Codex", run: ["codex"] });
-  assert.ok(find(view.render(cx), "agent").nodes.includes("Codex"));
+  assert.match(text(find(view.render(cx), "agent")), /^\s*Codex · /);
 });
 
 test("queued live task details are saved when the field loses focus", () => {
@@ -685,7 +689,7 @@ test("Live settings choose a model and effort per agent, and the agent button sh
   view.agentChoices = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: true }];
   click(view, "agent");
   click(view, "model-opus"); click(view, "effort-high");
-  assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · opus · high effort");
+  assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · opus · high effort · 2 parallel");
   view.codexModels = [{ slug: "gpt-sol", name: "GPT-Sol", efforts: ["low", "high", "ultra"] }, { slug: "gpt-luna", name: "GPT-Luna", efforts: ["low", "max"] }];
   click(view, "agent-codex");
   assert.ok(find(view.render(cx), "model-gpt-luna") && find(view.render(cx), "effort-ultra") && !find(view.render(cx), "model-opus"));
@@ -699,7 +703,7 @@ test("Live settings choose a model and effort per agent, and the agent button sh
   click(view, "agent-claude");
   assert.equal(view.modelInput.value(), "opus");
   click(view, "model-default");
-  assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · high effort");
+  assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · high effort · 2 parallel");
 });
 
 test("failed checks offer Fix on the card and the full choice in the inspector", async () => {
@@ -1362,7 +1366,7 @@ test("the After merge command is set under Delivery, and a failed run offers Run
 
 test("Settings opens as a modal over the whole view, by section, and closes from its backdrop", () => {
   const view = setupLive();
-  click(view, "parallel");
+  click(view, "agent");
   let scene = view.render(cx);
   assert.equal(find(scene, "inspector"), undefined, "settings no longer use the side inspector");
   assert.ok(find(scene, "settings-modal").styles.inset_0);
@@ -1407,4 +1411,18 @@ test("the map is the default view and the header button switches to the board an
   world.storage.set("layout", "board");
   assert.ok(find(setup().render(cx), "board"), "the choice is remembered");
   world.storage.delete("layout");
+});
+
+test("one tickets button opens the tracker used last, and the drawer switches between Plane and Linear", () => {
+  world.storage.delete("tickets:shop");
+  const view = setupLive();
+  click(view, "tickets");
+  assert.equal(view.drawer, "plane");
+  click(view, "linear");
+  assert.equal(view.drawer, "linear");
+  click(view, "tickets");
+  assert.equal(view.drawer, null, "the button closes the drawer it opened");
+  click(view, "tickets");
+  assert.equal(view.drawer, "linear", "it comes back to the tracker used last");
+  world.storage.delete("tickets:shop");
 });

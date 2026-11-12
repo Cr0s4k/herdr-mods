@@ -41,7 +41,7 @@ const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null)
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
 const SECTIONS = {
-  live: { agent: "Agent", helper: "AI helper", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
+  live: { agent: "Agent", limits: "Usage limits", helper: "AI helper", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
   simulation: { pipeline: "Pipeline", simulation: "Simulation", general: "General" },
 };
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
@@ -424,6 +424,7 @@ export default class Pipeline extends View {
     if (SOURCES[drawer] && !this.state()?.live) return;
     if (drawer === "schedule") { this.timeError = null; for (const kind of ["start", "pause"]) this.times[kind].set_value(this.state()?.schedule?.[kind] ?? ""); }
     if (drawer !== this.drawer && drawer === "picker") this.search.set_value("");
+    if (SOURCES[drawer]) localStorage.setItem(`tickets:${this.id}`, drawer);
     if (drawer !== this.drawer && SOURCES[drawer]) { this.ticketSearch.set_value(""); this.ticketPicked.clear(); this.projects = null; this.teams = null; }
     this.drawer = drawer;
     if (SOURCES[drawer]) { this.loadTickets(drawer, cx); this.ticketSearch.focus(); }
@@ -717,20 +718,30 @@ export default class Pipeline extends View {
         .when(typed.length > TITLE, el => el.child(div().id("pipeline-create-long").flex_none().text_size(11).text_color(t.muted).child("Title + details")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true,
           hint: typed.length > TITLE ? "Add to the queue (Enter). The title is its first sentence or opening words; the whole text goes in its details" : "Add to the queue (Enter)" }))),
-      ...(state.live ? [this.button("agent", this.agentLabel(state), cx => this.open("settings", cx, "agent"), t, { icon: "terminal", hint: `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}: the agent, model and effort each task starts with, in its own worktree` }),
-        this.sourceButton("plane", state, t, "Queue tickets from the Plane project linked to this repository (P)"),
-        this.sourceButton("linear", state, t, "Queue tickets from Linear (L)")]
+      ...(state.live ? [this.ticketsButton(state, t), this.statusChip(state, t)]
         : [this.button("add", "Examples", toggle("picker"), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }),
-          this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", toggle("watch"), t, { icon: "eye", selected: state.watch })]),
-      this.button("parallel", `${state.parallel} parallel`, cx => this.open("settings", cx, state.live ? "agent" : "pipeline"), t, { icon: "pipeline", hint: state.live ? "How many agents run at once" : "Parallel work slots" }),
-      state.live ? this.button("quota", this.limitLabel(state), toggle("quota"), t, { icon: "gauge", selected: this.drawer === "quota", hint: "How full Claude's and Codex's usage limits are, and when new agents wait for them" })
-        : this.button("quota", `Quota ${state.quota}%`, toggle("quota"), t, { icon: "gauge", hint: "Example quota and reserve controls" })];
+          this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", toggle("watch"), t, { icon: "eye", selected: state.watch }),
+          this.button("parallel", `${state.parallel} parallel`, cx => this.open("settings", cx, "pipeline"), t, { icon: "pipeline", hint: "Parallel work slots" }),
+          this.button("quota", `Quota ${state.quota}%`, toggle("quota"), t, { icon: "gauge", hint: "Example quota and reserve controls" })])];
   }
 
-  sourceButton(provider, state, t, hint) {
-    const watch = state.watching?.[provider];
-    return this.button(provider, watch ? `${SOURCES[provider]} · ${watch.name}` : SOURCES[provider], cx => this.open(this.drawer === provider ? null : provider, cx), t,
-      { icon: provider, selected: this.drawer === provider || Boolean(watch), hint: state.sourceErrors?.[provider] ?? hint });
+  ticketProvider(state) {
+    const saved = localStorage.getItem(`tickets:${this.id}`);
+    return SOURCES[saved] ? saved : state.watching?.linear && !state.watching?.plane ? "linear" : "plane";
+  }
+  ticketsButton(state, t) {
+    const provider = SOURCES[this.drawer] ? this.drawer : this.ticketProvider(state);
+    const watches = Object.keys(SOURCES).filter(key => state.watching?.[key]).map(key => `${SOURCES[key]} ${state.watching[key].name}`);
+    const error = Object.values(state.sourceErrors ?? {}).find(Boolean);
+    return this.button("tickets", watches.length ? `Watching ${watches.join(" + ")}` : "Add from tickets", cx => this.open(SOURCES[this.drawer] ? null : provider, cx), t,
+      { icon: provider, selected: Boolean(SOURCES[this.drawer]) || watches.length > 0, hint: error ?? "Queue tickets from Plane (P) or Linear (L), or watch a state so they join by themselves" });
+  }
+  statusChip(state, t) {
+    const used = this.limitPercent(state), held = state.running && state.tasks.some(task => task.status === "queued" && quotaHeld(state, task, Date.now()));
+    const label = [this.agentLabel(state), `${state.parallel} parallel`, used === null ? null : `${used}% used`].filter(Boolean).join(" · ");
+    return this.button("agent", label, cx => this.open("settings", cx, held ? "limits" : "agent"), t, { icon: "terminal",
+      hint: `${state.repo}${this.repo?.branch ? ` · ${this.repo.branch}` : ""}: the agent, model and effort each task starts with, how many run at once, and how full ${LIMITED[limitAgent(state)] ?? "the agent"}'s usage limits are. Opens Settings` })
+      .when(held, el => el.border_color(t.blocked).text_color(t.blocked));
   }
 
   status(state, t, info, motion) {
@@ -1132,7 +1143,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: state.live ? "Usage limits" : "Quota", planner: "Plan", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Plan", schedule: "Schedule", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -1166,7 +1177,7 @@ export default class Pipeline extends View {
           .on_click((_e, cx) => this.inspect(item.task, cx)).child(item.message)
         : this.label(item.message, t));
     }
-    else if (this.drawer === "quota") state.live ? this.limits(body, state, t) : this.quota(body, state, t);
+    else if (this.drawer === "quota") this.quota(body, state, t);
     else if (this.drawer === "planner") this.plannerView(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
     else if (this.drawer === "schedule") this.schedule(body, state, t);
@@ -1264,10 +1275,9 @@ export default class Pipeline extends View {
     this.stepper(body, "Quota reserve", "Percentage kept for your other work.", state.reserve, "reserve", 0, 50, t);
     body.child(this.label("Quota and launch costs are simulated. In Live, Pipeline reads Claude's and Codex's real usage limits.", t));
   }
-  limitLabel(state) {
+  limitPercent(state) {
     const key = limitAgent(state), windows = state.limits?.[key]?.windows;
-    if (!LIMITED[key] || !windows?.length) return "Limits";
-    return `${LIMITED[key]} ${Math.round(Math.max(...windows.map(window => limitUsed(window))))}%`;
+    return LIMITED[key] && windows?.length ? Math.round(Math.max(...windows.map(window => limitUsed(window)))) : null;
   }
   limits(body, state, t) {
     const hold = limitHold(state), key = limitAgent(state), now = Date.now(), warn = text => div().text_size(12).line_height(1.45).text_color(t.blocked).child(text);
@@ -1337,6 +1347,8 @@ export default class Pipeline extends View {
   ticketDrawer(provider, body, state, t) {
     const source = this.sources[provider], service = SOURCES[provider], watch = state.watching?.[provider], filter = this.linearFilter;
     const warn = text => div().text_size(12).line_height(1.45).text_color(t.blocked).child(text);
+    body.child(h_flex().children(Object.keys(SOURCES).map((key, i) => this.button(key, SOURCES[key], cx => this.open(key, cx), t,
+      { icon: key, small: true, selected: key === provider, segment: i ? "right" : "left", hint: `Tickets from ${SOURCES[key]} (${key[0].toUpperCase()})` }))));
     const refresh = id => this.button(id, source.loading ? "Loading…" : "Refresh", cx => this.loadTickets(provider, cx), t, { icon: "reset", disabled: source.loading });
     if (source.needsProject || source.kind === "auth") {
       const panel = provider === "plane" ? "Tasks" : "Linear";
@@ -1453,7 +1465,8 @@ export default class Pipeline extends View {
       body.child(div().h(1).bg(t.border));
       body.child(this.switchRow("auto-trust", "Trust new worktrees automatically", "Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.",
         Boolean(state.autoTrust), cx => this.act({ type: "autoTrust" }, cx), t));
-    } else if (section === "helper") this.helperSettings(body, state, t);
+    } else if (section === "limits") this.limits(body, state, t);
+    else if (section === "helper") this.helperSettings(body, state, t);
     else if (section === "planner") this.plannerSettings(body, state, t);
     else if (section === "repositories") this.repositories(body, state, t);
     else if (section === "checks") {

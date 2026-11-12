@@ -193,7 +193,9 @@ before the card existed.
 1. Type a task into **New task** and press Enter. Click it to add details for the agent;
    the title and details are its first message. Text too long for a title (over 90
    characters, marked **Title + details** in the field) keeps its first sentence or opening
-   words as the title, and the whole text goes into its details. Or bring tickets from **Plane** (P), the
+   words as the title, and the whole text goes into its details. Or bring tickets with
+   **Add from tickets**, which opens the tracker this pipeline used last and switches between
+   the two at the top of its drawer. **Plane** (P) is the
    project linked to this repository in the Tasks panel: pick open tickets and **Queue**
    them, or **Watch a state** (say Ready) so tickets in it join the queue by themselves within
    a minute, each one once. A Plane task keeps the ticket's key (HMOD-12), priority and
@@ -258,10 +260,10 @@ before the card existed.
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it
    appears under that space in the sidebar. The agent is the first installed one Herdr knows
-   (Claude Code, Codex…); pick another with the agent button. For Claude Code and Codex,
+   (Claude Code, Codex…); pick another in Settings, which the toolbar's chip opens (**Claude Code · 2 parallel · 34% used**: the agent with its model and effort, how many run at once, and how full its usage limits are). For Claude Code and Codex,
    Settings also sets the **Model** (Claude's aliases such as opus, the models Codex lists in
    its `models_cache.json`, or any model name typed in) and **Effort**, passed as launch
-   flags; **Default** leaves the agent's own setting. The agent button and each task's
+   flags; **Default** leaves the agent's own setting. The chip and each task's
    inspector show what it started with.
 3. The card follows the agent: **Working** with how long its agent has had the task,
    **Needs you** when it waits for you, and **Ready for review** when it finishes. **Answer**
@@ -386,8 +388,8 @@ space).
 
 ### Usage limits
 
-In Live, the gauge button in the toolbar shows how full the usage limits of the agent your tasks start with are
-(**Claude 49%**), and opens **Usage limits**. It shows each of Claude's and Codex's limits (5-hour, weekly, and a
+In Live, the toolbar's chip ends with how full the usage limits of the agent your tasks start with are
+(**49% used**). **Usage limits** in Settings shows each of Claude's and Codex's limits (5-hour, weekly, and a
 model's own weekly limit such as Fable's), how full each is and when it resets.
 
 While a limit is at **Hold at** (90% by default) or more, no new agent starts: the queued task says **Held by usage
