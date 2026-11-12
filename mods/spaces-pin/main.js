@@ -24,16 +24,20 @@ function find(node, id) {
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
-// Where a space is now: its first terminal's live folder, else where it was made.
+// Where a space is: the folder it is locked to, else its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
 function place(s, ps) {
+  return homes()[s.id] || live(s, ps);
+}
+function live(s, ps) {
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
-// Every folder a space's terminals are in, Herdr's place first, then where it was made.
+const homes = () => shared("space.homes") ?? {};
+// Every folder a space's terminals are in, its own place first, then where it was made.
 function places(s, ps) {
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
-  return [...new Set([...ps.filter((p) => tabs.has(p.tab) && p.cwd).map((p) => p.cwd), s.folder].filter(Boolean))];
+  return [...new Set([homes()[s.id], ...ps.filter((p) => tabs.has(p.tab) && p.cwd).map((p) => p.cwd), s.folder].filter(Boolean))];
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const RAIL_CELL = 32;
@@ -72,6 +76,7 @@ export default class Spaces extends View {
     this.ready = {}; // machine -> its layout was readable at the last look
     this.at = {}; // space -> its where() at the last look
     this.watching = new Set(); // local repos' git folders
+    this.naming = new Set();
     // Spaces made while this runs wait (at most a moment) for their git, so a
     // worktree appears under its repo instead of jumping there.
     this.shown = new Set(spaces().map((s) => s.id));
@@ -369,6 +374,32 @@ export default class Spaces extends View {
     const main = g?.linked ? keys.find((k) => this.git[k] && !this.git[k].linked && this.git[k].repo === g.repo) : null;
     const key = main ?? first;
     return { key, g: this.git[key] ?? null, name: main && !s.named ? this.git[main].name : s.name };
+  }
+
+  // Herdr names an unnamed space after its first terminal's live folder, so a cd renames it.
+  // A space keeps the name and folder it first has outside home; renamed to "", it takes them anew.
+  lock(sp, ps) {
+    const before = homes(), ids = new Set(sp.map((s) => s.id));
+    const stale = Object.keys(before).length > 200;
+    const kept = stale ? Object.fromEntries(Object.entries(before).filter(([id]) => ids.has(id))) : { ...before };
+    let changed = Object.keys(kept).length !== Object.keys(before).length;
+    for (const s of sp) {
+      if (s.named && kept[s.id]) { this.naming.delete(s.id); continue; }
+      if (this.naming.has(s.id)) continue;
+      if (kept[s.id]) { delete kept[s.id]; changed = true; continue; }
+      if (!s.named && s.name === "~") continue;
+      // A worktree terminal may be first: the checkout it belongs to is only known once git has answered.
+      const keys = [live(s, ps), ...places(s, ps)].filter(Boolean).map((cwd) => spot(s, cwd));
+      if (!keys.length || keys.some((k) => !(k in this.git) || this.unsure.has(k))) continue;
+      const h = this.home(s, ps), folder = h.g?.top || JSON.parse(h.key)[1];
+      if (!folder || (s.named && !h.g)) continue;
+      kept[s.id] = folder; changed = true;
+      if (!s.named && !this.naming.has(s.id)) {
+        this.naming.add(s.id);
+        run("space.rename", { id: s.id, name: h.name });
+      }
+    }
+    if (changed) setShared("space.homes", kept);
   }
 
   // A space's agents in another worktree than the space's own go under a node per worktree.
@@ -814,6 +845,7 @@ export default class Spaces extends View {
     const focus = visible.find(s => s.id === focusId);
     if (focusId && !focus) setShared("spaces.focus", null);
     this.panes = panes();
+    this.lock(sp, this.panes);
     this.agents.update(sp, this.panes);
     const attentionCount = this.agents.summary(visible.map(s => s.id)).blocked;
     const ids = new Set(sp.map(p => p.id));

@@ -222,6 +222,9 @@ test("a worktree terminal first in a space keeps the checkout's name and groups 
     '[null,"/work/app"]': { repo: "repo", name: "app", branch: "main", top: "/work/app", linked: false },
   };
   let root = view.render();
+  assert.deepEqual(world.calls, [["space.rename", { id: "app", name: "app" }]]);
+  assert.deepEqual(sharedState.get("space.homes"), { app: "/work/app" });
+  Object.assign(app, { name: "app", named: true }); root = view.render();
   assert.equal(text(find(root, "space-app")).trim(), "A app");
   const tree = find(root, "worktree-tree-app-0");
   assert.match(text(tree), /t-4-fix/);
@@ -233,8 +236,32 @@ test("a worktree terminal first in a space keeps the checkout's name and groups 
   sharedState.set("spaces.focus", "app"); root = view.render();
   assert.match(text(find(root, "spaces-focus-title")), /app/);
   assert.ok(find(find(root, "focus-worktree-tree-app-0"), "focus-ag-task"));
-  app.named = true;
-  assert.match(text(view.render()), /t-4-fix-8a32/);
+  app.name = "Mine";
+  assert.match(text(view.render()), /Mine/);
+});
+
+test("a space keeps the name and folder it first has outside home, whatever its terminals cd to", () => {
+  const view = setup();
+  const app = { ...space("app", true), name: "~", folder: "/home/me" };
+  world.spaces = [app]; world.agents = [];
+  world.panes = [{ pane: "p", tab: "app-tab", cwd: "/home/me" }];
+  view.git = { '[null,"/home/me"]': null, '[null,"/work/app/src"]': { repo: "app-repo", name: "app", branch: "main", top: "/work/app", linked: false },
+    '[null,"/work/app"]': { repo: "app-repo", name: "app", branch: "main", top: "/work/app", linked: false },
+    '[null,"/work/else"]': { repo: "else-repo", name: "else", branch: "dev", top: "/work/else", linked: false } };
+  view.render();
+  assert.deepEqual(world.calls, []); assert.equal(sharedState.get("space.homes"), undefined);
+  world.panes[0].cwd = "/work/app/src"; app.name = "app"; view.render();
+  assert.deepEqual(world.calls, [["space.rename", { id: "app", name: "app" }]]);
+  assert.deepEqual(sharedState.get("space.homes"), { app: "/work/app" });
+  view.render(); assert.equal(world.calls.length, 1);
+  app.named = true; world.panes[0].cwd = "/work/else";
+  const root = view.render();
+  assert.equal(world.calls.length, 1);
+  assert.deepEqual(sharedState.get("space.homes"), { app: "/work/app" });
+  assert.match(text(find(root, "space-app")), /app/); assert.doesNotMatch(text(find(root, "space-app")), /else|dev/);
+  Object.assign(app, { name: "else", named: false }); view.render(); view.render();
+  assert.deepEqual(world.calls.at(-1), ["space.rename", { id: "app", name: "else" }]);
+  assert.deepEqual(sharedState.get("space.homes"), { app: "/work/else" });
 });
 
 test("the attention filter gives a way back when the last blocked agent becomes idle", () => {
@@ -457,7 +484,7 @@ test("the existing timer expires deadlines and returns spaces without a user act
 });
 
 test("hidden checkout roots promote visible worktrees and hidden children leave their checkout visible", () => {
-  const view = setup(); world.spaces = [space("app", true), space("worktree")];
+  const view = setup(); world.spaces = [{ ...space("app", true), named: true }, { ...space("worktree"), named: true }];
   world.agents = [agent("one", "app"), agent("two", "worktree")]; view.shown.add("worktree");
   view.git = { '[null,"/work/app"]': { repo: "repo", name: "app", branch: "main", linked: false },
     '[null,"/work/worktree"]': { repo: "repo", name: "app", branch: "feature", linked: true } };

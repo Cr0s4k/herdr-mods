@@ -1,11 +1,11 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, theme, run, window, keys, exec } from "herdr";
+import { spaces, agents, theme, run, window, keys, exec, shared } from "herdr";
 import { parseBranch, remoteGit } from "./sync.js";
 import { brighter } from "./ui.js";
 
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false"];
-const where = () => { const s = spaces().find(s => s.active); return { folder: s?.folder, on: s?.machine ?? null }; };
+const where = () => { const s = spaces().find(s => s.active); return { folder: shared("space.homes")?.[s?.id] || s?.folder, on: s?.machine ?? null }; };
 
 export default class WorkspaceStatus extends View {
   init(_props, cx) {

@@ -652,8 +652,14 @@ without changing focus. Click an agent to focus its pane. Worktree spaces remain
 under their checkout and start collapsed; subagents start collapsed too, and clicking
 a subagent opens its live preview. Expansion choices survive restarts.
 
-Herdr names a space after its first terminal's folder, so a Pipeline task's worktree could
-rename the whole space. While one of its terminals, or the folder it was made in, is in the
+Herdr names a space after its first terminal's live folder, so a `cd` or a new worktree
+renames it. Here a space is locked to the first place it has outside your home folder: it
+takes that repo's (or folder's) name as its own, and the sidebar and the status bar keep
+showing that folder's repo and branch wherever its terminals go. A space opened at `~` waits
+for its first `cd`. To move a space, right-click → rename it to nothing: it locks again to
+where its first terminal is now. Files and Changes still follow the focused terminal.
+
+A Pipeline task's worktree could also rename the whole space. While one of its terminals, or the folder it was made in, is in the
 repo's main checkout, the sidebar keeps the space there and under the repo's name (a name you
 gave it always wins). Agents working in another worktree sit under a branch row inside their
 space; click the branch to focus its first agent.
