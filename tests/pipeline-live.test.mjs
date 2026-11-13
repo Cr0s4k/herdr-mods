@@ -455,6 +455,18 @@ test("a finished agent's work runs the check command in its worktree before revi
   assert.match(world.state().events[0].message, /checks passed · ready for your review/);
 });
 
+test("work that changed no files skips the checks", async () => {
+  const { world } = checking({ changed: async (_context, repos) => { world.asked = repos; return { changed: false }; } });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  await finished(world, runner);
+  assert.deepEqual(world.checks, []);
+  assert.deepEqual(world.asked.map(repo => repo.worktree), ["/wt/T-1-a"]);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.checked, task.unchanged], ["review", null, true]);
+  assert.match(world.state().events[0].message, /changed no files, so checks were skipped/);
+});
+
 test("failing checks go back to the agent twice, then stop and wait with the output", async () => {
   const { world, results } = checking();
   results.push({ code: 1, output: "\u001b[31mFAIL\u001b[0m one" }, { code: 1, output: "FAIL two" }, { code: 1, output: "FAIL three" });
@@ -572,6 +584,21 @@ test("with pull request delivery, approving pushes the branch and opens a PR int
   const task = row(world.state(), "T-1");
   assert.deepEqual([task.status, task.merge, task.prs], ["pr", false, { shop: { url: "https://github.com/me/shop/pull/12", number: 12 } }]);
   assert.ok(task.workspaces && task.terminal, "nothing is cleaned up while the PR is open");
+});
+
+test("approving work that changed no files finishes it without a pull request", async () => {
+  const world = prHost();
+  world.host.changed = async () => ({ changed: false });
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  assert.match(world.state().events[0].message, /closing it; it changed no files/);
+  world.scripts = [];
+  await step(runner);
+  assert.deepEqual(world.scripts.map(([, payload]) => payload.op), ["remove"]);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.prs, task.error, task.workspaces], ["done", null, null, null]);
+  assert.match(world.state().events.find(event => /done ·/.test(event.message)).message, /nothing to open a pull request for/);
 });
 
 test("a merged PR finishes the task and cleans up; a closed one returns it to review", async () => {
