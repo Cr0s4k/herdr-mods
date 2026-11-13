@@ -3,7 +3,7 @@ import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Swi
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
@@ -155,7 +155,7 @@ export default class Pipeline extends View {
     this.prepareInput = InputState.new({ placeholder: 'cp "$PIPELINE_SOURCE/.env" . && npm ci' });
     this.prepareInput.on("change", (_e, cx) => cx.notify());
     this.prepareInput.on("submit", (_e, cx) => this.savePrepare(cx));
-    this.teamGuess = null;
+    this.teamGuess = null; this.asked = null;
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
@@ -437,6 +437,17 @@ export default class Pipeline extends View {
     try { localStorage.removeItem(`linear:${this.id}`); } catch (_) { /* Nothing was saved. */ }
     this.linearFilter = { scope: "mine", team: null, project: null };
     this.confirm = null; this.open(null, cx);
+  }
+  askEvidence(task, cx) {
+    const state = this.state(), ws = task && workspacesOf(task)[0];
+    if (!task?.terminal || !ws) return;
+    this.asked = { id: task.id, pending: true }; cx.notify();
+    cx.spawn(async cx => {
+      const sent = await hc(["send", task.terminal, evidenceRequest(task, ws, { tryout: state.tryout ?? null, port: taskPort(task) })]).then(result => result.code === 0, () => false);
+      this.asked = { id: task.id, sent };
+      if (!sent) this.focusAgent(task);
+      cx.notify();
+    });
   }
   showEvidence(task, file) {
     exec("herdr-show", [file, "--title", `${task.id} · ${file.split("/").pop().replace(/\.[a-z]+$/i, "")}`]).catch(() => null);
@@ -1185,13 +1196,16 @@ export default class Pipeline extends View {
         ...(!updatesLabel(moves) && updatesLabel(guess) ? [use("updates", `Use ${updatesLabel(guess)}`, cx => this.useUpdates(tracker, guess, cx),
           `Moves a ${SOURCES[tracker]} ticket as its work starts, is ready for review and merges, and links its pull request`)] : []),
         change("updates", "tickets", updatesLabel(moves) ? "Change" : "Set")]),
+      row("evidence", "Screenshots", state.evidence ? ok : plain, state.evidence ? "Agents show the change, before and after" : "Agents aren't asked for any", [
+        ...(!state.evidence ? [use("evidence", "Ask for before and after", cx => this.act({ type: "evidence" }, cx), "Each agent screenshots what it changes, before and after. They appear in the task's inspector")] : []),
+        change("evidence", "agent")]),
     ];
     const note = ai?.running ? [`${ai.by} is reading the repository. It only reads, and you can keep typing tasks.`, t.accent]
       : ai?.error ? [`${ai.by} couldn't choose: ${ai.error}`, t.blocked]
       : ai ? [`${ai.by} chose what's marked with sparkles${ai.ms ? ` in ${Math.max(1, Math.round(ai.ms / 1000))} s` : ""}. Change anything you disagree with.`, t.muted]
       : state.inherited ? ["These come from this project's other pipeline. A change here changes it there too.", t.muted]
       : ["The defaults work. These are the ones worth a look before the first agent starts.", t.muted];
-    const tall = 456 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
+    const tall = 492 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
     return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(60, Math.min(g.center.y - tall / 2, g.h - tall - 20))).w(w).p(16).gap(4)
       .rounded(10).border_1().border_color(t.border).bg(t.surface).text_color(t.foreground).shadow_lg()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -1881,6 +1895,13 @@ export default class Pipeline extends View {
           return label ? h_flex().gap(8).items_start().child(div().w(56).flex_none().text_color(label === "Unsure" ? t.ansi3 : t.muted).child(label)).child(div().flex_1().min_w(0).child(rest)) : div().child(line);
         })));
     if (task.evidence && task.status !== "queued") this.evidenceDetail(body, task, t);
+    if (task.terminal && trees.length && !task.evidence?.files?.length && ["working", "input", "review"].includes(task.status) && !task.discard) {
+      const asked = this.asked?.id === task.id ? this.asked : null;
+      body.child(h_flex().gap(8).items_center()
+        .child(this.button(`evidence-ask-${task.id}`, asked?.pending ? "Asking…" : "Ask for screenshots", cx => this.askEvidence(task, cx), t,
+          { small: true, icon: "eye", disabled: Boolean(asked?.pending || asked?.sent), hint: "Asks its agent for before and after screenshots of what it changed. They appear here when its turn ends" }))
+        .when(Boolean(asked && !asked.pending), el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child(asked.sent ? "Asked. They appear here when its turn ends." : "Couldn't reach its terminal."))));
+    }
     if (task.terminal && task.status !== "done" && !task.discard) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))
         .child(this.button(`trust-task-${task.id}`, "Trust this worktree", cx => this.trust(task, cx), t, { icon: "check", primary: true, hint: "Answers “Yes, I trust this folder” in its terminal" }));

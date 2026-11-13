@@ -36,7 +36,7 @@ globalThis.__pipelineView = {
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
-  setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry,
+  setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry, evidenceRequest: live.evidenceRequest,
   rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
@@ -1660,4 +1660,28 @@ test("the inspector lists the agent's before and after screenshots and its walkt
   click(view, "walkthrough-T-1");
   assert.deepEqual(calls.at(-1).slice(0, 2), ["xdg-open", ["https://claude.ai/artifact/1"]]);
   world.exec = null;
+});
+
+test("the setup card turns screenshots on, and a task that started without them can be asked from its inspector", async () => {
+  const view = setupLive();
+  assert.match(text(find(view.render(cx), "setup-evidence")), /Agents aren't asked for any/);
+  click(view, "setup-evidence-use");
+  assert.equal(view.state().evidence, true);
+  assert.equal(find(view.render(cx), "setup-evidence-use"), undefined);
+  view.act({ type: "tryout", command: "npm run dev" }, cx);
+  view.act({ type: "create", title: "A" }, cx);
+  view.inspect("T-1", cx);
+  assert.equal(find(view.render(cx), "evidence-ask-T-1"), undefined, "nothing to ask before it has an agent");
+  agentTask(view, "T-1", { status: "review", slot: null });
+  world.hc = [];
+  await settle(view, "evidence-ask-T-1");
+  const [verb, terminal, message] = world.hc.at(-1);
+  assert.deepEqual([verb, terminal], ["send", "t9"]);
+  assert.match(message, /running the project with `npm run dev` \(PIPELINE_PORT=\d{4}/);
+  assert.match(message, /as it was at aaaaaaa without losing your work/);
+  assert.match(message, /git rev-parse --git-path herdr-evidence/);
+  assert.match(text(view.render(cx)), /Asked\. They appear here when its turn ends\./);
+  assert.equal(find(view.render(cx), "evidence-ask-T-1").styles.disabled[0], true);
+  view.act({ type: "summary", id: "T-1", text: "", evidence: { files: ["/g/01-before-a.png"], url: null } }, cx);
+  assert.equal(find(view.render(cx), "evidence-ask-T-1"), undefined, "gone once there are screenshots");
 });

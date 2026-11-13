@@ -36,6 +36,15 @@ function evidenceRule(first, others, extras) {
     "- When nothing visible changes, or the project can't run here, skip this and say so on the summary's Checked line."];
 }
 
+// For a task that started without Show the change: its worktree already has the work, so "before" comes from the start commit.
+export function evidenceRequest(task, ws, extras = {}) {
+  return [`Take before and after screenshots of the screens this task changes${extras.tryout ? `, running the project with \`${extras.tryout}\`${extras.port ? ` (PIPELINE_PORT=${extras.port} when it takes a port)` : ""}` : ""}.`,
+    `For "before", show the project as it was at ${String(ws.base ?? "the commit this branch started from").slice(0, 7)} without losing your work (a temporary \`git worktree\` of that commit works), then your branch for "after".`,
+    `Save them as PNG in the folder ${gitFile(ws, 0, "herdr-evidence")} (Git's own folder, so they are never committed), in pairs named like \`01-before-login.png\` and \`01-after-login.png\`.`,
+    "If you can publish a private page that walks through the change with these screenshots (Claude Code's Artifact tool), do, and write only its link into `walkthrough.url` in that folder.",
+    "Stop what you started when you are done, and commit nothing for this."].join(" ");
+}
+
 // The reviewer reads this before the diff. It sits in Git's own folder, so it is never committed.
 function summaryRule(first, others) {
   return ["", `Before you stop, write a short summary for the person who reviews this to ${first.prBody ? first.prBody.replace(/herdr-pr\.md$/, "herdr-summary.md") : `the file \`git rev-parse --git-path herdr-summary.md\` prints in ${others ? `${first.name}'s worktree` : "the worktree"}`}`

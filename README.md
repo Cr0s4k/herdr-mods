@@ -349,7 +349,9 @@ nothing to finish.
    pairs like `01-before-login.png` and `01-after-login.png`. The inspector lists them under
    **Before and after**; clicking one opens it in the Show panel. A Claude Code agent may also
    publish a private page walking through the change, which the inspector opens with **Open
-   walkthrough**. With pull requests, **Add the screenshots to the pull request** (Settings,
+   walkthrough**. The setup card has a **Screenshots** row that turns it on. A task that
+   started without it has **Ask for screenshots** in its inspector, which sends its agent the
+   same request (with "before" taken from the commit its branch started from). With pull requests, **Add the screenshots to the pull request** (Settings,
    Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin` and adds
    a **Before and after** table to the description. How to start the app and which screens
    matter belongs in the repository's `AGENTS.md` or a skill.
