@@ -541,6 +541,7 @@ export class LiveRunner {
     cx.spawn(async () => {
       const read = await this.host.delivery({ cwd: root, on: state.context.on }, { op: "summary", worktree: root }).catch(() => null);
       if (read?.text || read?.evidence) this.apply(id, { type: "summary", id: task.id, text: read.text, ...(read.evidence ? { evidence: read.evidence } : {}) });
+      this.apply(id, { type: "unchanged", id: task.id, value: await this.unchanged(state.context, task) });
     });
   }
 
@@ -553,6 +554,7 @@ export class LiveRunner {
       try {
         const state = this.host.shared(STORE)?.[id], command = state?.check?.command, workspaces = workspacesOf(task);
         if (!command || !workspaces.length) { this.apply(id, { type: "checkPassed", id: task.id, run: task.checkRun, output: "" }); return; }
+        if (this.host.changed && await this.unchanged(state.context, task)) { this.apply(id, { type: "checkPassed", id: task.id, run: task.checkRun, output: "", unchanged: true }); return; }
         const several = workspaces.length > 1, results = [];
         for (const ws of workspaces) {
           const result = await this.host.check(state.context, ws.cwd, command).catch(error => ({ code: -1, output: error?.message || String(error) }));
@@ -567,6 +569,13 @@ export class LiveRunner {
         this.apply(id, { type: "checkFailed", id: task.id, run: task.checkRun, output, fix: Boolean(fix), ...(several ? { repos: failed.map(result => result.name) } : {}) });
       } finally { this.checking.delete(key); }
     });
+  }
+
+  async unchanged(context, task) {
+    const workspaces = workspacesOf(task);
+    if (!this.host.changed || !workspaces.length || Object.keys(task.prs ?? {}).length) return false;
+    const read = await this.host.changed({ cwd: workspaces[0].source ?? context.cwd, on: context.on }, workspaces.map(ws => ({ worktree: ws.root, base: ws.base }))).catch(() => null);
+    return read?.changed === false;
   }
 
   source(state, task, name) {
@@ -621,6 +630,12 @@ export class LiveRunner {
 
   async merge(id, task) {
     const state = this.host.shared(STORE)[id], context = state.context, workspaces = workspacesOf(task);
+    if (await this.unchanged(context, task)) {
+      this.apply(id, { type: "closedUnchanged", id: task.id });
+      try { await this.clean(context, task, false); } catch { /* Nothing was delivered; a leftover worktree is harmless. */ }
+      this.apply(id, { type: "cleaned", id: task.id });
+      return;
+    }
     if (state.delivery === "pr") {
       try { this.apply(id, { type: "prOpened", id: task.id, prs: await this.publish(state, task, workspaces) }); }
       catch (error) { this.apply(id, { type: "mergeFailed", id: task.id, error: error?.message || String(error) }); }

@@ -268,9 +268,9 @@ export function liveNotices(before, after) {
     else if (task.status === "input" && task.reason === "trust" && old.reason !== "trust") say("asks to trust its worktree", task.title, "warning");
     else if (task.status === "review" && old.status === "merging") say(after.delivery === "pr" ? "pull request not opened" : "not merged", task.error, "error");
     else if (task.status === "review" && old.status === "pr") say("pull request closed", task.error, "warning");
-    else if (task.status === "review" && old.status === "testing" && needsApproval(task)) say("is ready for review", `Checks passed · ${task.title}`, "success");
+    else if (task.status === "review" && old.status === "testing" && needsApproval(task)) say("is ready for review", `${task.unchanged ? "No file changes" : "Checks passed"} · ${task.title}`, "success");
     else if (task.status === "done" && old.status === "pr") say("merged on GitHub", task.title, "success");
-    else if (task.status === "done" && old.status === "merging" && after.autoMerge) say("merged", task.title, "success");
+    else if (task.status === "done" && old.status === "merging" && after.autoMerge) say(task.unchanged ? "done" : "merged", task.title, "success");
     else if (task.status === "pr" && old.status === "pr") {
       const need = prNeeds(task), last = prNeeds(old);
       if (need.label !== last.label && need.tone !== "wait" && need.tone !== last.tone) say(`pull request · ${need.label.toLowerCase()}`, task.title, need.tone === "ready" ? "success" : "warning");
@@ -1004,7 +1004,7 @@ export function reduce(state, action, now = Date.now()) {
       const started = task.worked, checks = action.status === "review" && Boolean(next.check?.command);
       if (task.slot === null || task.slot === undefined) seat(next, task);
       task.status = checks ? "testing" : action.status; task.reason = action.reason ?? null; task.approvals = [];
-      if (action.status === "working") task.worked = true;
+      if (action.status === "working") { task.worked = true; delete task.unchanged; }
       if (checks) { task.checkRun = (task.checkRun ?? 0) + 1; task.checked = null; }
       if (task.status === "review") task.slot = null;
       event(next, action.reason === "trust" ? `${task.id} · its agent asks whether to trust the new worktree.` : action.status === "input" ? `${task.id} needs you in its terminal.`
@@ -1087,8 +1087,9 @@ export function reduce(state, action, now = Date.now()) {
     case "checkPassed": {
       const task = row(action.id);
       if (!next.live || task?.status !== "testing" || task.checkRun !== action.run) return state;
-      Object.assign(task, { status: "review", slot: null, checked: "passed", checkOutput: action.output ?? "", reason: null });
-      event(next, `${task.id} checks passed · ready for your review.`, task.id);
+      Object.assign(task, { status: "review", slot: null, checked: action.unchanged ? null : "passed", checkOutput: action.output ?? "", reason: null });
+      if (action.unchanged) task.unchanged = true;
+      event(next, action.unchanged ? `${task.id} changed no files, so checks were skipped · ready for your review.` : `${task.id} checks passed · ready for your review.`, task.id);
       reviewed(next, task);
       break;
     }
@@ -1310,6 +1311,20 @@ export function reduce(state, action, now = Date.now()) {
       if (action.evidence) task.evidence = evidence;
       break;
     }
+    case "unchanged": {
+      const task = row(action.id);
+      if (!next.live || !task || Boolean(task.unchanged) === Boolean(action.value)) return state;
+      if (action.value) task.unchanged = true; else delete task.unchanged;
+      break;
+    }
+    case "closedUnchanged": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "merging") return state;
+      Object.assign(task, { status: "done", merge: false, commit: false, finished: ++next.sequence, error: null, unchanged: true });
+      event(next, `${task.id} done · it changed no files, so there was nothing to ${next.delivery === "pr" ? "open a pull request for" : "merge"}.`, task.id);
+      ticketUpdate(next, task, "merge");
+      break;
+    }
     case "mergeFailed": {
       const task = row(action.id);
       if (!next.live || task?.status !== "merging") return state;
@@ -1493,7 +1508,7 @@ export function reduce(state, action, now = Date.now()) {
     if (!next.live) { event(next, `${task.id} entering the merge queue.`, task.id); continue; }
     task.merge = true; task.error = null;
     const target = targetOf(task) ?? "your branch";
-    event(next, next.delivery === "pr" ? `${task.id} · opening ${task.repos.length > 1 ? "pull requests" : "a pull request"} into ${target}${repoNames(task)}.`
+    event(next, task.unchanged ? `${task.id} · closing it; it changed no files.` : next.delivery === "pr" ? `${task.id} · opening ${task.repos.length > 1 ? "pull requests" : "a pull request"} into ${target}${repoNames(task)}.`
       : `${task.id} · merging into ${target}${repoNames(task)}.`, task.id);
   }
   const picked = [];

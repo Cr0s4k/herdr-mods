@@ -82,9 +82,12 @@ const toneColor = (tone, t) => ({ blocked: t.blocked, ready: t.ansi2 })[tone] ??
 function cardStatus(state, task) {
   if (task.discard) return "Discarding…";
   if (state.live && task.status === "review" && !needsApproval(task) && !task.discard) return state.delivery === "pr" ? "Approved · PR next" : "Approved · merging next";
+  if (state.live && task.status === "review" && task.unchanged && !task.error) return "No file changes";
   if (state.live && task.status === "review") return task.error ? "Not merged · see why" : task.checked === "passed" ? "Checks passed" : task.checked === "failed" ? "Checks failing" : "Ready for review";
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
   if (state.live && task.status === "pr") return prNeeds(task).label;
+  if (state.live && task.status === "merging" && task.unchanged) return "Closing";
+  if (state.live && task.status === "done" && task.unchanged) return "Done · no changes";
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
   if (state.live && task.status === "done" && (task.revert || task.reverted)) return task.revert ? "Reverting…" : "Reverted";
   if (state.live && task.status === "done" && afterFailed(state).some(entry => entry.task === task.id)) return "Merged · after-merge failed";
@@ -1308,7 +1311,9 @@ export default class Pipeline extends View {
       .child(this.bar(task, state, cw - 20, t.accent, motion, now, cx)));
     if (task.status === "merging" && kind === "review" && !state.live) wrap.child(div().absolute().left(9).bottom(6).w(cw - 18).h(2).rounded(1).bg(t.raised)
       .child(this.bar(task, state, cw - 18, t.ansi2, motion, now, cx)));
-    if (kind === "review" && needsApproval(task) && state.live) wrap.child(this.button(`approve-${task.id}`, state.delivery === "pr" ? "Open PR" : "Merge", cx => this.act({ type: "approve", id: task.id }, cx), t,
+    if (kind === "review" && needsApproval(task) && state.live && task.unchanged) wrap.child(this.button(`approve-${task.id}`, "Done", cx => this.act({ type: "approve", id: task.id }, cx), t,
+      { icon: "check", primary: true, small: true, hint: `${task.id} changed no files. Mark it done and remove its worktree` }).absolute().right(8).bottom(8));
+    else if (kind === "review" && needsApproval(task) && state.live) wrap.child(this.button(`approve-${task.id}`, state.delivery === "pr" ? "Open PR" : "Merge", cx => this.act({ type: "approve", id: task.id }, cx), t,
       { icon: "check", primary: !conflicted(task), small: true, hint: state.delivery === "pr" ? `Push ${task.id}'s branch and open ${task.repos.length > 1 ? `a pull request in each of ${task.repos.join(", ")}` : "a pull request"} into ${targetOf(task) ?? "your branch"}`
         : `Merge ${task.id} into ${targetOf(task) ?? "your branch"}${task.repos.length > 1 ? ` in ${task.repos.join(", ")}, all or none` : ""}` }).absolute().right(8).bottom(8));
     else if (kind === "review" && state.live && task.status === "pr" && task.prs) {
@@ -1986,7 +1991,10 @@ export default class Pipeline extends View {
       if (task.checked) body.child(div().text_size(12).line_height(1.45).text_color(task.checked === "passed" ? t.muted : t.blocked)
         .child(task.checked === "passed" ? `Checks passed: ${state.check?.command ?? "checks"}` : "Checks were failing when it moved to review."));
       if (task.prs) body.child(this.label(`Still on GitHub: ${prList(task.prs)}. ${state.delivery === "pr" ? "Opening pull requests again reuses the open ones." : ""}`.trim(), t));
+      if (task.unchanged) body.child(this.label(`It changed no files, so ${state.check?.command ? "checks were skipped and " : ""}there is nothing to ${state.delivery === "pr" ? "open a pull request for" : "merge"}.`, t));
       if (!needsApproval(task)) body.child(this.label(`Approved. It ${state.delivery === "pr" ? "opens its pull requests" : "merges"} once another task finishes merging in ${task.repos.join(" + ")}.`, t));
+      else if (task.unchanged) body.child(this.button(`merge-${task.id}`, "Mark it done", cx => this.act({ type: "approve", id: task.id }, cx), t,
+        { icon: "check", primary: true, hint: "Closes the task and removes its worktree and branch" }));
       else body.child(state.delivery === "pr"
         ? this.button(`merge-${task.id}`, several ? `Open pull requests into ${target}` : `Open a pull request into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
           { icon: "check", primary: !uncommitted(task), hint: `Pushes the branch to origin and opens a pull request with gh${several ? " in each repository the agent changed; each one links the others" : ""}. Refuses while the agent has uncommitted changes.` })

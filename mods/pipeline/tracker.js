@@ -25,6 +25,7 @@ export const liveHost = {
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
   usage: (context, cwds) => python("pipeline/usage.py", context, { cwds }),
+  changed: (context, repos) => python("pipeline/delivery.py", context, { op: "changed", repos }),
   // Only folders Pipeline made for a task's images are ever deleted.
   forget: folders => { const safe = folders.filter(folder => folder.startsWith(`${appHome()}/pipeline-images/`) && !folder.includes("..")); return safe.length ? exec("rm", ["-rf", "--", ...safe]) : null; },
   limits: context => python("pipeline/limits.py", context, {}, 30000),

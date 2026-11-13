@@ -130,6 +130,17 @@ class DeliveryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no changes"):
             delivery.merge(self.payload("merge"))
 
+    def test_changed_sees_commits_and_uncommitted_files_but_not_the_git_folder(self):
+        repos = lambda: {"repos": [{"worktree": str(self.tree), "base": self.base}]}
+        Path(self.workspace["prBody"]).write_text("Summary\n")
+        self.assertEqual(delivery.changed(repos()), {"changed": False})
+        (self.tree / "notes.txt").write_text("left over\n")
+        self.assertEqual(delivery.changed(repos()), {"changed": True})
+        self.git(self.tree, "add", ".")
+        self.git(self.tree, "commit", "-qm", "Agent work")
+        self.assertEqual(delivery.changed(repos()), {"changed": True})
+        self.assertEqual(delivery.changed({"repos": [{"worktree": str(self.home / "gone"), "base": self.base}]}), {"changed": True}, "a missing worktree is left to delivery to explain")
+
     def test_conflicts_leave_both_branches_as_they_were(self):
         self.agent_commits("app.txt", "agent\n")
         tip = self.git(self.repo, "rev-parse", self.workspace["branch"])

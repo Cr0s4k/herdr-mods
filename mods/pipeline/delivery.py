@@ -232,6 +232,15 @@ def pr_revert(payload):
     return found
 
 
+# Work that changes no files, such as commenting on pull requests, has nothing to check, merge or open a pull request for.
+def changed(payload):
+    for repo in payload["repos"]:
+        worktree = Path(repo["worktree"])
+        if not worktree.is_dir() or not repo.get("base") or git(worktree, "status", "--porcelain") or git(worktree, "rev-parse", "HEAD") != repo["base"]:
+            return {"changed": True}
+    return {"changed": False}
+
+
 def summary(payload):
     worktree = Path(payload["worktree"])
     return {"text": (written(worktree, "herdr-summary.md") or "")[:6000], "evidence": evidence(worktree)}
@@ -367,7 +376,7 @@ def remove(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary}
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))
