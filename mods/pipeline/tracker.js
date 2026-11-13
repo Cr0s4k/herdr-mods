@@ -25,6 +25,8 @@ export const liveHost = {
   worktree: (context, payload) => python("linear/worktrees.py", context, { ...payload, cwd: context.cwd }),
   delivery: (context, payload) => python("pipeline/delivery.py", context, payload),
   usage: (context, cwds) => python("pipeline/usage.py", context, { cwds }),
+  // Only folders Pipeline made for a task's images are ever deleted.
+  forget: folders => { const safe = folders.filter(folder => folder.startsWith(`${appHome()}/pipeline-images/`) && !folder.includes("..")); return safe.length ? exec("rm", ["-rf", "--", ...safe]) : null; },
   limits: context => python("pipeline/limits.py", context, {}, 30000),
   // A watched plan runs in a tab of its own, so you see what it reads; the runner waits for its result file.
   async plan(context, job) {

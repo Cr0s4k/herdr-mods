@@ -613,8 +613,10 @@ test("a new Live pipeline shows a setup card with suggestions until it is dismis
   click(view, "setup-checks-change");
   assert.deepEqual([view.drawer, view.section], ["settings", "checks"]);
   view.open(null, cx);
-  click(view, "setup-linear");
-  assert.equal(view.drawer, "linear");
+  world.storage.set("tickets:shop", "linear");
+  click(view, "setup-tickets-add");
+  assert.equal(view.drawer, "linear", "one tickets button, opening the tracker used last");
+  world.storage.delete("tickets:shop");
   view.open(null, cx);
   click(view, "setup-done");
   assert.equal(find(view.render(cx), "setup"), undefined);
@@ -1223,7 +1225,8 @@ test("a wide Pipeline has one bar of controls and one status bar; a narrower one
   assert.equal(find(scene, "controls"), undefined);
   assert.ok(find(scene, "add") && find(scene, "run"), "the intake controls sit in the top bar");
   assert.equal(find(scene, "scene").styles.h[0], 800 - 50 - 36);
-  assert.match(text(find(scene, "status")), /Paused .*5 queued .*Start the pipeline to watch your first tasks enter/);
+  assert.match(text(find(scene, "status")), /Paused\s+Start the pipeline to watch your first tasks enter/);
+  assert.doesNotMatch(text(find(scene, "status")), /queued|active|done/, "the counts live on the map and the board, not here too");
   click(view, "activity");
   assert.equal(view.drawer, "activity");
   click(view, "settings"); click(view, "settings-general");
@@ -1522,4 +1525,38 @@ test("a queued task takes dropped or pasted images, copies them into Herdr's fol
   view.act({ type: "image", id: "T-1", path: "/x/late.png" }, cx);
   assert.equal(row(view, "T-1").images.length, 1, "a started task takes no more images");
   world.exec = null;
+});
+
+test("Move up and Move down reorder the queue, and Start first still wins", () => {
+  const view = setupLive();
+  for (const title of ["One", "Two", "Three"]) { view.title.set_value(title); click(view, "create"); }
+  const order = () => model.queueOrder(view.state()).map(task => task.id);
+  view.inspect("T-3", cx);
+  assert.equal(find(view.render(cx), "down-T-3").styles.disabled[0], true, "the last task can't go lower");
+  click(view, "up-T-3");
+  assert.deepEqual(order(), ["T-1", "T-3", "T-2"]);
+  click(view, "up-T-3");
+  assert.deepEqual(order(), ["T-3", "T-1", "T-2"]);
+  assert.equal(find(view.render(cx), "up-T-3").styles.disabled[0], true);
+  view.title.set_value("Four"); click(view, "create");
+  assert.deepEqual(order(), ["T-3", "T-1", "T-2", "T-4"], "a new task joins after the ones you ordered");
+  view.act({ type: "first", id: "T-2" }, cx);
+  assert.deepEqual(order(), ["T-2", "T-3", "T-1", "T-4"]);
+});
+
+test("a task merged through a pull request reverts by opening a revert pull request", () => {
+  const view = setupLive();
+  view.title.set_value("Add a dark mode toggle");
+  click(view, "create");
+  Object.assign(row(view, "T-1"), { status: "done", finished: 1, prs: { shop: { url: "https://github.com/acme/shop/pull/12", number: 12, merged: true } } });
+  view.inspect("T-1", cx);
+  click(view, "revert-T-1");
+  assert.match(text(view.render(cx)), /Click again to open a pull request that reverts this one/);
+  click(view, "revert-T-1");
+  assert.equal(row(view, "T-1").revert, true);
+  view.act({ type: "revertOpened", id: "T-1", prs: [{ repo: "shop", url: "https://github.com/acme/shop/pull/13", number: 13 }] }, cx);
+  const scene = view.render(cx);
+  assert.equal(find(scene, "revert-T-1"), undefined);
+  assert.ok(find(scene, "revert-pr-T-1-13"));
+  assert.match(text(scene), /A pull request that reverts it is open\. Merging on GitHub undoes the task/);
 });

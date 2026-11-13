@@ -195,7 +195,8 @@ before the card existed.
    four screenshots or mockups (PNG, JPEG, GIF, WebP): drop them from Finder, or **Paste
    image** for one on the clipboard (macOS). Pipeline copies them into
    `~/.config/herdr-app/pipeline-images`, lists them in the agent's first message and gives
-   Claude Code and Codex that folder to read. A project on another machine takes none. Text too long for a title (over 90
+   Claude Code and Codex that folder to read. A project on another machine takes none. The
+   copies are deleted when the task is merged, discarded or removed. Text too long for a title (over 90
    characters, marked **Title + details** in the field) keeps its first sentence or opening
    words as the title, and the whole text goes into its details. Or bring tickets with
    **Add from tickets**, which opens the tracker this pipeline used last and switches between
@@ -236,7 +237,9 @@ before the card existed.
    The queue starts in the order it is drawn: by priority (a ticket's own; typed tasks are
    Medium), then arrival. **Start first** in a queued task's inspector puts it ahead of the
    rest, whatever its priority; the last one marked goes first, and clicking again puts it
-   back. **Model and effort for this task** there lets one task start with its own (a small
+   back. **Move up** and **Move down** beside it swap the task with its neighbour: the queue
+   then keeps the order you gave it, Start first still goes ahead of it, and tasks added
+   later join after the ones you ordered. **Model and effort for this task** there lets one task start with its own (a small
    model for a docs change, say); what you leave **As set** follows Settings.
 
    **Plan with an agent** (Settings) hands the ordering to Claude Code or Codex: the one you
@@ -318,8 +321,11 @@ before the card existed.
    when merges are, and the After merge command runs again. It refuses, changing nothing and
    saying why, while your project folder has uncommitted changes, is on another branch, or
    later work changed the same lines (it then names the `git revert` to run by hand). The
-   task stays in Completed, marked **Reverted**; its ticket is not moved back. Tasks merged
-   before Pipeline recorded their commits, and tasks delivered as pull requests, have no Revert.
+   task stays in Completed, marked **Reverted**, and with ticket updates on its ticket goes
+   back to the **When its agent starts** state. A task delivered as a pull request reverts
+   differently: Revert opens a pull request that undoes it (`gh pr revert`), linked from the
+   inspector, and nothing changes until you merge that on GitHub; Pipeline does not follow
+   it. Tasks merged locally before Pipeline recorded their commits have no Revert.
 
    Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
    finishes with passing checks (or with no check set) merges straight away. Work you sent
@@ -467,7 +473,7 @@ the sidebar on their own; this only simulates that moment.
 
 Pipeline keeps two bars around the scene: controls on top (the New task field and its
 buttons sit beside the title in a wide window, and on their own row in a narrow one) and one
-status bar at the bottom with the state, counts, the latest activity (click it for the log)
+status bar at the bottom with the state, the latest activity (click it for the log)
 and the actions that wait for you. **?** (or the small button at the end of the status bar)
 shows every key for the mode you are in; Esc closes it. Settings lists them too.
 

@@ -147,8 +147,8 @@ export function compact(n) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n);
 }
 export const usageText = usage => usage ? `${compact(usage.written)} tokens written · ${compact(usage.read)} read · ${compact(usage.cached)} from cache` : null;
-// The order the planner starts work in: tasks marked to start first, then the planner agent's order when it is on, then priority, then arrival.
-const startOrder = state => (a, b) => (b.rank ?? 0) - (a.rank ?? 0)
+// The order the planner starts work in: tasks marked to start first, then the order you moved them into, then the planner agent's order when it is on, then priority, then arrival.
+const startOrder = state => (a, b) => (b.rank ?? 0) - (a.rank ?? 0) || (a.order ?? Infinity) - (b.order ?? Infinity)
   || (state.planner?.on ? planOrder(a) - planOrder(b) : 0) || b.priority - a.priority || a.id.localeCompare(b.id, undefined, { numeric: true });
 const planOrder = task => task.plan?.sig === planSig(task) ? task.plan.n : Infinity;
 export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder(state));
@@ -469,7 +469,7 @@ function unlink(state, id) {
 }
 export const UPDATE_KINDS = { start: "When its agent starts", merge: "When the work merges" };
 // Ticket updates wait on the task until the runner makes them; none of them changes the task's own status.
-function ticketUpdate(state, task, kind) {
+function ticketUpdate(state, task, kind, again = false) {
   const ticket = task.ticket, setup = state.ticketUpdates?.[ticket?.provider];
   if (!ticket || !setup) return;
   let update;
@@ -479,7 +479,7 @@ function ticketUpdate(state, task, kind) {
     if (!setup.link || !links.length) return;
     update = { kind, ...links[0], ...(links.length > 1 ? { links } : {}) };
   } else {
-    if (!setup[kind]?.id || (kind === "start" && ticket.moved?.includes("start"))) return;
+    if (!setup[kind]?.id || (kind === "start" && !again && ticket.moved?.includes("start"))) return;
     update = { kind, state: { id: setup[kind].id, name: setup[kind].name } };
   }
   ticket.serial = (ticket.serial ?? 0) + 1;
@@ -525,7 +525,10 @@ function afterDue(state, task, names) {
     if (root) state.afterRuns = [...(state.afterRuns ?? []).filter(entry => entry.root !== root), { repo: ws.name, root, task: task.id, error: null }];
   }
 }
-export const canRevert = (state, task) => Boolean(state?.live && task?.status === "done" && task.landed?.length && !task.revert && !task.reverted);
+// A task's images sit in one folder, which is deleted once the task is finished, discarded or removed.
+const imageFolders = state => [...new Set((state.tasks ?? []).filter(task => task.status !== "done").flatMap(task => (task.images ?? []).map(image => image.path.replace(/\/[^/]+$/, ""))))];
+export const revertsByPr = task => !task?.landed?.length && Object.values(task?.prs ?? {}).some(pr => pr.url);
+export const canRevert = (state, task) => Boolean(state?.live && task?.status === "done" && (task.landed?.length || revertsByPr(task)) && !task.revert && !task.reverted && !task.revertPrs);
 export const afterFailed = state => (state?.afterRuns ?? []).filter(entry => entry.error);
 const pushEvent = note => note ? ` · ${note.text}${note.ok ? "" : ` · ${note.error}`}` : "";
 export const unpushedLabel = state => (state.unpushed ?? []).map(entry => (state.repositories?.length ?? 1) > 1 ? `${entry.branch} in ${entry.repo}` : entry.branch).join(", ");
@@ -737,6 +740,14 @@ export function reduce(state, action, now = Date.now()) {
       event(next, value ? `${task.id} starts before the rest of the queue.` : `${task.id} is back in its usual place in the queue.`, task.id);
       break;
     }
+    case "move": {
+      const queue = queueOrder(next), at = queue.findIndex(task => task.id === action.id), to = at + (action.delta < 0 ? -1 : 1);
+      if (at < 0 || to < 0 || to >= queue.length) return state;
+      [queue[at], queue[to]] = [queue[to], queue[at]];
+      queue.forEach((task, index) => { task.order = index; task.rank = 0; });
+      event(next, `${action.id} moved ${action.delta < 0 ? "up" : "down"} the queue.`, action.id);
+      break;
+    }
     case "tuneTask": {
       const task = row(action.id), key = next.agent?.key ?? action.key, options = AGENT_OPTIONS[key];
       if (!next.live || task?.status !== "queued" || !options) return state;
@@ -849,6 +860,12 @@ export function reduce(state, action, now = Date.now()) {
       const task = row(action.id);
       if (!next.live || task?.status !== "queued" || !task.images?.some(image => image.path === action.path)) return state;
       task.images = task.images.filter(image => image.path !== action.path);
+      break;
+    }
+    case "imagesForgotten": {
+      const left = (next.imageTrash ?? []).filter(folder => !(action.folders ?? []).includes(folder));
+      if (left.length === (next.imageTrash ?? []).length) return state;
+      next.imageTrash = left;
       break;
     }
     case "describe": {
@@ -1139,7 +1156,8 @@ export function reduce(state, action, now = Date.now()) {
       const task = row(action.id);
       if (!canRevert(next, task)) return state;
       Object.assign(task, { revert: true, revertError: null });
-      event(next, `${task.id} · reverting it on ${task.landed.map(repo => repo.branch).filter((branch, i, all) => all.indexOf(branch) === i).join(" + ")}.`, task.id);
+      event(next, revertsByPr(task) ? `${task.id} · opening a pull request that reverts it.`
+        : `${task.id} · reverting it on ${task.landed.map(repo => repo.branch).filter((branch, i, all) => all.indexOf(branch) === i).join(" + ")}.`, task.id);
       break;
     }
     case "reverted": {
@@ -1150,6 +1168,14 @@ export function reduce(state, action, now = Date.now()) {
       if (next.afterMerge) for (const repo of task.landed)
         next.afterRuns = [...(next.afterRuns ?? []).filter(entry => entry.root !== repo.root), { repo: repo.name, root: repo.root, task: task.id, error: null }];
       event(next, `${task.id} reverted with a new commit${pushEvent(action.pushes?.length ? pushNote(task) : null)}`.replace(/\.*$/, "."), task.id);
+      ticketUpdate(next, task, "start", true);
+      break;
+    }
+    case "revertOpened": {
+      const task = row(action.id), prs = (action.prs ?? []).filter(pr => pr?.url).map(pr => ({ repo: pr.repo ?? null, url: String(pr.url), number: Number(pr.number) || null }));
+      if (!next.live || !task?.revert || !prs.length) return state;
+      Object.assign(task, { revert: false, revertError: null, revertPrs: prs });
+      event(next, `${task.id} · opened ${prs.map(pr => `pull request #${pr.number}`).join(" and ")} to revert it. Merge ${prs.length > 1 ? "them" : "it"} on GitHub.`, task.id);
       break;
     }
     case "revertFailed": {
@@ -1375,6 +1401,10 @@ export function reduce(state, action, now = Date.now()) {
     if (!next.live || old?.status === task.status) continue;
     if (old && WORKED.includes(old.status) && old.at) task.spent = (task.spent ?? 0) + Math.max(0, now - old.at);
     task.at = now;
+  }
+  if (next.live) {
+    const kept = imageFolders(next), gone = imageFolders(state).filter(folder => !kept.includes(folder));
+    if (gone.length) next.imageTrash = [...new Set([...(next.imageTrash ?? []), ...gone])];
   }
   next.plan = explain(next, picked, now);
   return next;

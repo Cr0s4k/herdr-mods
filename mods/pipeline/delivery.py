@@ -216,6 +216,14 @@ def written(worktree, name="herdr-pr.md"):
         return None
 
 
+def pr_revert(payload):
+    opened = gh(payload["root"], "pr", "revert", payload["url"], "--title", "Revert " + payload["title"])
+    found = pull_request(opened.stdout) or pull_request(opened.stderr)
+    if not found:
+        raise ValueError((opened.stderr or opened.stdout).strip() or "GitHub didn't open a revert pull request.")
+    return found
+
+
 def summary(payload):
     return {"text": (written(Path(payload["worktree"]), "herdr-summary.md") or "")[:6000]}
 
@@ -288,7 +296,7 @@ def remove(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit, "revert": revert, "summary": summary}
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))

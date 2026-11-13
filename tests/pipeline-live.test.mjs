@@ -1791,3 +1791,32 @@ test("an agent started on a task with images is given their folder to read", asy
   await step(new live.LiveRunner(world.host));
   assert.deepEqual(world.started[0].run, ["claude", "--add-dir=/home/pipeline-images/abc"]);
 });
+
+test("a finished, removed or discarded task's image folder is deleted once, and a reverted ticket moves back to its start state", async () => {
+  const forgotten = [];
+  let state = reduce(typed("A", "B"), { type: "image", id: "T-1", path: "/home/pipeline-images/abc/mock.png" }, 0);
+  state = reduce(state, { type: "image", id: "T-2", path: "/home/pipeline-images/def/two.png" }, 0);
+  assert.equal(state.imageTrash, undefined);
+  state = reduce(state, { type: "remove", id: "T-2" }, 0);
+  assert.deepEqual(state.imageTrash, ["/home/pipeline-images/def"]);
+  const world = host(reduce(state, { type: "run" }, 0), { forget: async folders => { forgotten.push(folders); } });
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  assert.deepEqual([forgotten, world.state().imageTrash], [[["/home/pipeline-images/def"]], []]);
+  world.panes = [{ terminal: "t9" }]; world.agents = [{ address: "t9", status: "working" }];
+  await step(runner);
+  world.agents = [{ address: "t9", status: "done" }];
+  await step(runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner); await step(runner);
+  assert.equal(row(world.state(), "T-1").status, "done");
+  assert.deepEqual(forgotten.at(-1), ["/home/pipeline-images/abc"], "the merge frees the images");
+  assert.equal(forgotten.length, 2);
+
+  let ticketed = reduce(typed("A"), { type: "ticketUpdates", provider: "linear", start: { id: "s1", name: "In Progress" }, merge: { id: "s2", name: "Done" } }, 0);
+  const task = row(ticketed, "T-1");
+  Object.assign(task, { status: "done", revert: true, landed: [{ name: "shop", root: "/work/shop", branch: "main", from: "a", to: "b" }],
+    ticket: { provider: "linear", key: "LIN-1", uuid: "u1", status: "Done", moved: ["start", "merge"] } });
+  ticketed = reduce(ticketed, { type: "reverted", id: "T-1" }, 0);
+  assert.deepEqual(row(ticketed, "T-1").ticket.pending?.map(update => [update.kind, update.state.name]), [["start", "In Progress"]]);
+});

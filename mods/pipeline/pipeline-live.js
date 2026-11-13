@@ -226,7 +226,7 @@ export const fixRequest = (command, output) => ["The check command failed after 
 
 // Starts, merges and discards real agents' work, one job at a time, and maps agent status onto tasks.
 export class LiveRunner {
-  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.screens = new Map(); this.counted = new Map(); this.summarised = new Map(); this.queues = new Map(); this.planning = new Set(); }
+  constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.screens = new Map(); this.counted = new Map(); this.summarised = new Map(); this.forgetting = new Set(); this.queues = new Map(); this.planning = new Set(); }
 
   // Open pull requests are asked about once a minute: what they wait for, and whether GitHub merged or closed them.
   watchPullRequest(id, state, task, repo, cx) {
@@ -371,6 +371,7 @@ export class LiveRunner {
       if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) this.watchPullRequest(id, state, task, repo, cx);
     }
     for (const [id, state] of this.pipelines()) this.updateTickets(id, state, cx);
+    for (const [id, state] of this.pipelines()) this.forgetImages(id, state, cx);
     if (this.busy) return;
     for (const [id, state] of this.pipelines()) {
       const task = state.tasks.find(task => task.discard) ?? state.tasks.find(task => task.status === "merging" && task.merge) ?? state.tasks.find(task => task.status === "done" && task.revert);
@@ -452,6 +453,17 @@ export class LiveRunner {
     cx.spawn(async () => {
       const usage = (await this.host.usage(state.context, [cwd]).catch(() => null))?.[cwd];
       if (usage) this.apply(id, { type: "usage", id: task.id, usage });
+    });
+  }
+
+  forgetImages(id, state, cx) {
+    const folders = state.imageTrash ?? [];
+    if (!folders.length || !this.host.forget || this.forgetting.has(id)) return;
+    this.forgetting.add(id);
+    cx.spawn(async () => {
+      try { await this.host.forget(folders); } catch { /* A folder that is already gone needs no second try. */ }
+      this.forgetting.delete(id);
+      this.apply(id, { type: "imagesForgotten", folders });
     });
   }
 
@@ -567,6 +579,19 @@ export class LiveRunner {
 
   async revert(id, task) {
     const state = this.host.shared(STORE)[id], context = state.context;
+    if (!task.landed?.length) {
+      try {
+        const prs = [];
+        for (const [repo, pr] of Object.entries(task.prs ?? {})) {
+          const root = state.repositories?.find(row => row.name === repo)?.path || context.cwd;
+          prs.push({ repo, ...await this.host.delivery({ cwd: root, on: context.on }, { op: "pr_revert", root, url: pr.url, title: `${task.id} ${task.title}` }) });
+        }
+        this.apply(id, { type: "revertOpened", id: task.id, prs });
+      } catch (error) {
+        this.apply(id, { type: "revertFailed", id: task.id, error: error?.message || String(error) });
+      }
+      return;
+    }
     try {
       await this.host.delivery(context, { op: "revert", title: `${task.id} ${task.title}`, repos: task.landed });
       const pushes = [];

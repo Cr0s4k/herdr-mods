@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -822,9 +822,6 @@ export default class Pipeline extends View {
     return h_flex().id("pipeline-status").h(STATUS).px(20).gap(10).items_center().flex_none().border_t(1).border_color(t.border).text_size(11).text_color(t.muted).overflow_x_scrollbar()
       .child(dot(info.color, 7).id("pipeline-status-dot").when(motion && state.running, el => el.loop("opacity", { from: 0.35, to: 1, period: 1600 })))
       .child(div().font_medium().text_color(t.foreground).flex_none().child(info.status))
-      .child(div().flex_none().child(`${info.active}/${state.parallel} active`))
-      .child(div().flex_none().child(`${info.queued} queued`))
-      .child(div().flex_none().child(`${info.done} done`))
       .child(Button.new("pipeline-activity").flex_1().min_w(60).h(24).pl(10).gap(8).flex().items_center().justify_start().border_l(1).border_color(t.border).text_size(11).text_color(t.muted).tab_index(0)
         .accessibility_label("Open activity").tooltip("Open the activity log")
         .hover(el => el.text_color(t.foreground)).focus(el => el.text_color(t.foreground))
@@ -1123,7 +1120,7 @@ export default class Pipeline extends View {
         change("after", "delivery", state.afterMerge ? "Change" : "Set")], chose("after", state.afterMerge))]),
       row("tickets", "Tickets", watched.length ? ok : plain,
         watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : "Typed here",
-        Object.keys(SOURCES).map(provider => this.button(`setup-${provider}`, SOURCES[provider], cx => this.open(provider, cx), t, { small: true, icon: provider, hint: `Queue tickets from ${SOURCES[provider]}` }))),
+        [this.button("setup-tickets-add", "Add from tickets", cx => this.open(this.ticketProvider(state), cx), t, { small: true, icon: this.ticketProvider(state), hint: "Queue tickets from Plane or Linear, or watch a state" })]),
     ];
     const note = ai?.running ? [`${ai.by} is reading the repository. It only reads, and you can keep typing tasks.`, t.accent]
       : ai?.error ? [`${ai.by} couldn't choose: ${ai.error}`, t.blocked]
@@ -1742,7 +1739,10 @@ export default class Pipeline extends View {
       body.child(this.label(waitingReason(state, task), t));
       if (state.planner?.on && task.plan?.reason && task.plan.sig === planSig(task)) body.child(div().id(`pipeline-plan-reason-${task.id}`).text_size(12).line_height(1.45)
         .child(`Planner: ${task.plan.reason}${task.plan.waits.length ? ` Waits for ${task.plan.waits.join(", ")}.` : ""}`));
-      body.child(this.firstButton(task, t));
+      const queue = queueOrder(state), at = queue.findIndex(row => row.id === task.id);
+      body.child(h_flex().gap(6).items_center().flex_wrap().child(this.firstButton(task, t))
+        .child(this.button(`up-${task.id}`, "Move up", cx => this.act({ type: "move", id: task.id, delta: -1 }, cx), t, { disabled: at <= 0, hint: "Start it before the task above it" }))
+        .child(this.button(`down-${task.id}`, "Move down", cx => this.act({ type: "move", id: task.id, delta: 1 }, cx), t, { disabled: at < 0 || at >= queue.length - 1, hint: "Start it after the task below it" })));
       this.taskTune(body, state, task, t);
       this.repoChips(body, state, task, t);
       this.waitsDetail(body, state, task, t);
@@ -1823,7 +1823,7 @@ export default class Pipeline extends View {
       body.child(div().id(`pipeline-after-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Merged, but ${state.afterMerge} failed. ${after.error}`));
       body.child(this.button(`after-now-${task.id}`, "Run again", cx => this.act({ type: "afterMergeNow" }, cx), t, { icon: "reset", hint: `Runs ${state.afterMerge} again in ${after.root}` }));
     }
-    if (task.status === "done" && (task.landed?.length || task.reverted)) this.revertDetail(body, state, task, t);
+    if (task.status === "done" && (task.landed?.length || task.reverted || task.revertPrs || revertsByPr(task))) this.revertDetail(body, state, task, t);
     if (task.status === "done") body.child(this.heading("Follow up"))
       .child(h_flex().gap(6).items_center()
         .child(Input.new(this.follow).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("What should change"))
@@ -1849,15 +1849,20 @@ export default class Pipeline extends View {
     for (const message of log) body.child(this.label(message, t));
   }
   revertDetail(body, state, task, t) {
-    const where = [...new Set((task.landed ?? []).map(repo => repo.branch))].join(" + "), sure = this.confirm === `revert-${task.id}`;
+    const where = [...new Set((task.landed ?? []).map(repo => repo.branch))].join(" + "), sure = this.confirm === `revert-${task.id}`, byPr = revertsByPr(task);
+    if (task.revertPrs) {
+      body.child(this.label(`${task.revertPrs.length > 1 ? "Pull requests that revert it are" : "A pull request that reverts it is"} open. Merging on GitHub undoes the task; Pipeline doesn't follow ${task.revertPrs.length > 1 ? "them" : "it"}.`, t));
+      for (const pr of task.revertPrs) body.child(this.button(`revert-pr-${task.id}-${pr.number}`, `${task.revertPrs.length > 1 && pr.repo ? `${pr.repo} · ` : ""}Revert pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", hint: pr.url }));
+      return;
+    }
     if (task.reverted) { body.child(this.label(`Reverted with a new commit on ${where}. Its commits stay in the history.`, t)); return; }
-    if (task.revert) { body.child(this.label(`Reverting on ${where}…`, t)); return; }
+    if (task.revert) { body.child(this.label(byPr ? "Opening a pull request that reverts it…" : `Reverting on ${where}…`, t)); return; }
     if (task.revertError) body.child(div().id(`pipeline-revert-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Not reverted. ${task.revertError}`));
-    body.child(this.button(`revert-${task.id}`, sure ? `Undo it on ${where}` : "Revert", cx => {
+    body.child(this.button(`revert-${task.id}`, sure ? (byPr ? "Open the revert pull request" : `Undo it on ${where}`) : "Revert", cx => {
       if (sure) { this.confirm = null; this.act({ type: "revert", id: task.id }, cx); } else { this.confirm = `revert-${task.id}`; cx.notify(); }
-    }, t, { icon: "reset", hint: sure ? "Adds one commit that undoes this task's changes. Never rewrites history." : "Undo this task's changes with a new commit" }));
-    if (sure) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Click again to undo this task's changes on ${where} with one new commit. Work merged since stays.`
-      + `${state.pushAfterMerge ? " The commit is pushed." : ""}${state.afterMerge ? ` Then ${state.afterMerge} runs again.` : ""}`));
+    }, t, { icon: "reset", hint: byPr ? "Opens a pull request on GitHub that undoes this task's pull request" : sure ? "Adds one commit that undoes this task's changes. Never rewrites history." : "Undo this task's changes with a new commit" }));
+    if (sure) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(byPr ? "Click again to open a pull request that reverts this one, with gh. Nothing changes until you merge it on GitHub."
+      : `Click again to undo this task's changes on ${where} with one new commit. Work merged since stays.${state.pushAfterMerge ? " The commit is pushed." : ""}${state.afterMerge ? ` Then ${state.afterMerge} runs again.` : ""}`));
   }
   plannerView(body, state, t) {
     const planning = state.planning, now = Date.now();
