@@ -328,11 +328,11 @@ export default class Linear extends View {
         .child(Input.new(this.search).w_full().h(32).px(9).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label(`Search ${this.service} tickets`))
         .child(h_flex().items_center().gap(6)
           .child(Button.new("linear-project").flex_1().min_w(0).h(28).px(8).rounded(6).text_color(t.muted).text_size(11.5)
-            .hover(s => s.bg(t.hover)).tooltip(this.project?.name || `Filter by a ${this.service} project`)
+            .hover(s => s.bg(t.hover)).tooltip(this.projectLabel(this.project) || `Filter by a ${this.service} project`)
             .on_click((_e, cx) => { if (this.mapping) return; this.pickingProject = true; this.loadProjects(cx); cx.notify(); })
             .child(h_flex().w_full().items_center().gap(6)
               .child(svg("mods/workspace-chrome/folder.svg").size(13).flex_none())
-              .child(div().flex_1().min_w(0).truncate().child(this.project?.name || "All projects"))
+              .child(div().flex_1().min_w(0).truncate().child(this.projectLabel(this.project) || "All projects"))
               .child(svg("mods/files-modal/chevron-down.svg").size(11).flex_none())))
           .when(Boolean(this.project), el => el.child(this.button("linear-clear-project", this.clearProjectLabel, cx => this.chooseProject(null, cx), false, this.mapping))))
         .child(h_flex().gap(6).items_center().flex_wrap()
@@ -399,11 +399,14 @@ export default class Linear extends View {
     localStorage.setItem(`project:${this.context.space}`, JSON.stringify(project)); this.refresh(cx, true);
   }
 
+  projectLabel(project) { return project?.name; }
+
   projectPicker(t) {
     return v_flex().flex_1().min_h(0).gap(12).p(14)
       .child(h_flex().items_center().gap(10).flex_none()
         .child(this.button("linear-project-back", "Back", cx => this.back(cx), false, this.mapping))
         .child(div().font_medium().child("Choose a project")))
+      .children(this.pickerTop?.(t) ?? [])
       .child(Input.new(this.projectSearch).w_full().flex_none().text_size(12).accessibility_label(`Search ${this.service} projects`))
       .child(v_flex().id("linear-project-list").flex_1().min_h(0).overflow_y_scrollbar().gap(4)
         .child(this.button("linear-all-projects", this.allProjectLabel, cx => this.chooseProject(null, cx), false, this.mapping))

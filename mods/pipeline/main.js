@@ -540,7 +540,7 @@ export default class Pipeline extends View {
         if (provider === "plane") {
           const listed = await readTickets("plane", { op: "issues", context, scope: "all" });
           const states = listed.needsProject ? { states: [] } : await readTickets("plane", { op: "states", context });
-          next = { issues: listed.issues, states: states.states, needsProject: Boolean(listed.needsProject), project: listed.project?.name ?? null };
+          next = { issues: listed.issues, states: states.states, needsProject: Boolean(listed.needsProject), project: listed.project ? [listed.project.workspace, listed.project.name].filter(Boolean).join(" · ") : null };
         } else {
           const listed = await readTickets("linear", { op: "issues", open: true, scope: filter.scope, ...(filter.team ? { team: filter.team.id } : {}), ...(filter.project ? { project: filter.project.id } : {}) });
           const teams = filter.team ? [filter.team.id] : [...new Set((listed.issues ?? []).map(issue => issue.team).filter(Boolean))];

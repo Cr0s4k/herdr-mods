@@ -59,10 +59,45 @@ def configuration(home):
     if (parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment or parsed.path not in ("", "/")):
         raise PlaneError("Connect Plane with its instance URL, workspace slug and API key.", "auth")
-    if not re.fullmatch(r"[a-zA-Z0-9_-]+", config["workspace"]) or not config["apiKey"]:
+    if not SLUG.fullmatch(config["workspace"]) or not config["apiKey"]:
         raise PlaneError("Connect Plane with a workspace slug and API key.", "auth")
     config["baseUrl"] = config["baseUrl"].rstrip("/")
+    extra = saved.get("workspaces") if isinstance(saved.get("workspaces"), list) else []
+    config["workspaces"] = list(dict.fromkeys([config["workspace"]] + [w for w in extra if isinstance(w, str) and SLUG.fullmatch(w)]))
     return config
+
+
+SLUG = re.compile(r"[a-zA-Z0-9_-]+")
+
+
+def in_workspace(config, workspace):
+    if workspace not in config["workspaces"]:
+        raise PlaneError("Add this Plane workspace before choosing its projects.")
+    return {**config, "workspace": workspace}
+
+
+def workspace_of(config, mappings, project_id):
+    for workspace in config["workspaces"]:
+        if project_id in mappings.get(config["baseUrl"] + "/" + workspace, {}).values():
+            return workspace
+    return config["workspace"]
+
+
+def add_workspace(home, config, slug):
+    slug = str(slug or "").strip().strip("/").rsplit("/", 1)[-1]
+    if not SLUG.fullmatch(slug):
+        raise PlaneError("Enter the workspace slug: the part after the instance address in Plane's URL.", "validation")
+    if slug not in config["workspaces"]:
+        try:
+            call({**config, "workspace": slug}, "workspaces/" + slug + "/projects/", {"per_page": 1})
+        except PlaneError as error:
+            if error.kind in ("auth", "missing"):
+                raise PlaneError(f"Plane has no workspace \"{slug}\" that this token can open. Check the slug and that you are a member.", "validation")
+            raise
+        saved = load_json(Path(home) / "plane/credentials.json", {})
+        saved["workspaces"] = list(dict.fromkeys((saved.get("workspaces") or []) + [slug]))
+        private_json(Path(home) / "plane/credentials.json", saved)
+    return slug
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -256,8 +291,9 @@ def markdown(source):
     return parser.render(parser.root).strip()
 
 
-def project_info(project):
-    return {"id": project["id"], "name": project["name"], "identifier": project.get("identifier", "TASK")}
+def project_info(project, workspace=None):
+    info = {"id": project["id"], "name": project["name"], "identifier": project.get("identifier", "TASK")}
+    return {**info, "workspace": workspace} if workspace else info
 
 
 def scan(config, path, cursor, matches, expand=None):
@@ -360,35 +396,44 @@ def mapping_key(payload):
 
 def request(home, payload):
     config = configuration(home)
-    prefix = "workspaces/" + config["workspace"] + "/"
     op = payload.get("op", "issues")
     if op == "connection":
-        return {"baseUrl": config["baseUrl"], "workspace": config["workspace"]}
+        return {"baseUrl": config["baseUrl"], "workspace": config["workspace"], "workspaces": config["workspaces"]}
+    if op == "add_workspace":
+        return {"workspace": add_workspace(home, config, payload.get("workspace"))}
     if op == "projects":
+        config = in_workspace(config, payload.get("workspace") or config["workspace"])
         query = str(payload.get("query", "")).casefold()
-        items, cursor, more = scan(config, prefix + "projects/", payload.get("cursor"), lambda p: query in p["name"].casefold())
-        return {"projects": [project_info(p) for p in items], "cursor": cursor, "hasNextPage": more}
-    if op == "blockers":
-        return {"blockers": {str(ticket): blockers(config, prefix, ticket) for ticket in payload.get("ids", [])[:10] if ticket}}
+        items, cursor, more = scan(config, "workspaces/" + config["workspace"] + "/projects/", payload.get("cursor"), lambda p: query in p["name"].casefold())
+        return {"projects": [project_info(p, config["workspace"]) for p in items], "cursor": cursor, "hasNextPage": more}
     maps_path = Path(home) / "plane/projects.json"
     mappings = load_json(maps_path, {})
+    if op == "blockers":
+        found = {}
+        for ticket in payload.get("ids", [])[:10]:
+            if ticket:
+                parts = str(ticket).split(":")
+                workspace = workspace_of(config, mappings, parts[1] if len(parts) == 3 else None)
+                found[str(ticket)] = blockers({**config, "workspace": workspace}, "workspaces/" + workspace + "/", ticket)
+        return {"blockers": found}
     key = mapping_key(payload)
-    account_key = config["baseUrl"] + "/" + config["workspace"]
-    mapping = mappings.get(account_key, {})
+    linked = next(((workspace, mappings[config["baseUrl"] + "/" + workspace][key]) for workspace in config["workspaces"]
+                   if key and key in mappings.get(config["baseUrl"] + "/" + workspace, {})), (None, None))
     if op == "map":
         if not key:
             raise PlaneError("Choose a project working folder before linking Plane.")
-        project_id = payload.get("project")
+        project_id, workspace = payload.get("project"), payload.get("workspace") or config["workspace"]
         if project_id:
             project_id = valid_id(project_id)
-            call(config, prefix + "projects/" + project_id + "/")
-            mapping[key] = project_id
-        else:
-            mapping.pop(key, None)
-        mappings[account_key] = mapping
+            target = in_workspace(config, workspace)
+            call(target, "workspaces/" + workspace + "/projects/" + project_id + "/")
+        for name in config["workspaces"]:
+            mappings.get(config["baseUrl"] + "/" + name, {}).pop(key, None)
+        if project_id:
+            mappings.setdefault(config["baseUrl"] + "/" + workspace, {})[key] = project_id
         private_json(maps_path, mappings)
         return {"mapped": bool(project_id)}
-    project_id = payload.get("project") or mapping.get(key)
+    project_id = payload.get("project") or linked[1]
     if op in ("detail", "update_state", "add_link"):
         parts = str(payload.get("id", "")).split(":")
         if len(parts) != 3 or parts[0] != "plane":
@@ -399,8 +444,11 @@ def request(home, payload):
             return {"issues": [], "needsProject": True, "cursor": None, "hasNextPage": False}
         raise PlaneError("Choose a Plane project first.")
     project_id = valid_id(project_id)
-    project_path = prefix + "projects/" + project_id + "/"
-    project = project_info(call(config, project_path))
+    workspace = payload.get("workspace") if payload.get("workspace") in config["workspaces"] else \
+        linked[0] if project_id == linked[1] else workspace_of(config, mappings, project_id)
+    config = {**config, "workspace": workspace}
+    project_path = "workspaces/" + workspace + "/projects/" + project_id + "/"
+    project = project_info(call(config, project_path), workspace)
     if op == "states":
         states = rows(call(config, project_path + "states/", {"per_page": 100}))
         return {"states": [{"id": state["id"], "name": state.get("name", "State"),
@@ -461,7 +509,8 @@ def connect(home):
     saved = load_json(Path(home) / "plane/credentials.json", {})
     base = input(f"Plane instance URL [{saved.get('baseUrl', 'https://app.plane.so')}]: ").strip() or saved.get("baseUrl", "https://app.plane.so")
     workspace = input(f"Workspace slug [{saved.get('workspace', '')}]: ").strip() or saved.get("workspace", "")
-    config = {"baseUrl": base.rstrip("/"), "workspace": workspace, "apiKey": getpass.getpass("Plane personal access token: ").strip()}
+    config = {"baseUrl": base.rstrip("/"), "workspace": workspace, "apiKey": getpass.getpass("Plane personal access token: ").strip(),
+              "workspaces": saved.get("workspaces") or []}
     # Validate the entire connection before replacing an existing credential.
     with tempfile.TemporaryDirectory() as temporary:
         private_json(Path(temporary) / "plane/credentials.json", config)
@@ -472,7 +521,7 @@ def connect(home):
         finally:
             os.environ.update(with_env)
     private_json(Path(home) / "plane/credentials.json", config)
-    print("Connected Plane. Return to the Tasks panel and refresh.")
+    print("Connected Plane. Return to the Tasks panel and refresh. Add more workspaces from its project picker.")
 
 
 def main():

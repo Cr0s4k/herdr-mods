@@ -16,16 +16,72 @@ export default class Plane extends Tickets {
     this.captureDescription = TextareaState.new({ placeholder: "Requirements, context and acceptance criteria…", rows: 7 });
     this.captureTitle.on("change", (_e, cx) => cx.notify());
     this.captureTitle.on("submit", (_e, cx) => { if (this.capture) this.saveCapture(cx); });
+    this.workspaceSlug = InputState.new({ placeholder: "Workspace slug or Plane URL" });
+    this.workspaceSlug.on("change", (_e, cx) => cx.notify());
+    this.workspaceSlug.on("submit", (_e, cx) => this.addWorkspace(cx));
     super.init(p, cx);
     this.loadConnection(cx);
   }
 
   close() {
-    this.captureTitle.release(); this.captureDescription.release();
+    this.captureTitle.release(); this.captureDescription.release(); this.workspaceSlug.release();
     super.close();
   }
 
-  read(payload) { return super.read({ ...payload, context: { ...this.context } }); }
+  read(payload) {
+    const workspace = payload.op === "projects" ? this.pickerWorkspace ?? this.project?.workspace : undefined;
+    return super.read({ ...payload, context: { ...this.context }, ...(workspace ? { workspace } : {}) });
+  }
+
+  back(cx) {
+    if (this.pickingProject && !this.mapping) { this.pickerWorkspace = null; this.addingSlug = false; this.workspaceError = null; }
+    super.back(cx);
+  }
+
+  projectLabel(project) { return project && (project.workspace ? `${project.workspace} · ${project.name}` : project.name); }
+
+  pickWorkspace(workspace, cx) {
+    this.pickerWorkspace = workspace; this.projects = []; this.projectCursor = null;
+    this.loadProjects(cx); cx.notify();
+  }
+
+  addWorkspace(cx) {
+    const slug = this.workspaceSlug.value().trim();
+    if (!slug || this.addingWorkspace) return;
+    this.addingWorkspace = true; this.workspaceError = null;
+    cx.spawn(async cx => {
+      try {
+        const { workspace } = await this.read({ op: "add_workspace", workspace: slug });
+        this.connectionData = await this.read({ op: "connection" });
+        this.workspaceSlug.set_value(""); this.addingSlug = false;
+        this.pickWorkspace(workspace, cx);
+      } catch (error) { this.workspaceError = error.message; }
+      finally { this.addingWorkspace = false; cx.notify(); }
+    });
+    cx.notify();
+  }
+
+  pickerTop(t) {
+    const connection = this.connectionData;
+    if (!connection) return [];
+    const current = this.pickerWorkspace ?? this.project?.workspace ?? connection.workspace;
+    return [v_flex().gap(6).flex_none()
+      .child(div().text_size(11.5).text_color(t.muted).child("Workspace"))
+      .child(h_flex().flex_wrap().gap(5)
+        .children((connection.workspaces ?? [connection.workspace]).map(workspace =>
+          this.button(`plane-workspace-${workspace}`, workspace, cx => this.pickWorkspace(workspace, cx), workspace === current, Boolean(this.mapping))))
+        .child(this.button("plane-add-workspace", "Add workspace", cx => {
+          this.addingSlug = !this.addingSlug; this.workspaceError = null;
+          if (this.addingSlug) this.workspaceSlug.focus();
+          cx.notify();
+        }, Boolean(this.addingSlug), Boolean(this.mapping))))
+      .when(Boolean(this.addingSlug), el => el.child(h_flex().gap(6).items_center()
+        .child(Input.new(this.workspaceSlug).flex_1().min_w(0).h(30).px(9).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12)
+          .accessibility_label("Plane workspace slug"))
+        .child(this.button("plane-save-workspace", this.addingWorkspace ? "Checking…" : "Add", cx => this.addWorkspace(cx), true,
+          Boolean(this.addingWorkspace) || !this.workspaceSlug.value().trim()))))
+      .when(Boolean(this.workspaceError), el => el.child(div().text_size(12).text_color(t.blocked).whitespace_normal().child(this.workspaceError)))];
+  }
 
   loadConnection(cx) {
     cx.spawn(async cx => {
@@ -59,9 +115,9 @@ export default class Plane extends Tickets {
     this.request = (this.request ?? 0) + 1;
     cx.spawn(async cx => {
       try {
-        await this.read({ op: "map", project: project?.id });
+        await this.read({ op: "map", project: project?.id, ...(project?.workspace ? { workspace: project.workspace } : {}) });
         if (context.space !== this.context.space || context.cwd !== this.context.cwd || context.on !== this.context.on) return;
-        this.project = project; this.pickingProject = false; this.picked.clear(); this.selecting = false;
+        this.project = project; this.pickingProject = false; this.pickerWorkspace = null; this.picked.clear(); this.selecting = false;
         this.mapping = false;
         this.refresh(cx, true);
       } catch (error) {
@@ -146,7 +202,7 @@ export default class Plane extends Tickets {
 
   openProject(cx) {
     const connection = this.connectionData;
-    if (connection && this.project) cx.open_url(`${connection.baseUrl}/${connection.workspace}/projects/${this.project.id}/issues/`);
+    if (connection && this.project) cx.open_url(`${connection.baseUrl}/${this.project.workspace ?? connection.workspace}/projects/${this.project.id}/issues/`);
   }
 
   openBrowser(issue, cx) {
@@ -158,14 +214,14 @@ export default class Plane extends Tickets {
     return v_flex().flex_1().min_h(0).overflow_y_scrollbar().p(14).gap(16)
       .child(div().font_semibold().text_size(16).child(this.authError ? "Connect Plane" : "Task sources"))
       .child(div().text_size(12).text_color(t.muted).whitespace_normal().child(this.authError ? this.error
-        : connection ? `${connection.baseUrl}\nWorkspace: ${connection.workspace}` : "Connect your Plane instance to browse and capture tasks."))
+        : connection ? `${connection.baseUrl}\n${(connection.workspaces ?? []).length > 1 ? "Workspaces" : "Workspace"}: ${(connection.workspaces ?? [connection.workspace]).join(", ")}` : "Connect your Plane instance to browse and capture tasks."))
       .child(this.button("plane-connect", connection ? "Change Plane connection" : "Connect Plane", () => {
         const args = { name: "Connect Plane", argv: ["python3", `${appHome()}/mods/plane/herdr-plane`, "--home", appHome(), "connect"] };
         if (this.context.on || !this.context.space) run("space.new", { ...args, machine: "" });
         else run("tab.new", { ...args, space: this.context.space });
       }))
       .child(div().text_size(12).text_color(t.muted).whitespace_normal()
-        .child("Enter your instance URL, workspace slug and personal access token in the connection terminal. Credentials stay on this computer. Return here and refresh after connecting."))
+        .child("Enter your instance URL, a workspace slug and personal access token in the connection terminal. Credentials stay on this computer. Return here and refresh after connecting. Add more workspaces from the project picker; each repository links to a project in any of them."))
       .when(Boolean(connection), el => el.child(this.button("plane-token-settings", "Manage Plane access tokens", cx => cx.open_url(`${connection.baseUrl}/settings/profile/api-tokens/`))))
       .child(this.button("plane-connection-back", "Back to tasks", cx => {
         this.setup = false; this.authError = false; this.detail = null; this.capture = false; this.picked.clear(); this.selecting = false;

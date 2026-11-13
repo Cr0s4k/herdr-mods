@@ -39,7 +39,7 @@ class PlaneTest(unittest.TestCase):
     def test_configuration_stays_private_and_connection_response_never_contains_key(self):
         self.assertEqual((self.home / "plane/credentials.json").stat().st_mode & 0o777, 0o600)
         connection = plane.request(self.home, {"op": "connection"})
-        self.assertEqual(connection, {"baseUrl": CONFIG["baseUrl"], "workspace": "herdr"})
+        self.assertEqual(connection, {"baseUrl": CONFIG["baseUrl"], "workspace": "herdr", "workspaces": ["herdr"]})
         self.assertNotIn("secret-token", json.dumps(connection))
         for base in ["file:///etc/passwd", "https://user:password@example.test", "https://example.test/?token=secret"]:
             with patch.dict(os.environ, {"PLANE_BASE_URL": base}):
@@ -141,6 +141,42 @@ class PlaneTest(unittest.TestCase):
         self.assertEqual(mappings[CONFIG["baseUrl"] + "/herdr"][root_key], PROJECT["id"])
         with patch.dict(os.environ, {"PLANE_WORKSPACE": "different"}):
             self.assertTrue(plane.request(self.home, {"op": "issues", "context": {"cwd": str(repo)}})["needsProject"])
+
+    def test_each_repository_links_a_project_in_its_own_workspace(self):
+        other = {"id": "33333333-3333-4333-8333-333333333333", "name": "Client site", "identifier": "SITE"}
+        paths = []
+        def call(config, path, params=None, **_kwargs):
+            paths.append(path)
+            if path.endswith("/work-items/"):
+                return {"results": [item()], "next_page_results": False}
+            if path.endswith("/projects/"):
+                return {"results": [other], "next_page_results": False}
+            return other if other["id"] in path else PROJECT
+        with patch.object(plane, "call", side_effect=call):
+            with self.assertRaises(plane.PlaneError):
+                plane.request(self.home, {"op": "projects", "workspace": "client"})
+            with self.assertRaises(plane.PlaneError):
+                plane.request(self.home, {"op": "add_workspace", "workspace": "bad slug"})
+            self.assertEqual(plane.request(self.home, {"op": "add_workspace", "workspace": "https://plane.example.test/client/"}), {"workspace": "client"})
+            self.assertEqual(plane.request(self.home, {"op": "connection"})["workspaces"], ["herdr", "client"])
+            listed = plane.request(self.home, {"op": "projects", "workspace": "client"})
+            self.assertEqual(listed["projects"][0]["workspace"], "client")
+            self.assertIn("workspaces/client/projects/", paths)
+            plane.request(self.home, {"op": "map", "project": PROJECT["id"], "context": {"cwd": str(self.home)}})
+            plane.request(self.home, {"op": "map", "project": other["id"], "workspace": "client", "context": {"cwd": str(self.home)}})
+            mappings = json.loads((self.home / "plane/projects.json").read_text())
+            self.assertEqual(mappings[CONFIG["baseUrl"] + "/herdr"], {})
+            self.assertEqual(list(mappings[CONFIG["baseUrl"] + "/client"].values()), [other["id"]])
+            listed = plane.request(self.home, {"op": "issues", "context": {"cwd": str(self.home)}})
+            self.assertEqual(listed["project"]["workspace"], "client")
+            self.assertTrue(listed["issues"][0]["url"].startswith(CONFIG["baseUrl"] + "/client/browse/SITE-12"))
+            paths.clear()
+            plane.request(self.home, {"op": "detail", "id": f"plane:{other['id']}:{ITEM_ID}"})
+            self.assertTrue(all(path.startswith("workspaces/client/") for path in paths))
+        with patch("builtins.input", side_effect=["", ""]), patch.object(plane.getpass, "getpass", return_value="new"), \
+                patch.object(plane, "call", return_value={"results": []}):
+            plane.connect(self.home)
+        self.assertEqual(plane.configuration(self.home)["workspaces"], ["herdr", "client"])
 
     def test_capture_escapes_html_and_never_follows_a_successful_write_with_another_request(self):
         calls = []
