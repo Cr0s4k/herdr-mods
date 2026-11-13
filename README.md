@@ -242,7 +242,9 @@ nothing to finish.
    updates need a connection with Write permission; without it the inspector offers
    **Connect Linear**. Agents are still told not to change a ticket's status or assignee.
    While updates are off, a ticket task's inspector says its ticket stays where it is, with
-   **Set up**.
+   **Set up**. When Linear updates are on but the connection can only read (a read-only
+   Claude login), the setup card and **Ticket updates** say so with **Connect Linear** before
+   any ticket fails; an API key shows what it may do only when it is used.
 
    Tasks can wait for each other. A ticket brings its **blocked by** links from Plane or
    Linear: a blocker that is also in the pipeline holds the task until that task merges, and
@@ -361,7 +363,10 @@ nothing to finish.
    for the walkthrough page**. With pull requests, **Add the screenshots to the pull request**
    (Settings, Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin`
    and adds a **Before and after** table to the description. How to start the app and which
-   screens matter belongs in the repository's `AGENTS.md` or a skill.
+   screens matter belongs in the repository's `AGENTS.md` or a skill. When the repository has
+   neither, the setup card's Screenshots row offers **Queue: write how to run it**: a task
+   whose agent writes `.claude/skills/demo/SKILL.md` (start it from a fresh worktree, sign in
+   locally, the screens that matter, how to stop it) and follows it once to prove it.
 
    **Revert** in a completed task's inspector (asked twice) undoes a task merged locally with
    one new commit, `Revert T-1 <title>`, on the branch it merged into: only that task's
