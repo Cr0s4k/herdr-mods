@@ -34,7 +34,7 @@ const AFTER_HINTS = [
 ].join("\n");
 // What a fresh worktree lacks: untracked env files and installed dependencies.
 const PREPARE_HINTS = [
-  'c=""; for f in .env .env.local; do [ -f "$f" ] && ! git ls-files --error-unmatch "$f" >/dev/null 2>&1 && c="${c:+$c && }cp \\"\\$PIPELINE_SOURCE/$f\\" ."; done',
+  'c=""; for f in .env .env.local */.env */.env.local; do [ -f "$f" ] && ! git ls-files --error-unmatch "$f" >/dev/null 2>&1 && c="${c:+$c && }cp \\"\\$PIPELINE_SOURCE/$f\\" $(dirname "$f")/"; done',
   'if [ -f package.json ]; then i="npm ci"; [ -f pnpm-lock.yaml ] && i="pnpm install --frozen-lockfile"; [ -f yarn.lock ] && i="yarn install --frozen-lockfile"; { [ -f bun.lockb ] || [ -f bun.lock ]; } && i="bun install"; c="${c:+$c && }$i"; fi',
   '[ -n "$c" ] && echo "$c"',
 ].join("\n");

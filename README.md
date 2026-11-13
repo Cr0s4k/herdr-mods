@@ -343,7 +343,8 @@ nothing to finish.
    `cp "$PIPELINE_SOURCE/.env" . && npm ci`, with your project folder in `$PIPELINE_SOURCE`
    and the task's id and port set. A failure is recorded in the task's history and the agent
    still starts. The setup card's **Prepare** row offers one built from what the repository
-   ignores but needs: copying an untracked `.env` or `.env.local`, and the install command of
+   ignores but needs: copying an untracked `.env` or `.env.local` (at the top or one folder
+   down, such as `crm/.env`), and the install command of
    its lockfile.
 
    **Agent instructions** (Settings, Agent) is free text added to every task's first message.
