@@ -406,3 +406,10 @@ test("the background tracker starts a scheduled pipeline whose view is closed", 
     assert.equal(values.writes, 1, "a second tracker sees the start already applied");
   } finally { Date.now = original; }
 });
+
+test("a Plane project's open Ready state is offered as the column to watch", () => {
+  const states = [{ id: "b", name: "Backlog", group: "backlog" }, { id: "r", name: "Ready", group: "unstarted" }, { id: "d", name: "Done", group: "completed" }];
+  assert.deepEqual(model.guessWatch(states), { id: "r", name: "Ready" });
+  assert.equal(model.guessWatch([{ id: "d", name: "Ready", group: "completed" }]), null);
+  assert.equal(model.guessWatch([{ id: "t", name: "Todo", group: "unstarted" }]), null);
+});

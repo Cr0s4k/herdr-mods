@@ -478,6 +478,10 @@ export function guessUpdates(states) {
   const merge = rows.find(row => row.kind === "completed" && /done|merged|complete/i.test(row.name)) ?? rows.find(row => row.kind === "completed");
   return start || review || merge ? { start: pick(start), review: pick(review), merge: pick(merge) } : null;
 }
+export function guessWatch(states) {
+  const row = (states ?? []).find(row => /^ready\b/i.test(row.name ?? "") && openIssue({ statusType: row.type ?? row.group }));
+  return row ? { id: row.id, name: row.name } : null;
+}
 export const updatesLabel = setup => Object.keys(UPDATE_KINDS).map(kind => setup?.[kind]?.name).filter(Boolean).join(" → ");
 // A Linear ticket typed into New task as its link or key.
 export function ticketRef(text) {

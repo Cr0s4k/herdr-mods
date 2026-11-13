@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -1201,7 +1201,7 @@ export default class Pipeline extends View {
         .children(actions))
       .when(Boolean(picked?.reason), el => el.child(div().pl(108).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
-    const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], readonly = tracker === "linear" && this.linearWrite === false && Boolean(updatesLabel(moves)), guess = guessUpdates(this.updateStates[tracker].states);
+    const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], readonly = tracker === "linear" && this.linearWrite === false && Boolean(updatesLabel(moves)), guess = guessUpdates(this.updateStates[tracker].states), watchGuess = guessWatch(this.updateStates[tracker].states);
     const demoQueued = state.tasks.some(task => task.title === DEMO_TASK[0]), prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
@@ -1230,6 +1230,8 @@ export default class Pipeline extends View {
         change("after", "delivery", state.afterMerge ? "Change" : "Set")], chose("after", state.afterMerge))]),
       row("tickets", "Tickets", watched.length || state.linear?.team ? ok : plain,
         watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : state.linear?.team ? `Linear · ${state.linear.team.name}` : "Typed here", [
+        ...(!watched.length && tracker === "plane" && watchGuess ? [use("watch", `Watch Plane · ${watchGuess.name}`, cx => this.act({ type: "watchTickets", provider: "plane", state: watchGuess }, cx),
+          `Tickets in ${watchGuess.name} join the queue within a minute, each one once`)] : []),
         ...(!state.linear?.team && this.teamGuess ? [use("team", `Use Linear · ${this.teamGuess.name}`, cx => this.setLinearFilter({ team: this.teamGuess }, cx),
           "This repository's branches and commits name this Linear team. Tickets and their states then come from it")] : []),
         this.button("setup-tickets-add", "Add from tickets", cx => this.open(this.ticketProvider(state), cx), t, { small: true, icon: this.ticketProvider(state), hint: "Queue tickets from Plane or Linear, or watch a state" })]),
