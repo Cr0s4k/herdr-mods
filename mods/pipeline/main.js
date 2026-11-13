@@ -32,6 +32,14 @@ const AFTER_HINTS = [
   'for f in install.sh deploy.sh; do [ -x "$f" ] && echo "./$f"; done',
   'if [ -f Makefile ]; then for s in install deploy; do grep -q "^$s:" Makefile && echo "make $s"; done; fi',
 ].join("\n");
+// What a fresh worktree lacks: untracked env files and installed dependencies.
+const PREPARE_HINTS = [
+  'c=""; for f in .env .env.local; do [ -f "$f" ] && ! git ls-files --error-unmatch "$f" >/dev/null 2>&1 && c="${c:+$c && }cp \\"\\$PIPELINE_SOURCE/$f\\" ."; done',
+  'if [ -f package.json ]; then i="npm ci"; [ -f pnpm-lock.yaml ] && i="pnpm install --frozen-lockfile"; [ -f yarn.lock ] && i="yarn install --frozen-lockfile"; { [ -f bun.lockb ] || [ -f bun.lock ]; } && i="bun install"; c="${c:+$c && }$i"; fi',
+  '[ -n "$c" ] && echo "$c"',
+].join("\n");
+const ADDRESS = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::\d+)?[^\s"'<>)\]]*/g;
+export const tryAddress = screen => String(screen ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").match(ADDRESS)?.at(-1)?.replace("0.0.0.0", "localhost").replace(/[.,]$/, "") ?? null;
 const GITHUB = "git remote get-url origin 2>/dev/null | grep -q github.com && command -v gh >/dev/null";
 // Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
 const TICKET_NAMES = "git log -300 --format='%s %D' 2>/dev/null; git branch -a --format='%(refname:short)' 2>/dev/null";
@@ -155,7 +163,7 @@ export default class Pipeline extends View {
     this.prepareInput = InputState.new({ placeholder: 'cp "$PIPELINE_SOURCE/.env" . && npm ci' });
     this.prepareInput.on("change", (_e, cx) => cx.notify());
     this.prepareInput.on("submit", (_e, cx) => this.savePrepare(cx));
-    this.teamGuess = null; this.asked = null;
+    this.teamGuess = null; this.asked = null; this.prepareSuggestions = [];
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
@@ -252,6 +260,8 @@ export default class Pipeline extends View {
         this.trySuggestions = (runs?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
         const after = await exec("sh", ["-c", AFTER_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.afterSuggestions = (after?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
+        const prepares = await exec("sh", ["-c", PREPARE_HINTS], { cwd: this.repo.root, on }).catch(() => null);
+        this.prepareSuggestions = (prepares?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 1);
         const hub = await exec("sh", ["-c", GITHUB], { cwd: this.repo.root, on }).catch(() => null);
         this.github = hub?.code === 0;
       }
@@ -320,7 +330,7 @@ export default class Pipeline extends View {
     if (task && this.details.value() !== (task.description ?? "")) this.act({ type: "describe", id: task.id, text: this.details.value() }, cx);
   }
   peekAt(task, cx) {
-    const trees = workspacesOf(task), key = `${task.id}:${task.status}:${task.terminal}:${trees.map(ws => ws.root).join(",")}`;
+    const trees = workspacesOf(task), key = `${task.id}:${task.status}:${task.terminal}:${task.tried ?? ""}:${trees.map(ws => ws.root).join(",")}`;
     if (this.peek.key === key) return;
     this.peek = this.peek.task === task.id ? { ...this.peek, key } : { key, task: task.id, screen: [], diff: [] };
     const { on } = this.context;
@@ -334,6 +344,8 @@ export default class Pipeline extends View {
         peek.screen = lines.slice(-14);
         while (peek.screen.length && !peek.screen[0]) peek.screen.shift();
       }
+      const trying = task.tried && panes().find(pane => pane.tab === task.tried)?.terminal;
+      if (trying) peek.address = tryAddress((await hc(["read", trying, "--lines", "80"]).catch(() => null))?.stdout);
       if (!["queued", "routing", "done"].includes(task.status)) for (const ws of trees) {
         const git = args => exec("git", ["-C", ws.root, ...args], { on }).catch(() => null);
         const forked = await exec("sh", ["-c", FORK, "sh", ws.root, ws.base, ws.target ?? ""], { on }).catch(() => null);
@@ -1165,7 +1177,7 @@ export default class Pipeline extends View {
       .when(Boolean(picked?.reason), el => el.child(div().pl(108).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
     const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], guess = guessUpdates(this.updateStates[tracker].states);
-    const checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
         canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "helper")]),
@@ -1175,6 +1187,10 @@ export default class Pipeline extends View {
         ...(!state.check && checkHint ? [use("check", `Use ${checkHint}`, cx => { this.checkInput.set_value(checkHint); this.act({ type: "check", command: checkHint }, cx); },
           "Found in this repository. Runs in each finished task's worktree before review")] : []),
         change("checks", "checks", state.check ? "Change" : "Set")], chose("check", state.check?.command)),
+      row("prepare", "Prepare", state.prepare ? ok : plain, state.prepare ?? "New worktrees start as Git leaves them", [
+        ...(!state.prepare && prepareHint ? [use("prepare", "Use what's missing", cx => { this.prepareInput.set_value(prepareHint); this.act({ type: "prepare", command: prepareHint }, cx); },
+          `Runs once in each new worktree, before its agent starts:\n${prepareHint}`)] : []),
+        change("prepare", "checks", state.prepare ? "Change" : "Set")]),
       row("tryout", "Try it", state.tryout ? ok : plain, state.tryout ?? "Nothing to run", [
         ...(!state.tryout && tryHint ? [use("try", `Use ${tryHint}`, cx => { this.tryInput.set_value(tryHint); this.act({ type: "tryout", command: tryHint }, cx); },
           "Found in this repository. Runs a task's change in a tab so you can try it")] : []),
@@ -1205,7 +1221,7 @@ export default class Pipeline extends View {
       : ai ? [`${ai.by} chose what's marked with sparkles${ai.ms ? ` in ${Math.max(1, Math.round(ai.ms / 1000))} s` : ""}. Change anything you disagree with.`, t.muted]
       : state.inherited ? ["These come from this project's other pipeline. A change here changes it there too.", t.muted]
       : ["The defaults work. These are the ones worth a look before the first agent starts.", t.muted];
-    const tall = 492 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
+    const tall = 528 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
     return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(60, Math.min(g.center.y - tall / 2, g.h - tall - 20))).w(w).p(16).gap(4)
       .rounded(10).border_1().border_color(t.border).bg(t.surface).text_color(t.foreground).shadow_lg()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -1658,6 +1674,10 @@ export default class Pipeline extends View {
         .child(Input.new(this.prepareInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
           .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Prepare command"))
         .child(this.button("prepare-save", "Save", cx => this.savePrepare(cx), t, { small: true, disabled: this.prepareInput.value().trim() === (state.prepare ?? "") })));
+      const prepares = this.prepareSuggestions.filter(command => command !== state.prepare);
+      if (prepares.length) body.child(h_flex().gap(6).flex_wrap().children(prepares.map(command => this.button("prepare-use", `Use ${command}`, cx => {
+        this.prepareInput.set_value(command); this.act({ type: "prepare", command }, cx);
+      }, t, { small: true, hint: "What this repository ignores but needs to run" }))));
     } else if (section === "delivery") {
       body.child(h_flex().gap(6).flex_wrap()
         .child(this.button("deliver-merge", "Merge locally", cx => this.act({ type: "deliver", value: "merge" }, cx), t, { selected: state.delivery !== "pr" }))
@@ -1921,6 +1941,8 @@ export default class Pipeline extends View {
       const open = task.tried && spaces().some(space => space.tabs.some(tab => tab.id === task.tried));
       body.child(this.button(`try-${task.id}`, open ? "Show its Try it tab" : "Try it", cx => this.tryTask(task, cx), t,
         { icon: "play", hint: open ? "Shows the tab already running it (T)" : `Runs ${state.tryout} in ${several ? `its ${task.repos[0]} worktree` : "its worktree"}, in a tab of its own (T)` }));
+      const address = open && this.peek.task === task.id ? this.peek.address : null;
+      if (address) body.child(h_flex().child(this.button(`try-open-${task.id}`, `Open ${address.replace(/^https?:\/\//, "")}`, () => this.openLink(address), t, { small: true, hint: "The address its Try it tab printed last" })));
     }
     if (trees.length && !["queued", "routing", "done"].includes(task.status) && !task.discard) this.changes(body, task, t, several);
     if (task.status === "testing") body.child(this.label(`Running ${state.check?.command ?? "checks"} in ${several ? `each of its ${trees.length} worktrees` : "its worktree"}…`, t));

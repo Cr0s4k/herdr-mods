@@ -1689,3 +1689,28 @@ test("the setup card turns screenshots on, and a task that started without them 
   view.act({ type: "summary", id: "T-1", text: "", evidence: { files: ["/g/01-before-a.png"], url: "https://claude.ai/artifact/1" } }, cx);
   assert.equal(find(view.render(cx), "evidence-ask-T-1"), undefined, "gone once the page is there");
 });
+
+test("the setup card offers a Prepare command for what a new worktree lacks, and a running Try it shows its address", async () => {
+  const view = setupLive();
+  assert.match(text(find(view.render(cx), "setup-prepare")), /New worktrees start as Git leaves them/);
+  assert.equal(find(view.render(cx), "setup-prepare-use"), undefined);
+  view.prepareSuggestions = ['cp "$PIPELINE_SOURCE/.env" . && npm ci'];
+  click(view, "setup-prepare-use");
+  assert.equal(view.state().prepare, 'cp "$PIPELINE_SOURCE/.env" . && npm ci');
+  assert.equal(find(view.render(cx), "setup-prepare-use"), undefined);
+  view.act({ type: "tryout", command: "npm run dev" }, cx);
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null, tried: "tb10" });
+  world.spaces = [{ id: "s9", tabs: [{ id: "tb9" }, { id: "tb10" }] }];
+  world.panes = [{ terminal: "t9", tab: "tb9", cwd: "/wt/T-1" }, { terminal: "t10", tab: "tb10", cwd: "/wt/T-1" }];
+  world.screen = "  VITE ready\n  Local:   http://localhost:5174/\n";
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  view.inspect("T-1", spawning); view.render(spawning);
+  while (spawned.length) await spawned.shift()(spawning);
+  assert.ok(world.hc.some(call => call[0] === "read" && call[1] === "t10"), "its Try it tab is read, not only its agent");
+  const calls = []; world.exec = (...args) => { calls.push(args); return { code: 0, stdout: "" }; };
+  assert.match(text(find(view.render(cx), "try-open-T-1")), /Open localhost:5174\//);
+  click(view, "try-open-T-1");
+  assert.deepEqual(calls.at(-1).slice(0, 2), ["xdg-open", ["http://localhost:5174/"]]);
+  world.exec = null; world.screen = null; world.panes = []; world.spaces = [];
+});

@@ -335,13 +335,16 @@ nothing to finish.
    that tab; it closes when the task merges or is discarded. Each task has its own port in
    `$PIPELINE_PORT` (4100 to 4999), so several branches can run at once when the command uses
    it. **Start it when work is ready for review** starts it by itself, once per task, without
-   taking you away from where you are.
+   taking you away from where you are. While its tab runs, the inspector offers **Open
+   localhost:5174** for the last local address the command printed.
 
    A fresh worktree has only what Git tracks. **Prepare a new worktree** (Settings, Checks
    and Try it) runs a command once in each new worktree before its agent starts, such as
    `cp "$PIPELINE_SOURCE/.env" . && npm ci`, with your project folder in `$PIPELINE_SOURCE`
    and the task's id and port set. A failure is recorded in the task's history and the agent
-   still starts.
+   still starts. The setup card's **Prepare** row offers one built from what the repository
+   ignores but needs: copying an untracked `.env` or `.env.local`, and the install command of
+   its lockfile.
 
    **Agent instructions** (Settings, Agent) is free text added to every task's first message.
    **Show the change** there asks each agent for screenshots of the screens it changes, before
@@ -350,13 +353,14 @@ nothing to finish.
    private page published with Claude Code's Artifact tool: each pair side by side, what
    changed, and how to try it locally. **Open walkthrough** under **Before and after** in the
    inspector opens that page; the screenshots are listed below it and open in the Show panel.
-   An agent without an Artifact tool leaves the page out, and the inspector says so. The setup card has a **Screenshots** row that turns it on. A task that
-   started without it has **Ask for screenshots** in its inspector, which sends its agent the
-   same request (with "before" taken from the commit its branch started from); with
-   screenshots but no page it reads **Ask for the walkthrough page**. With pull requests, **Add the screenshots to the pull request** (Settings,
-   Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin` and adds
-   a **Before and after** table to the description. How to start the app and which screens
-   matter belongs in the repository's `AGENTS.md` or a skill.
+   An agent without an Artifact tool leaves the page out, and the inspector says so. The setup
+   card has a **Screenshots** row that turns it on. A task that started without it has **Ask
+   for screenshots** in its inspector, which sends its agent the same request (with "before"
+   taken from the commit its branch started from); with screenshots but no page it reads **Ask
+   for the walkthrough page**. With pull requests, **Add the screenshots to the pull request**
+   (Settings, Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin`
+   and adds a **Before and after** table to the description. How to start the app and which
+   screens matter belongs in the repository's `AGENTS.md` or a skill.
 
    **Revert** in a completed task's inspector (asked twice) undoes a task merged locally with
    one new commit, `Revert T-1 <title>`, on the branch it merged into: only that task's
