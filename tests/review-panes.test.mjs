@@ -214,12 +214,14 @@ test("Pipeline opens as a mod-only tab and focuses an existing view without dupl
   assert.deepEqual(world.calls, [["tab.select", { id: "pipeline-tab" }], ["pane.focus", { pane: "pipeline-pane" }]]);
 });
 
-test("the Pipeline button counts simulated tasks waiting for an answer", () => {
+test("the Pipeline button counts this space's live tasks waiting for an answer", () => {
   const tabs = setupTabs();
   assert.doesNotMatch(text(find(tabs.render(), "open-pipeline")), /Needs you/);
   preferences.set("pipeline.prototype.v1", {
-    a: { tasks: [{ id: "A", status: "input" }, { id: "B", status: "working" }] },
-    b: { tasks: [{ id: "C", status: "input" }] },
+    simulation: { tasks: [{ id: "S", status: "input" }] },
+    "live:a": { live: true, space: "space", tasks: [{ id: "A", status: "input" }, { id: "B", status: "working" }] },
+    "live:b": { live: true, space: "space", tasks: [{ id: "C", status: "input" }] },
+    "live:c": { live: true, space: "elsewhere", tasks: [{ id: "D", status: "input" }] },
   });
   try { assert.match(text(find(tabs.render(), "open-pipeline")), /Needs you 2/); }
   finally { preferences.delete("pipeline.prototype.v1"); }
