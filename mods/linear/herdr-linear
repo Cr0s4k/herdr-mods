@@ -155,6 +155,15 @@ def attachments(issue):
 
 def request(app_home, payload):
     operation = payload.get("op", "issues")
+    if operation == "access":
+        # What can be told without writing: a read-only login can't update, a login with write can, and a key shows only when used.
+        try:
+            source = credential(app_home, True)[1]
+        except LinearError as error:
+            if error.kind != "write_access":
+                raise
+            return {"data": {"write": False}, "source": credential(app_home)[1]}
+        return {"data": {"write": True if source == "Claude login" else None}, "source": source}
     token, source = credential(app_home, operation in ("update_state", "add_link"))
     if operation == "update_state":
         issue_id, state = str(payload.get("id") or ""), str(payload.get("state") or "").strip()

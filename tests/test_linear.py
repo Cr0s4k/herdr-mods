@@ -115,6 +115,21 @@ class LinearTest(unittest.TestCase):
                 with self.assertRaises(reader.LinearError):
                     reader.request("/app", payload)
 
+    def test_access_says_whether_updates_can_work_without_writing_anything(self):
+        def login(write):
+            def credential(_home, need=False):
+                if need and not write:
+                    raise reader.LinearError(reader.WRITE_ACCESS, "write_access")
+                return "token", "Claude login"
+            return credential
+        with patch.object(reader, "credential", login(False)), patch.object(reader, "call") as call:
+            self.assertEqual(reader.request("/app", {"op": "access"}), {"data": {"write": False}, "source": "Claude login"})
+        with patch.object(reader, "credential", login(True)):
+            self.assertEqual(reader.request("/app", {"op": "access"})["data"], {"write": True})
+        with patch.object(reader, "credential", lambda _home, need=False: ("key", "API key")):
+            self.assertEqual(reader.request("/app", {"op": "access"})["data"], {"write": None}, "a key shows what it may do only when used")
+        call.assert_not_called()
+
     def test_a_connection_without_write_access_says_so_and_unconfirmed_writes_are_distinct(self):
         denied = {"jsonrpc": "2.0", "id": 1, "result": {"isError": True, "content": [{"type": "text", "text": "Invalid scope: write required secret-token"}]}}
         with self.assertRaises(reader.LinearError) as caught:

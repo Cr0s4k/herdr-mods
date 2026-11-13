@@ -40,6 +40,16 @@ const PREPARE_HINTS = [
 ].join("\n");
 const ADDRESS = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::\d+)?[^\s"'<>)\]]*/g;
 export const tryAddress = screen => String(screen ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").match(ADDRESS)?.at(-1)?.replace("0.0.0.0", "localhost").replace(/[.,]$/, "") ?? null;
+// Whether the repository already tells agents how to run and show it.
+const DEMO_SKILL = 'ls .claude/skills/*/SKILL.md .agents/skills/*/SKILL.md 2>/dev/null | grep -qiE "/(demo|run|preview|screenshots?|try)[^/]*/SKILL.md" || grep -qiE "screenshot" AGENTS.md CLAUDE.md 2>/dev/null';
+const DEMO_TASK = ["Write a skill that tells agents how to run and show this project",
+  ["Agents here are asked for before and after screenshots of what they change, and each one works out by itself how to start the project. Write that down once.",
+    "Add a project skill at .claude/skills/demo/SKILL.md (and link it from AGENTS.md or CLAUDE.md if the repository has one) that says:",
+    "- how to start the project locally from a fresh Git worktree: env files, dependencies, database or other services, and the command. When PIPELINE_PORT is set, use it as the port so several branches can run at once; say how.",
+    "- how to sign in locally: a seeded user or the way to make one. No real credentials.",
+    "- which screens matter and how to reach them, and how to take a screenshot of one with the tools this repository already has.",
+    "- how to stop everything it started.",
+    "Follow the skill yourself once, from this worktree, and fix what doesn't work before you finish. Keep it short: steps and commands, no background."].join("\n")];
 const GITHUB = "git remote get-url origin 2>/dev/null | grep -q github.com && command -v gh >/dev/null";
 // Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
 const TICKET_NAMES = "git log -300 --format='%s %D' 2>/dev/null; git branch -a --format='%(refname:short)' 2>/dev/null";
@@ -163,7 +173,7 @@ export default class Pipeline extends View {
     this.prepareInput = InputState.new({ placeholder: 'cp "$PIPELINE_SOURCE/.env" . && npm ci' });
     this.prepareInput.on("change", (_e, cx) => cx.notify());
     this.prepareInput.on("submit", (_e, cx) => this.savePrepare(cx));
-    this.teamGuess = null; this.asked = null; this.prepareSuggestions = [];
+    this.teamGuess = null; this.asked = null; this.prepareSuggestions = []; this.demoSkill = null; this.linearWrite = null;
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
@@ -262,6 +272,8 @@ export default class Pipeline extends View {
         this.afterSuggestions = (after?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
         const prepares = await exec("sh", ["-c", PREPARE_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.prepareSuggestions = (prepares?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 1);
+        const demo = await exec("sh", ["-c", DEMO_SKILL], { cwd: this.repo.root, on }).catch(() => null);
+        this.demoSkill = demo ? demo.code === 0 : null;
         const hub = await exec("sh", ["-c", GITHUB], { cwd: this.repo.root, on }).catch(() => null);
         this.github = hub?.code === 0;
       }
@@ -461,11 +473,17 @@ export default class Pipeline extends View {
       cx.notify();
     });
   }
+  queueDemoSkill(cx) {
+    const id = `T-${(this.state().created ?? 0) + 1}`;
+    this.act({ type: "create", title: DEMO_TASK[0] }, cx);
+    this.act({ type: "describe", id, text: DEMO_TASK[1] }, cx);
+  }
   showEvidence(task, file) {
     exec("herdr-show", [file, "--title", `${task.id} · ${file.split("/").pop().replace(/\.[a-z]+$/i, "")}`]).catch(() => null);
   }
   useUpdates(provider, guess, cx) {
     this.act({ type: "ticketUpdates", provider, ...guess, link: true }, cx);
+    if (provider === "linear") this.loadUpdateStates(cx);
   }
 
   saveTime(kind, cx) {
@@ -540,6 +558,10 @@ export default class Pipeline extends View {
     const state = this.state(), context = { cwd: this.context.cwd, on: this.context.on };
     const teams = [...new Set([state.linear?.team?.id, ...state.tasks.filter(task => task.ticket?.provider === "linear" && task.status !== "done").map(task => task.ticket.team),
       ...this.sources.linear.issues.map(issue => issue.team)].filter(Boolean))].slice(0, 5);
+    if (updatesLabel(state.ticketUpdates?.linear) || state.ticketUpdates?.linear?.link || state.linear?.team) cx.spawn(async cx => {
+      try { this.linearWrite = (await readTickets("linear", { op: "access" })).write ?? null; } catch { this.linearWrite = null; }
+      cx.notify();
+    });
     for (const provider of Object.keys(SOURCES)) {
       if (provider === "linear" && !teams.length) { this.updateStates.linear = { loading: false, states: [], error: null }; continue; }
       this.updateStates[provider] = { ...this.updateStates[provider], loading: true, error: null };
@@ -1176,8 +1198,8 @@ export default class Pipeline extends View {
         .children(actions))
       .when(Boolean(picked?.reason), el => el.child(div().pl(108).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
-    const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], guess = guessUpdates(this.updateStates[tracker].states);
-    const prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], readonly = tracker === "linear" && this.linearWrite === false && Boolean(updatesLabel(moves)), guess = guessUpdates(this.updateStates[tracker].states);
+    const demoQueued = state.tasks.some(task => task.title === DEMO_TASK[0]), prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
         canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "helper")]),
@@ -1208,12 +1230,15 @@ export default class Pipeline extends View {
         ...(!state.linear?.team && this.teamGuess ? [use("team", `Use Linear · ${this.teamGuess.name}`, cx => this.setLinearFilter({ team: this.teamGuess }, cx),
           "This repository's branches and commits name this Linear team. Tickets and their states then come from it")] : []),
         this.button("setup-tickets-add", "Add from tickets", cx => this.open(this.ticketProvider(state), cx), t, { small: true, icon: this.ticketProvider(state), hint: "Queue tickets from Plane or Linear, or watch a state" })]),
-      row("updates", "Updates", updatesLabel(moves) ? ok : todo, updatesLabel(moves) || `${SOURCES[tracker]} tickets stay as they are`, [
+      row("updates", "Updates", updatesLabel(moves) && !readonly ? ok : todo, readonly ? "Your Linear connection can only read" : updatesLabel(moves) || `${SOURCES[tracker]} tickets stay as they are`, [
+        ...(readonly ? [this.button("setup-linear-connect", "Connect Linear", () => this.connectLinear(), t, { small: true, icon: "linear", hint: "Opens a terminal that asks privately for a key with Write permission" })] : []),
         ...(!updatesLabel(moves) && updatesLabel(guess) ? [use("updates", `Use ${updatesLabel(guess)}`, cx => this.useUpdates(tracker, guess, cx),
           `Moves a ${SOURCES[tracker]} ticket as its work starts, is ready for review and merges, and links its pull request`)] : []),
         change("updates", "tickets", updatesLabel(moves) ? "Change" : "Set")]),
       row("evidence", "Screenshots", state.evidence ? ok : plain, state.evidence ? "Agents show the change, before and after" : "Agents aren't asked for any", [
         ...(!state.evidence ? [use("evidence", "Ask for before and after", cx => this.act({ type: "evidence" }, cx), "Each agent screenshots what it changes, before and after. They appear in the task's inspector")] : []),
+        ...(state.evidence && this.demoSkill === false && !demoQueued ? [use("demo", "Queue: write how to run it", cx => this.queueDemoSkill(cx),
+          "This repository has no skill that says how to start it and which screens matter. Queues a task that writes one, so agents stop working it out each time")] : []),
         change("evidence", "agent")]),
     ];
     const note = ai?.running ? [`${ai.by} is reading the repository. It only reads, and you can keep typing tasks.`, t.accent]
@@ -1789,7 +1814,10 @@ export default class Pipeline extends View {
       }
       body.child(this.switchRow(`update-${provider}-link`, "Link pull requests to the ticket", `Adds “PR #N: title” to the ${service} ticket when its pull request opens`,
         Boolean(setup.link), cx => this.act({ type: "ticketUpdates", provider, link: !setup.link }, cx), t));
-      if (provider === "linear") body.child(this.label("Linear updates need a connection with Write permission.", t));
+      if (provider === "linear" && this.linearWrite === false) body.child(h_flex().id("pipeline-linear-readonly").gap(8).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).line_height(1.45).text_color(t.blocked).child("Your Linear connection can only read, so these updates will fail."))
+        .child(this.button("linear-connect-settings", "Connect Linear", () => this.connectLinear(), t, { small: true, icon: "linear", hint: "Opens a terminal that asks privately for a key with Write permission" })));
+      else if (provider === "linear") body.child(this.label(this.linearWrite ? "Your Linear connection can write." : "Linear updates need a connection with Write permission.", t));
     }
   }
   evidenceDetail(body, task, t) {

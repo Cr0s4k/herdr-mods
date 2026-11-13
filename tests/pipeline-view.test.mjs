@@ -1714,3 +1714,34 @@ test("the setup card offers a Prepare command for what a new worktree lacks, and
   assert.deepEqual(calls.at(-1).slice(0, 2), ["xdg-open", ["http://localhost:5174/"]]);
   world.exec = null; world.screen = null; world.panes = []; world.spaces = [];
 });
+
+test("a Linear connection that can only read is named before a ticket fails, and setup offers a task that writes how to run the project", async () => {
+  const view = setupLive();
+  const states = [["In Review", "started"], ["Done", "completed"], ["In Progress", "started"]].map(([name, type]) => ({ id: name, name, type }));
+  world.planeCalls = [];
+  world.planeReply = (payload, provider) => provider === "linear" && payload.op === "access" ? { write: false } : provider === "linear" && payload.op === "states" ? { states } : { states: [] };
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  const drain = async () => { while (spawned.length) await spawned.shift()(spawning); };
+  view.teamGuess = { id: "team-1", name: "Acme" };
+  find(view.render(cx), "setup-team-use").handlers.on_click({}, spawning); await drain();
+  assert.ok(world.planeCalls.some(call => call.op === "access"));
+  assert.match(text(find(view.render(cx), "setup-updates")), /tickets stay as they are/, "nothing to warn about until updates are on");
+  find(view.render(cx), "setup-updates-use").handlers.on_click({}, spawning); await drain();
+  assert.match(text(find(view.render(cx), "setup-updates")), /Your Linear connection can only read.*Connect Linear/s);
+  view.open("settings", cx, "tickets");
+  assert.match(text(find(view.render(cx), "linear-readonly")), /can only read, so these updates will fail/);
+  view.linearWrite = true;
+  assert.match(text(view.render(cx)), /Your Linear connection can write\./);
+  view.open(null, cx);
+  assert.match(text(find(view.render(cx), "setup-updates")), /In Progress → In Review → Done/);
+
+  view.demoSkill = false;
+  assert.equal(find(view.render(cx), "setup-demo-use"), undefined, "only once screenshots are asked for");
+  click(view, "setup-evidence-use");
+  click(view, "setup-demo-use");
+  const task = row(view, "T-1");
+  assert.equal(task.title, "Write a skill that tells agents how to run and show this project");
+  assert.match(task.description, /\.claude\/skills\/demo\/SKILL\.md.*PIPELINE_PORT.*No real credentials.*Follow the skill yourself once/s);
+  assert.equal(find(view.render(cx), "setup-demo-use"), undefined, "offered once");
+  world.planeReply = null;
+});
