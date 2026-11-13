@@ -136,11 +136,12 @@ export const progress = (state, task, now = Date.now()) => task.status === "inpu
 
 // The shared log keeps the last 40 lines; a live task keeps its own, so its story outlasts a busy pipeline.
 function event(state, message, task = null) {
-  state.events = [{ id: ++state.sequence, message, task }, ...state.events].slice(0, 40);
+  const at = Date.now();
+  state.events = [{ id: ++state.sequence, message, task, at }, ...state.events].slice(0, 40);
   const row = state.live && task ? state.tasks.find(other => other.id === task) : null;
-  if (row) row.log = [message, ...(row.log ?? [])].slice(0, 30);
+  if (row) row.log = [{ message, at }, ...(row.log ?? [])].slice(0, 30);
 }
-export const taskLog = (state, task) => task.log ?? state.events.filter(item => item.task === task.id).map(item => item.message);
+export const taskLog = (state, task) => (task.log ?? state.events.filter(item => item.task === task.id)).map(item => item.message ?? item);
 export const STALL = 10 * 60000;
 export function compact(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`;

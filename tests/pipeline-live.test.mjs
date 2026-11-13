@@ -1520,6 +1520,8 @@ test("a live task keeps its own history when the shared log moves on", () => {
   assert.equal(row(state, "T-2").log.length, 30);
   const old = { ...row(state, "T-1"), log: undefined };
   assert.deepEqual(model.taskLog(state, old), [], "a task saved before this falls back to the shared log");
+  assert.ok(row(state, "T-1").log.every(entry => typeof entry.at === "number") && state.events.every(entry => typeof entry.at === "number"), "every line has a time");
+  assert.deepEqual(model.taskLog(state, { ...row(state, "T-1"), log: ["Saved before times."] }), ["Saved before times."]);
 });
 
 test("with the planner agent on, its order and waits decide what starts, inside Pipeline's own rules", () => {

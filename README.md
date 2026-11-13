@@ -547,6 +547,12 @@ State is saved per project folder and machine, and resumes without fast-forwardi
 Herdr was closed. The agreed design and what comes next are in
 [docs/pipeline.md](docs/pipeline.md).
 
+`herdr-pipeline` prints a live pipeline from any terminal, read-only and short enough for an
+agent to read cheaply: the project's unfinished tasks, how long each has been in its status and
+what holds it. `herdr-pipeline T-3` shows one task (worktree, error, the end of its check
+output, summary, tokens and its history with times); `.` picks the task of the worktree you're
+in. `--events N`, `--done`, `--full`, `--all` and `--json` widen it.
+
 ## Tasks and Plane
 
 **Tasks** in the toolbar opens a Plane backlog beside your terminals. Connect your

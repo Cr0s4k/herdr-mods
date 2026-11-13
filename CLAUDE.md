@@ -16,6 +16,8 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
 
 ## Working on it
 
+- Pipeline: `docs/pipeline.md` explains the code; `herdr-pipeline` (and `herdr-pipeline <task>`)
+  shows what a live pipeline is doing. Read it before digging through `shared.json`.
 - API truth: `~/.config/herdr-app/AGENTS.md`, `herdr.d.ts`, `gpui-kit.d.ts` (Herdr rewrites the
   `.d.ts` files into each mod folder; they're gitignored here).
 - After every change: `./install.sh`; it runs `herdr-app check` on every mod. Then confirm

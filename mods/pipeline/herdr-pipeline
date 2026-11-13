@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Read Herdr Pipeline's saved state, compactly, for people and agents. Never writes."""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+STORE = "pipeline.prototype.v1"
+LIVE = "live:"
+ACTIVE = {"routing", "working", "input", "testing", "merging", "pr", "review", "failed"}
+BULKY = {"description", "planned", "log", "usage", "checkOutput"}
+
+
+def home():
+    return Path(os.environ.get("HERDR_APP_HOME", Path.home() / ".config/herdr-app"))
+
+
+def load():
+    try:
+        data = json.loads((home() / "shared.json").read_text())
+    except (OSError, ValueError) as error:
+        sys.exit(f"herdr-pipeline: cannot read Herdr's shared state ({error}).")
+    return {key[len(LIVE):]: value for key, value in (data.get(STORE) or {}).items()
+            if key.startswith(LIVE) and isinstance(value, dict)}
+
+
+def project_root(cwd):
+    try:
+        common = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return str(Path(common).parent) if common else None
+
+
+def roots(task):
+    return [row.get("root") for row in (task.get("workspaces") or {}).values() if row.get("root")]
+
+
+def inside(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def mine(pipelines, cwd):
+    root = project_root(cwd)
+    found = {}
+    for key, state in pipelines.items():
+        paths = [(state.get("context") or {}).get("cwd")] + [row.get("path") for row in state.get("repositories") or []]
+        if root in paths or any(inside(cwd, r) for task in state.get("tasks", []) for r in roots(task)):
+            found[key] = state
+    return found
+
+
+def ago(ms, now):
+    if not ms:
+        return "?"
+    s = max(0, int(now - ms / 1000))
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if s >= size:
+            return f"{s // size}{unit}"
+    return f"{s}s"
+
+
+def clock(ms):
+    return time.strftime("%m-%d %H:%M  ", time.localtime(ms / 1000)) if ms else ""
+
+
+def short(text, size):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= size else text[:size - 1] + "…"
+
+
+def name(state):
+    context = state.get("context") or {}
+    return context.get("name") or state.get("repo") or "?"
+
+
+def header(state, now):
+    tasks = state.get("tasks", [])
+    busy = sum(task.get("status") in {"routing", "working", "input", "testing"} for task in tasks)
+    target = "pull requests" if state.get("delivery") == "pr" else "local merge"
+    check = (state.get("check") or {}).get("command")
+    space = state.get("space") or (state.get("context") or {}).get("space") or "-"
+    line = f"{name(state)} · {'running' if state.get('running') else 'stopped'} · {busy}/{state.get('parallel', '?')} slots · {target} · space {space}"
+    errors = {k: v for k, v in (state.get("sourceErrors") or {}).items() if v}
+    return line + (f"\n  check: {short(check, 90)}" if check else "") + "".join(f"\n  {k} error: {short(v, 120)}" for k, v in errors.items())
+
+
+def row(task, now, here):
+    status = task.get("status", "?")
+    mark = "*" if here and any(inside(here, r) for r in roots(task)) else " "
+    question = task.get("question") if status == "input" and isinstance(task.get("question"), dict) else {}
+    extra = task.get("error") or task.get("reason") or question.get("text")
+    tail = f"  ! {short(extra, 80)}" if extra else ""
+    return f"{mark}{task.get('id', '?'):<8} {status:<8} {ago(task.get('since'), now):>4}  {short(task.get('title'), 60)}{tail}"
+
+
+def overview(state, now, here, done):
+    print(header(state, now))
+    tasks = state.get("tasks", [])
+    shown = [t for t in tasks if done or t.get("status") != "done"]
+    for task in sorted(shown, key=lambda t: -(t.get("since") or 0)):
+        print(row(task, now, here))
+    hidden = len(tasks) - len(shown)
+    if hidden:
+        print(f"  +{hidden} done (--done lists them)")
+
+
+def history(entries, prefix, full):
+    for entry in reversed(entries or []):
+        message, at = (entry.get("message"), entry.get("at")) if isinstance(entry, dict) else (entry, None)
+        message = message[len(prefix):].lstrip(" ·") if message.startswith(prefix) else message
+        yield f"  {clock(at)}{message if full else short(message, 140)}"
+
+
+def detail(state, task, now, full):
+    tid = task.get("id", "?")
+    status = task.get("status", "?")
+    agent = " · ".join(filter(None, [task.get("agent"), task.get("tuning")]))
+    print(f"{tid} {status} for {ago(task.get('since'), now)} · {name(state)}" + (f" · {agent}" if agent else "") + f" · attempt {task.get('attempts', 0)}")
+    print(f"  {short(task.get('title'), 200)}")
+    if full and task.get("description"):
+        print("  description: " + task["description"].replace("\n", "\n    "))
+    for repo, ws in (task.get("workspaces") or {}).items():
+        print(f"  {repo}: {ws.get('root')} · {ws.get('branch')} from {ws.get('target')}@{str(ws.get('base', ''))[:7]}")
+    if task.get("terminal"):
+        print(f"  terminal {task['terminal']} (hc read {task['terminal']})")
+    for key in ("error", "reason"):
+        if task.get(key):
+            print(f"  {key}: {short(task[key], 400)}")
+    question = task.get("question")
+    if isinstance(question, dict) and question.get("text") and status == "input":
+        print(f"  asks: {short(question['text'], 300)}")
+    if task.get("depends") or task.get("blockers"):
+        waits = list(task.get("depends") or []) + [b.get("key", "?") for b in task.get("blockers") or [] if not b.get("closed")]
+        if waits:
+            print(f"  waits for: {', '.join(waits)}")
+    for repo, pr in (task.get("prs") or {}).items():
+        print(f"  PR {repo}: {pr.get('url')}{' merged' if pr.get('merged') else ''} {short(json.dumps(pr.get('status') or {}), 160)}")
+    if task.get("checked"):
+        output = (task.get("checkOutput") or "").rstrip().splitlines()
+        lines = output if full else output[-12:]
+        print(f"  check {task['checked']}" + (f", last {len(lines)} of {len(output)} lines:" if output else ""))
+        for line in lines:
+            print(f"    {line}")
+    if task.get("summary"):
+        print("  summary: " + task["summary"].replace("\n", "\n           "))
+    if task.get("usage"):
+        u = task["usage"]
+        print(f"  tokens: {u.get('written', 0)} out · {u.get('read', 0)} in · {u.get('cached', 0)} cached · {u.get('turns', 0)} turns")
+    print("  history:")
+    for line in history(task.get("log") or [e for e in state.get("events", []) if e.get("task") == tid], tid, full):
+        print(line)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Show Herdr Pipeline's live tasks for this project. Read-only.",
+                                     epilog="Examples: herdr-pipeline · herdr-pipeline T-3 · herdr-pipeline . (the task of this worktree) · herdr-pipeline --events 20")
+    parser.add_argument("task", nargs="?", help="a task id, or . for the task whose worktree holds the current folder")
+    parser.add_argument("--all", action="store_true", help="every saved live pipeline, not just this project's")
+    parser.add_argument("--done", action="store_true", help="list done tasks, and pipelines with nothing left to do")
+    parser.add_argument("--full", action="store_true", help="whole description and check output")
+    parser.add_argument("--events", type=int, metavar="N", help="the last N events of the pipeline, oldest first")
+    parser.add_argument("--json", action="store_true", help="raw JSON (a task in full; a pipeline without bulky fields)")
+    args = parser.parse_args()
+
+    now, cwd = time.time(), os.getcwd()
+    pipelines = load()
+    scope = pipelines if args.all else mine(pipelines, cwd)
+    if not scope:
+        sys.exit("herdr-pipeline: no live pipeline for this folder (--all lists every one).")
+
+    if args.task:
+        wanted = args.task.lower()
+        hits = [(state, task) for pool in (scope, pipelines) for state in pool.values() for task in state.get("tasks", [])
+                if (wanted == "." and any(inside(cwd, r) for r in roots(task))) or str(task.get("id", "")).lower() == wanted]
+        if not hits:
+            sys.exit(f"herdr-pipeline: no task {args.task}.")
+        state, task = hits[0]
+        if args.json:
+            print(json.dumps(task, indent=1))
+        else:
+            detail(state, task, now, args.full)
+        return
+
+    shown = [s for s in scope.values() if args.all or args.done or s.get("running")
+             or any(t.get("status") != "done" for t in s.get("tasks", []))] or list(scope.values())
+    for index, state in enumerate(sorted(shown, key=lambda s: -(s.get("lastTick") or 0))):
+        if args.json:
+            slim = {**{k: v for k, v in state.items() if k not in {"events", "planning", "claimed"}},
+                    "tasks": [{k: v for k, v in t.items() if k not in BULKY} for t in state.get("tasks", []) if args.done or t.get("status") != "done"]}
+            print(json.dumps(slim, indent=1))
+            continue
+        if index:
+            print()
+        if args.events:
+            print(header(state, now))
+            for event in reversed(state.get("events", [])[:args.events]):
+                print(f"  {clock(event.get('at'))}{event.get('message') if args.full else short(event.get('message'), 140)}")
+        else:
+            overview(state, now, cwd, args.done)
+
+
+if __name__ == "__main__":
+    main()
