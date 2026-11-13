@@ -6,6 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+EVIDENCE_BRANCH = "pipeline-evidence"
+
 
 def git(cwd, *args, optional=False):
     result = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=60)
@@ -198,6 +201,11 @@ def publish(payload):
     git(top, "push", "-q", "-u", "origin", branch + ":" + branch)
     where = worktree if worktree.is_dir() else top
     body = written(worktree) or payload.get("body") or title
+    if payload.get("evidence"):
+        try:
+            body += evidence_section(top, where, worktree, branch)
+        except (subprocess.CalledProcessError, ValueError, OSError):
+            pass
     created = gh(where, "pr", "create", "--head", branch, "--base", payload["target"], "--title", title, "--body", body)
     found = pull_request(created.stdout)
     if created.returncode and "already exists" in created.stderr:
@@ -225,7 +233,70 @@ def pr_revert(payload):
 
 
 def summary(payload):
-    return {"text": (written(Path(payload["worktree"]), "herdr-summary.md") or "")[:6000]}
+    worktree = Path(payload["worktree"])
+    return {"text": (written(worktree, "herdr-summary.md") or "")[:6000], "evidence": evidence(worktree)}
+
+
+# Before and after screenshots the agent saved beside its summary, and the link to its walkthrough page.
+def evidence(worktree):
+    path = worktree.is_dir() and git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-evidence", optional=True)
+    folder = Path(path) if path else None
+    if not folder or not folder.is_dir():
+        return None
+    files = sorted(str(file) for file in folder.iterdir() if file.suffix.lower() in IMAGES and file.is_file() and file.stat().st_size <= 5_000_000)[:24]
+    try:
+        url = (folder / "walkthrough.url").read_text().strip().split()[0]
+    except (OSError, IndexError):
+        url = None
+    return {"files": files, "url": url} if files or url else None
+
+
+def pairs(files):
+    rows = {}
+    for file in files:
+        name = Path(file).stem
+        side = "before" if re.search(r"(^|[-_ ])before([-_ ]|$)", name, re.I) else "after" if re.search(r"(^|[-_ ])after([-_ ]|$)", name, re.I) else "other"
+        key = re.sub(r"(^|[-_ ])(before|after)(?=[-_ ]|$)", "", name, flags=re.I).strip("-_ ") or name
+        rows.setdefault(key, {})[side] = file
+    return rows
+
+
+# GitHub has no command to upload an image into a description, so the screenshots go to a branch of their own and are embedded by commit.
+def evidence_section(top, where, worktree, branch):
+    found = evidence(worktree)
+    if not found or not found["files"]:
+        return ""
+    slug = gh(where, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").stdout.strip()
+    if not slug:
+        return ""
+    names, lines = {}, []
+    for index, file in enumerate(found["files"]):
+        blob = git(top, "hash-object", "-w", file)
+        names[file] = "%02d-%s" % (index + 1, re.sub(r"[^A-Za-z0-9._-]+", "-", Path(file).name))
+        lines.append("100644 blob %s\t%s" % (blob, names[file]))
+    tree = subprocess.run(["git", "-C", str(top), "mktree"], input="\n".join(lines) + "\n", text=True, capture_output=True, check=True).stdout.strip()
+    for _ in range(2):
+        fetched = subprocess.run(["git", "-C", str(top), "fetch", "-q", "origin", EVIDENCE_BRANCH], capture_output=True, text=True)
+        parent = git(top, "rev-parse", "FETCH_HEAD") if fetched.returncode == 0 else None
+        commit = git(top, "commit-tree", tree, *(["-p", parent] if parent else []), "-m", "Screenshots for " + branch)
+        pushed = subprocess.run(["git", "-C", str(top), "push", "-q", "origin", commit + ":refs/heads/" + EVIDENCE_BRANCH], capture_output=True, text=True)
+        if pushed.returncode == 0:
+            break
+    else:
+        return ""
+    link = lambda file: "![%s](https://github.com/%s/blob/%s/%s?raw=true)" % (Path(file).stem, slug, commit, names[file])
+    rows, table, loose = pairs(found["files"]), [], []
+    for key, row in rows.items():
+        if "before" in row and "after" in row:
+            table.append("| %s | %s |" % (link(row["before"]), link(row["after"])))
+        else:
+            loose.extend(link(file) for file in row.values())
+    text = "\n\n## Before and after\n"
+    if table:
+        text += "\n| Before | After |\n| --- | --- |\n" + "\n".join(table) + "\n"
+    if loose:
+        text += "\n" + "\n\n".join(loose) + "\n"
+    return text
 
 
 FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}

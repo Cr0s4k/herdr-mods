@@ -1,6 +1,6 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
 import { STORE, MOVING, reduce, migrate } from "./pipeline-model.js";
-import { LiveRunner, prompt } from "./pipeline-live.js";
+import { LiveRunner, prompt, openTry } from "./pipeline-live.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
 const watching = () => panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline";
@@ -48,9 +48,9 @@ export const liveHost = {
     }
   },
   keys: async (terminal, keys) => { const result = await hc(["keys", terminal, ...keys]); if (result.code !== 0) throw new Error(result.stderr); },
-  start(context, task, workspaces, agent, space, delivery) {
+  start(context, task, workspaces, agent, space, delivery, extras) {
     const before = focused(), inSpace = space && spaces().some(row => row.id === space);
-    const opening = { folder: workspaces[0].cwd, argv: agent.run, task: prompt(task, workspaces, delivery) };
+    const opening = { folder: workspaces[0].cwd, argv: agent.run, task: prompt(task, workspaces, delivery, extras) };
     if (inSpace) run("tab.new", { ...opening, space, name: task.id });
     else run("space.new", { ...opening, machine: context.on || "", tab: task.id });
     const own = inSpace ? "tab" : "space";
@@ -64,6 +64,7 @@ export const liveHost = {
     } catch { /* The agent started even if the previous view disappeared. */ }
     return own;
   },
+  tryout: (context, task, ws, command, cx) => openTry({ run, panes, spaces, focused }, context, task, ws, command, cx, true),
   async locate(context, workspace, cx, previous) {
     for (let i = 0; i < 60; i++) {
       const pane = panes().find(row => row.terminal && row.terminal !== previous && row.cwd === workspace.cwd);

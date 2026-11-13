@@ -1,9 +1,9 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
@@ -34,7 +34,7 @@ const AFTER_HINTS = [
 ].join("\n");
 const GITHUB = "git remote get-url origin 2>/dev/null | grep -q github.com && command -v gh >/dev/null";
 // Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
-const TRY_RUN = 'trap : INT; PIPELINE_TASK="$2" sh -c "$1"; exec "${SHELL:-sh}" -l';
+const TICKET_NAMES = "git log -300 --format='%s %D' 2>/dev/null; git branch -a --format='%(refname:short)' 2>/dev/null";
 // Prints a folder's repository root, with ~ expanded on the machine the project is on; exit 3 means no such folder.
 const TOPLEVEL = 'p=$1; case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac; cd -- "$p" 2>/dev/null || exit 3; git rev-parse --show-toplevel';
 // Where a task's own work begins: its start commit, or after a rebase the newer commit it now shares with its target branch.
@@ -150,6 +150,12 @@ export default class Pipeline extends View {
     this.repoInput.on("change", (_e, cx) => { this.repoError = null; cx.notify(); });
     this.repoError = null; this.repoAdding = false;
     this.details = TextareaState.new({ placeholder: "Context, constraints, how to check it…", rows: 4 });
+    this.instructions = TextareaState.new({ placeholder: "Answer in Swedish in pull requests. Never touch the migrations folder…", rows: 4 });
+    this.instructions.on("change", (_e, cx) => cx.notify());
+    this.prepareInput = InputState.new({ placeholder: 'cp "$PIPELINE_SOURCE/.env" . && npm ci' });
+    this.prepareInput.on("change", (_e, cx) => cx.notify());
+    this.prepareInput.on("submit", (_e, cx) => this.savePrepare(cx));
+    this.teamGuess = null;
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
@@ -190,14 +196,14 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
     const all = shared(STORE) ?? {}, key = this.storeKey(), state = all[key];
     if (!state) return;
     const next = reduce(state, action);
-    if (next !== state) setShared(STORE, { ...all, [key]: next });
+    if (next !== state) setShared(STORE, shareSettings({ ...all, [key]: next }, key, state, next));
     cx.notify();
   }
   toggleRun(cx) { this.act({ type: "run", space: this.context.space ?? focused()?.space ?? null }, cx); }
@@ -219,9 +225,13 @@ export default class Pipeline extends View {
   }
   enterLive(cx) {
     const all = shared(STORE) ?? {}, key = LIVE + this.id, saved = all[key];
-    if (!saved) setShared(STORE, { ...all, [key]: createLive(this.context) });
+    if (!saved) setShared(STORE, { ...all, [key]: inheritSettings(all, createLive(this.context)) });
     else if (saved.version !== VERSION && !newer(saved)) setShared(STORE, { ...all, [key]: migrate(saved) });
     else if (!saved.space && this.context.space && !newer(saved)) setShared(STORE, { ...all, [key]: { ...saved, space: this.context.space } });
+    const now = shared(STORE) ?? {}, adopted = adoptSettings(now, now[key]);
+    if (adopted !== now[key]) setShared(STORE, { ...now, [key]: adopted });
+    const kept = this.state()?.linear;
+    if (kept) this.linearFilter = { ...this.linearFilter, team: kept.team ?? null, project: kept.project ?? null };
     const { cwd, on } = this.context;
     cx.spawn(async cx => {
       try {
@@ -245,6 +255,14 @@ export default class Pipeline extends View {
         const hub = await exec("sh", ["-c", GITHUB], { cwd: this.repo.root, on }).catch(() => null);
         this.github = hub?.code === 0;
       }
+      this.loadUpdateStates(cx);
+      if (this.repo?.root && this.state()?.setup && !this.state()?.linear?.team) try {
+        const names = await exec("sh", ["-c", TICKET_NAMES], { cwd: this.repo.root, on });
+        const prefix = ticketPrefix(names.stdout), folder = String(this.state().repo ?? "").toLowerCase();
+        const teams = (await readTickets("linear", { op: "teams" })).teams ?? [];
+        const team = teams.find(row => prefix && String(row.key).toUpperCase() === prefix) ?? teams.find(row => String(row.name).toLowerCase() === folder);
+        this.teamGuess = team ? { id: team.uuid || team.id, name: team.name } : null;
+      } catch { /* Without Linear connected there is no team to offer. */ }
       cx.notify();
     });
   }
@@ -389,18 +407,44 @@ export default class Pipeline extends View {
       try { run("space.select", { id: open.id }); run("tab.select", { id: task.tried }); } catch { /* It closed meanwhile. */ }
       return;
     }
-    const before = new Set(panes().map(pane => pane.terminal).filter(Boolean)), name = `Try ${task.id}`;
-    const opening = { folder: ws.cwd, argv: ["sh", "-c", TRY_RUN, "sh", command, task.id] };
-    if (task.space && spaces().some(space => space.id === task.space)) run("tab.new", { ...opening, space: task.space, name });
-    else run("space.new", { ...opening, machine: this.context.on || "", tab: name });
     cx.spawn(async cx => {
-      for (let i = 0; i < 60; i++) {
-        const pane = panes().find(row => row.terminal && !before.has(row.terminal) && row.cwd === ws.cwd);
-        if (pane) { this.act({ type: "tried", id: task.id, tab: pane.tab }, cx); return; }
-        await cx.sleep(100);
-      }
+      const tab = await openTry({ run, panes, spaces, focused }, this.context, task, ws, command, cx);
+      if (tab) this.act({ type: "tried", id: task.id, tab }, cx);
     });
   }
+  savePrepare(cx) {
+    const state = this.state();
+    if (!state?.live || this.prepareInput.value().trim() === (state.prepare ?? "")) return;
+    this.act({ type: "prepare", command: this.prepareInput.value() }, cx);
+  }
+  saveInstructions(cx) {
+    if (this.state()?.live) this.act({ type: "instructions", text: this.instructions.value() }, cx);
+  }
+  // Removes a saved pipeline that has nothing left to finish. Its agents, worktrees and pull requests are already gone.
+  forget(key, cx) {
+    const all = { ...(shared(STORE) ?? {}) };
+    if (!forgettable(all[key])) return;
+    delete all[key];
+    const plain = key.slice(LIVE.length);
+    if (all[plain] && !all[plain].live && plain !== this.id) delete all[plain];
+    setShared(STORE, all);
+    this.confirm = null; cx.notify();
+  }
+  resetProject(cx) {
+    const all = { ...(shared(STORE) ?? {}) }, key = this.storeKey();
+    for (const [other, state] of [[key, all[key]], ...projectPipelines(all, key)]) all[other] = resetSettings(state);
+    setShared(STORE, all);
+    try { localStorage.removeItem(`linear:${this.id}`); } catch (_) { /* Nothing was saved. */ }
+    this.linearFilter = { scope: "mine", team: null, project: null };
+    this.confirm = null; this.open(null, cx);
+  }
+  showEvidence(task, file) {
+    exec("herdr-show", [file, "--title", `${task.id} · ${file.split("/").pop().replace(/\.[a-z]+$/i, "")}`]).catch(() => null);
+  }
+  useUpdates(provider, guess, cx) {
+    this.act({ type: "ticketUpdates", provider, ...guess, link: true }, cx);
+  }
+
   saveTime(kind, cx) {
     const state = this.state(), text = this.times[kind].value().trim();
     if (!state || text === (state.schedule?.[kind] ?? "")) return;
@@ -430,6 +474,8 @@ export default class Pipeline extends View {
       this.checkInput.set_value(this.state().check?.command ?? "");
       this.tryInput.set_value(this.state().tryout ?? "");
       this.afterInput.set_value(this.state().afterMerge ?? "");
+      this.prepareInput.set_value(this.state().prepare ?? "");
+      this.instructions.set_value(this.state().instructions ?? "");
       this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
       if (drawer !== this.drawer) this.loadUpdateStates(cx);
     }
@@ -469,7 +515,7 @@ export default class Pipeline extends View {
   // States to move tickets to: the linked Plane project's, and Linear's merged by name over the teams of its queued tickets.
   loadUpdateStates(cx) {
     const state = this.state(), context = { cwd: this.context.cwd, on: this.context.on };
-    const teams = [...new Set([...state.tasks.filter(task => task.ticket?.provider === "linear" && task.status !== "done").map(task => task.ticket.team),
+    const teams = [...new Set([state.linear?.team?.id, ...state.tasks.filter(task => task.ticket?.provider === "linear" && task.status !== "done").map(task => task.ticket.team),
       ...this.sources.linear.issues.map(issue => issue.team)].filter(Boolean))].slice(0, 5);
     for (const provider of Object.keys(SOURCES)) {
       if (provider === "linear" && !teams.length) { this.updateStates.linear = { loading: false, states: [], error: null }; continue; }
@@ -492,7 +538,9 @@ export default class Pipeline extends View {
     this.projects = null; this.teams = null; this.ticketPicked.clear(); this.ticketSearch.set_value("");
     this.sources.linear = { ...this.sources.linear, issues: [], states: [] };
     localStorage.setItem(`linear:${this.id}`, JSON.stringify(this.linearFilter));
-    this.loadTickets("linear", cx); cx.notify();
+    if ("team" in change || "project" in change) { this.act({ type: "linear", team: this.linearFilter.team, project: this.linearFilter.project }, cx); this.loadUpdateStates(cx); }
+    if (this.drawer === "linear") this.loadTickets("linear", cx);
+    cx.notify();
   }
   loadProjects(cx) {
     const query = this.projectSearch.value().trim(), team = this.linearFilter.team, request = this.projectRequest = (this.projectRequest ?? 0) + 1;
@@ -601,8 +649,17 @@ export default class Pipeline extends View {
   create(cx) {
     const title = this.title.value().trim();
     if (!title) { this.handle.focus(); cx.notify(); return; }
-    this.act({ type: "create", title }, cx);
+    const ref = this.state()?.live && ticketRef(title);
     this.title.set_value("");
+    if (!ref) { this.act({ type: "create", title }, cx); return; }
+    // A Linear link or key becomes that ticket, so its updates and its pull request link work. Anything that fails leaves the typed task.
+    cx.spawn(async cx => {
+      try {
+        const found = (await readTickets("linear", { op: "details", ids: [ref] })).issues ?? [];
+        if (!found.length) throw new Error("No such ticket.");
+        this.act({ type: "addTickets", provider: "linear", issues: await fullTickets("linear", found), source: "Linear" }, cx);
+      } catch { this.act({ type: "create", title }, cx); }
+    });
   }
   speed(cx) {
     const current = this.state()?.speed ?? 1;
@@ -1096,6 +1153,7 @@ export default class Pipeline extends View {
         .children(actions))
       .when(Boolean(picked?.reason), el => el.child(div().pl(108).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
+    const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], guess = guessUpdates(this.updateStates[tracker].states);
     const checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
@@ -1118,15 +1176,22 @@ export default class Pipeline extends View {
         ...(!state.afterMerge && afterHint ? [use("after", `Use ${afterHint}`, cx => { this.afterInput.set_value(afterHint); this.act({ type: "afterMerge", command: afterHint }, cx); },
           "Found in this repository. Runs in your project folder after each merge, so merged work is installed")] : []),
         change("after", "delivery", state.afterMerge ? "Change" : "Set")], chose("after", state.afterMerge))]),
-      row("tickets", "Tickets", watched.length ? ok : plain,
-        watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : "Typed here",
-        [this.button("setup-tickets-add", "Add from tickets", cx => this.open(this.ticketProvider(state), cx), t, { small: true, icon: this.ticketProvider(state), hint: "Queue tickets from Plane or Linear, or watch a state" })]),
+      row("tickets", "Tickets", watched.length || state.linear?.team ? ok : plain,
+        watched.length ? watched.map(([provider, watch]) => `${SOURCES[provider]} · ${watch.name}`).join(", ") : state.linear?.team ? `Linear · ${state.linear.team.name}` : "Typed here", [
+        ...(!state.linear?.team && this.teamGuess ? [use("team", `Use Linear · ${this.teamGuess.name}`, cx => this.setLinearFilter({ team: this.teamGuess }, cx),
+          "This repository's branches and commits name this Linear team. Tickets and their states then come from it")] : []),
+        this.button("setup-tickets-add", "Add from tickets", cx => this.open(this.ticketProvider(state), cx), t, { small: true, icon: this.ticketProvider(state), hint: "Queue tickets from Plane or Linear, or watch a state" })]),
+      row("updates", "Updates", updatesLabel(moves) ? ok : todo, updatesLabel(moves) || `${SOURCES[tracker]} tickets stay as they are`, [
+        ...(!updatesLabel(moves) && updatesLabel(guess) ? [use("updates", `Use ${updatesLabel(guess)}`, cx => this.useUpdates(tracker, guess, cx),
+          `Moves a ${SOURCES[tracker]} ticket as its work starts, is ready for review and merges, and links its pull request`)] : []),
+        change("updates", "tickets", updatesLabel(moves) ? "Change" : "Set")]),
     ];
     const note = ai?.running ? [`${ai.by} is reading the repository. It only reads, and you can keep typing tasks.`, t.accent]
       : ai?.error ? [`${ai.by} couldn't choose: ${ai.error}`, t.blocked]
       : ai ? [`${ai.by} chose what's marked with sparkles${ai.ms ? ` in ${Math.max(1, Math.round(ai.ms / 1000))} s` : ""}. Change anything you disagree with.`, t.muted]
+      : state.inherited ? ["These come from this project's other pipeline. A change here changes it there too.", t.muted]
       : ["The defaults work. These are the ones worth a look before the first agent starts.", t.muted];
-    const tall = 420 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
+    const tall = 456 + (state.delivery === "pr" ? 0 : 36) + ["check", "tryout", "delivery", "after"].filter(key => ai?.[key]?.reason).length * 18;
     return v_flex().id("pipeline-setup").absolute().left(Math.max(30, Math.min(g.w - 30 - w, g.center.x - w / 2))).top(Math.max(60, Math.min(g.center.y - tall / 2, g.h - tall - 20))).w(w).p(16).gap(4)
       .rounded(10).border_1().border_color(t.border).bg(t.surface).text_color(t.foreground).shadow_lg()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -1535,6 +1600,13 @@ export default class Pipeline extends View {
       body.child(div().h(1).bg(t.border));
       body.child(this.switchRow("auto-trust", "Trust new worktrees automatically", "Agents ask once per new folder whether to trust it. Pipeline's worktrees are your repository at its current commit; with this on, Pipeline answers yes for them.",
         Boolean(state.autoTrust), cx => this.act({ type: "autoTrust" }, cx), t));
+      body.child(div().h(1).bg(t.border));
+      body.child(this.heading("Agent instructions"));
+      body.child(this.label("Added to every task's first message, after Pipeline's own. For what is yours; how to run and test the project belongs in the repository's AGENTS.md or a skill, which agents read anyway.", t));
+      body.child(Textarea.new(this.instructions).w_full().p(8).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Agent instructions"));
+      body.child(h_flex().child(this.button("instructions-save", "Save", cx => this.saveInstructions(cx), t, { small: true, disabled: this.instructions.value().trim() === (state.instructions ?? "") })));
+      body.child(this.switchRow("evidence", "Show the change", "Asks each agent for before and after screenshots of what it changes. They appear in the task's inspector, with its walkthrough page when it publishes one.",
+        Boolean(state.evidence), cx => this.act({ type: "evidence" }, cx), t));
     } else if (section === "limits") this.limits(body, state, t);
     else if (section === "helper") this.helperSettings(body, state, t);
     else if (section === "planner") this.plannerSettings(body, state, t);
@@ -1563,6 +1635,15 @@ export default class Pipeline extends View {
       if (runs.length) body.child(h_flex().gap(6).flex_wrap().children(runs.map(command => this.button(`try-use-${command}`, `Use ${command}`, cx => {
         this.tryInput.set_value(command); this.act({ type: "tryout", command }, cx);
       }, t, { small: true, hint: "Found in this repository" }))));
+      if (state.tryout) body.child(this.switchRow("try-auto", "Start it when work is ready for review", "Each finished task is running by the time you look at it, in a tab beside its agent. Its own port is in $PIPELINE_PORT, so two can run at once if the command uses it.",
+        Boolean(state.tryAuto), cx => this.act({ type: "tryAuto" }, cx), t));
+      body.child(div().h(1).bg(t.border));
+      body.child(this.heading("Prepare a new worktree"));
+      body.child(this.label("Runs once in each new worktree, before its agent starts: what Git doesn't carry over, such as cp \"$PIPELINE_SOURCE/.env\" . && npm ci. Your project folder is in $PIPELINE_SOURCE. A failure is noted in the task's history and the agent still starts.", t));
+      body.child(h_flex().gap(6).items_center()
+        .child(Input.new(this.prepareInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+          .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Prepare command"))
+        .child(this.button("prepare-save", "Save", cx => this.savePrepare(cx), t, { small: true, disabled: this.prepareInput.value().trim() === (state.prepare ?? "") })));
     } else if (section === "delivery") {
       body.child(h_flex().gap(6).flex_wrap()
         .child(this.button("deliver-merge", "Merge locally", cx => this.act({ type: "deliver", value: "merge" }, cx), t, { selected: state.delivery !== "pr" }))
@@ -1571,6 +1652,8 @@ export default class Pipeline extends View {
         Boolean(state.autoPr), cx => this.act({ type: "autoPr" }, cx), t));
       else body.child(this.switchRow("auto-merge", "Merge automatically", state.autoMerge ? "As soon as the agent finishes and checks pass, without waiting for you" : "Each merge waits for you",
         Boolean(state.autoMerge), cx => this.act({ type: "autoMerge" }, cx), t));
+      if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Add the screenshots to the pull request", "Pushes them to a pipeline-evidence branch on origin and adds a Before and after section to the description",
+        Boolean(state.evidencePr), cx => this.act({ type: "evidencePr" }, cx), t));
       if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
         Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
       body.child(this.label(state.delivery === "pr"
@@ -1603,8 +1686,33 @@ export default class Pipeline extends View {
         .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child("See how Pipeline works with example tasks and pretend agents. Nothing real is touched, and this pipeline keeps running."))
         .child(this.button("demo", "Try a demo", cx => this.setMode("simulation", cx), t, { small: true, icon: "flask" })));
       body.child(this.label("Agents run in herdr-core, so they keep working if you close this tab or Herdr. Pipeline catches up with them when it opens again.", t));
+      this.savedPipelines(body, state, t);
       body.child(this.heading("Keys")).child(this.label(KEYS.live, t));
     }
+  }
+  // Every pipeline Herdr has saved, so the ones no longer wanted can go. Settings are the project's, shared by its spaces.
+  savedPipelines(body, state, t) {
+    const all = shared(STORE) ?? {}, own = this.storeKey(), open = new Set(spaces().map(space => space.id));
+    const others = Object.entries(all).filter(([key, saved]) => key !== own && saved?.live && !newer(saved));
+    const shares = projectPipelines(all, own).length;
+    body.child(div().h(1).bg(t.border));
+    body.child(this.heading("Saved pipelines"));
+    body.child(this.label(`This project's settings are saved with it${shares ? ` and shared with its ${shares === 1 ? "other pipeline" : `${shares} other pipelines`}` : ""}: closing Pipeline keeps them, and a new space on this folder starts with them.`, t));
+    const asked = this.confirm === "reset-settings";
+    body.child(h_flex().gap(10).items_center()
+      .child(div().flex_1().min_w(0).text_size(12).text_color(asked ? t.blocked : t.muted).child(asked ? "Clears the agent, checks, Try it, delivery, ticket updates and instructions for this project. Tasks stay." : "Start this project's settings over."))
+      .child(this.button("settings-reset", asked ? "Yes, reset" : "Reset project settings", cx => { if (asked) this.resetProject(cx); else { this.confirm = "reset-settings"; cx.notify(); } }, t, { small: true, icon: "reset" })));
+    const stale = others.filter(([, saved]) => forgettable(saved));
+    for (const [key, saved] of others.slice(0, 30)) {
+      const left = (saved.tasks ?? []).filter(task => task.status !== "done").length, can = forgettable(saved);
+      body.child(h_flex().id(`pipeline-saved-${key}`).gap(10).items_center()
+        .child(v_flex().flex_1().min_w(0).text_size(12)
+          .child(div().truncate().child(`${saved.context?.name ?? saved.repo ?? "Pipeline"}${saved.space && !open.has(saved.space) ? " · its space is closed" : ""}`))
+          .child(div().truncate().text_size(11).text_color(t.muted).child(`${saved.context?.cwd ?? ""} · ${can ? (saved.tasks?.length ? "all tasks merged" : "no tasks") : saved.running ? "started" : `${left} unfinished ${left === 1 ? "task" : "tasks"}`}`)))
+        .child(this.button(`forget-${key}`, "Forget", cx => this.forget(key, cx), t, { small: true, icon: "x", disabled: !can, hint: can ? "Removes this saved pipeline and its history. Nothing of it is running" : "Close that pipeline first: it still has work" })));
+    }
+    if (stale.length > 1) body.child(h_flex().child(this.button("forget-all", `Forget the ${stale.length} with nothing left to do`, cx => { for (const [key] of stale) this.forget(key, cx); }, t, { small: true, icon: "x" })));
+    if (!others.length) body.child(this.label("No other pipeline is saved.", t));
   }
   repositories(body, state, t) {
     const repos = state.repositories ?? [{ name: state.repo, path: this.context.cwd }];
@@ -1627,10 +1735,16 @@ export default class Pipeline extends View {
     for (const [provider, service] of Object.entries(SOURCES)) {
       const setup = state.ticketUpdates?.[provider] ?? {}, source = this.updateStates[provider];
       body.child(div().pt(4).text_size(12).font_semibold().child(service));
+      if (provider === "linear") body.child(h_flex().gap(8).items_center()
+        .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child(state.linear?.team ? `Team: ${state.linear.team.name}${state.linear.project ? ` · ${state.linear.project.name}` : ""}` : "No team chosen. Its states come from the team."))
+        .child(this.button("update-linear-team", state.linear?.team ? "Change team" : "Choose team", cx => { this.open("linear", cx); this.teamSearch.set_value(""); this.loadTeams(cx); }, t, { small: true, icon: "linear" })));
+      const guess = guessUpdates(source.states);
+      if (updatesLabel(guess) && updatesLabel(guess) !== updatesLabel(setup)) body.child(h_flex().child(this.button(`update-${provider}-guess`, `Use ${updatesLabel(guess)}`, cx => this.useUpdates(provider, guess, cx), t,
+        { small: true, icon: "sparkles", hint: "Sets the three moves below and links pull requests" })));
       if (source.loading) body.child(this.label("Loading states…", t));
       else if (source.error) body.child(this.label(source.error, t));
       else if (!source.states.length) body.child(this.label(provider === "plane" ? "No states were found for the Plane project linked to this repository."
-        : "Queue a Linear ticket first: states come from the teams of queued tickets.", t));
+        : "Choose a team, or queue a Linear ticket: states come from the team.", t));
       for (const [kind, title] of Object.entries(UPDATE_KINDS)) {
         const options = [...source.states, ...(setup[kind] && !source.states.some(row => row.id === setup[kind].id) ? [setup[kind]] : [])];
         body.child(this.label(title, t));
@@ -1643,6 +1757,13 @@ export default class Pipeline extends View {
         Boolean(setup.link), cx => this.act({ type: "ticketUpdates", provider, link: !setup.link }, cx), t));
       if (provider === "linear") body.child(this.label("Linear updates need a connection with Write permission.", t));
     }
+  }
+  evidenceDetail(body, task, t) {
+    const files = task.evidence.files ?? [], local = !this.context.on, name = file => file.split("/").pop().replace(/\.[a-z]+$/i, "");
+    body.child(this.heading("Before and after"));
+    if (files.length) body.child(h_flex().id(`pipeline-evidence-${task.id}`).gap(6).flex_wrap().children(files.map((file, i) => this.button(`evidence-${task.id}-${i}`, name(file), () => this.showEvidence(task, file), t,
+      { small: true, icon: "eye", disabled: !local, hint: local ? "Opens it in the Show panel, where you can mark it up" : "Saved in its worktree on the project's machine" }))));
+    if (task.evidence.url) body.child(h_flex().child(this.button(`walkthrough-${task.id}`, "Open walkthrough", () => this.openLink(task.evidence.url), t, { small: true, icon: "sparkles", hint: task.evidence.url })));
   }
   ticketUpdateDetail(body, task, t) {
     const ticket = task.ticket, service = SOURCES[ticket.provider], failed = ticket.failed ?? [];
@@ -1731,6 +1852,9 @@ export default class Pipeline extends View {
     if (service) body.child(h_flex().gap(8).items_center().child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).truncate().child(`${service} ${ticket.key} · ${ticket.status} · ${task.source}`))
       .when(Boolean(ticket.url), el => el.child(this.button(`${ticket.provider}-link-${task.id}`, `Open in ${service}`, () => this.openLink(ticket.url), t, { small: true, icon: ticket.provider, hint: ticket.url }))));
     if (service) this.ticketUpdateDetail(body, task, t);
+    if (service && task.status !== "done" && !updatesLabel(state.ticketUpdates?.[task.ticket.provider])) body.child(h_flex().gap(8).items_center()
+      .child(div().flex_1().min_w(0).text_size(12).line_height(1.45).text_color(t.ansi3).child(`Its ${service} ticket stays ${task.ticket.status ? `in ${task.ticket.status}` : "as it is"}: ticket updates are off.`))
+      .child(this.button(`ticket-setup-${task.id}`, "Set up", cx => this.open("settings", cx, "tickets"), t, { small: true, hint: "Choose the states its ticket moves to" })));
     if (task.status === "queued") {
       body.child(this.heading("Details for the agent"));
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
@@ -1756,6 +1880,7 @@ export default class Pipeline extends View {
           const [, label, rest] = line.match(/^\s*(Changed|Checked|Unsure):\s*(.*)$/) ?? [];
           return label ? h_flex().gap(8).items_start().child(div().w(56).flex_none().text_color(label === "Unsure" ? t.ansi3 : t.muted).child(label)).child(div().flex_1().min_w(0).child(rest)) : div().child(line);
         })));
+    if (task.evidence && task.status !== "queued") this.evidenceDetail(body, task, t);
     if (task.terminal && task.status !== "done" && !task.discard) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))
         .child(this.button(`trust-task-${task.id}`, "Trust this worktree", cx => this.trust(task, cx), t, { icon: "check", primary: true, hint: "Answers “Yes, I trust this folder” in its terminal" }));

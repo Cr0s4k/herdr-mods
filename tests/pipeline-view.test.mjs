@@ -36,7 +36,7 @@ globalThis.__pipelineView = {
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
-  setupArgs: live.setupArgs, readSetup: live.readSetup,
+  setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry,
   rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
@@ -747,7 +747,7 @@ test("Try it runs the project's command in the task's worktree, once, in a tab b
   view.inspect("T-1", cx);
   await settle(view, "try-T-1");
   const opened = world.runs.find(call => call[0] === "tab.new")[1];
-  assert.deepEqual([opened.space, opened.folder, opened.name, opened.argv.slice(-2)], ["s9", "/wt/T-1", "Try T-1", ["./preview.sh", "T-1"]]);
+  assert.deepEqual([opened.space, opened.folder, opened.name, opened.argv.slice(-3)], ["s9", "/wt/T-1", "Try T-1", ["./preview.sh", "T-1", String(model.taskPort(row(view, "T-1")))]]);
   assert.equal(row(view, "T-1").tried, "tb10");
   world.spaces = [{ id: "s9", tabs: [{ id: "tb9" }, { id: "tb10" }] }];
   world.runs = [];
@@ -932,8 +932,8 @@ test("Live settings choose ticket updates per tracker from its states, off by de
   click(view, "update-plane-merge-done");
   find(view.render(cx), "update-linear-link").handlers.on_change(true, cx);
   click(view, "update-linear-merge-In Review");
-  assert.deepEqual(view.state().ticketUpdates, { plane: { start: { id: "doing", name: "In Progress" }, merge: { id: "done", name: "Done" }, link: false },
-    linear: { start: null, merge: { id: "In Review", name: "In Review" }, link: true } });
+  assert.deepEqual(view.state().ticketUpdates, { plane: { start: { id: "doing", name: "In Progress" }, review: null, merge: { id: "done", name: "Done" }, link: false },
+    linear: { start: null, review: null, merge: { id: "In Review", name: "In Review" }, link: true } });
   scene = view.render(cx);
   assert.equal(find(scene, "update-plane-start-doing").styles.bg[0], "selected");
   assert.equal(find(scene, "update-linear-link").styles.checked[0], true);
@@ -1559,4 +1559,105 @@ test("a task merged through a pull request reverts by opening a revert pull requ
   assert.equal(find(scene, "revert-T-1"), undefined);
   assert.ok(find(scene, "revert-pr-T-1-13"));
   assert.match(text(scene), /A pull request that reverts it is open\. Merging on GitHub undoes the task/);
+});
+
+test("the setup card offers the guessed Linear team and the usual three ticket moves, and a task whose ticket won't move says so", async () => {
+  const view = setupLive();
+  const states = [["In Review", "started"], ["Done", "completed"], ["Todo", "unstarted"], ["In Progress", "started"]].map(([name, type]) => ({ id: name, name, type }));
+  world.planeCalls = [];
+  world.planeReply = (payload, provider) => provider === "linear" && payload.op === "states" ? { states } : { states: [] };
+  assert.match(text(find(view.render(cx), "setup-updates")), /tickets stay as they are/);
+  assert.equal(find(view.render(cx), "setup-team-use"), undefined, "no team is offered until one is guessed");
+  view.teamGuess = { id: "team-1", name: "Acme" };
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  find(view.render(cx), "setup-team-use").handlers.on_click({}, spawning);
+  while (spawned.length) await spawned.shift()(spawning);
+  assert.deepEqual(view.state().linear, { team: { id: "team-1", name: "Acme" }, project: null });
+  assert.ok(world.planeCalls.some(call => call.op === "states" && call.teams?.join() === "team-1"), "its states are read from the team, with no ticket queued");
+  assert.match(text(find(view.render(cx), "setup-tickets")), /Linear · Acme/);
+  assert.match(text(find(view.render(cx), "setup-updates-use")), /Use In Progress → In Review → Done/);
+  view.act({ type: "addTickets", provider: "linear", issues: [{ uuid: "u-1", identifier: "ACME-1", title: "T", status: "Todo" }] }, cx);
+  view.inspect("ACME-1", cx);
+  assert.match(text(view.render(cx)), /Its Linear ticket stays in Todo: ticket updates are off\./);
+  view.open(null, cx);
+  click(view, "setup-updates-use");
+  assert.deepEqual(view.state().ticketUpdates.linear, { start: { id: "In Progress", name: "In Progress" }, review: { id: "In Review", name: "In Review" }, merge: { id: "Done", name: "Done" }, link: true });
+  assert.match(text(find(view.render(cx), "setup-updates")), /In Progress → In Review → Done/);
+  assert.equal(find(view.render(cx), "setup-updates-use"), undefined);
+  view.inspect("ACME-1", cx);
+  assert.doesNotMatch(text(view.render(cx)), /ticket updates are off/);
+  world.planeReply = null;
+});
+
+test("a Linear link typed into New task becomes that ticket, and anything else or a failed read stays a typed task", async () => {
+  const view = setupLive();
+  const spawned = [], spawning = { ...cx, spawn: fn => spawned.push(fn) };
+  world.planeCalls = [];
+  world.planeReply = payload => payload.op === "details" ? { issues: [{ uuid: "u-171", identifier: "ACME-171", title: "Make it nicer", url: "https://linear.app/acme/issue/ACME-171", status: "Todo" }] } : { issues: [] };
+  view.title.set_value("https://linear.app/acme/issue/ACME-171/nicer");
+  view.create(spawning);
+  while (spawned.length) await spawned.shift()(spawning);
+  assert.deepEqual(world.planeCalls.at(-1).ids, ["ACME-171"]);
+  assert.deepEqual([row(view, "ACME-171").ticket.provider, row(view, "ACME-171").title, view.title.value()], ["linear", "Make it nicer", ""]);
+  world.planeReply = () => { throw new Error("Linear is not connected."); };
+  view.title.set_value("ACME-172");
+  view.create(spawning);
+  while (spawned.length) await spawned.shift()(spawning);
+  assert.equal(row(view, "T-1").title, "ACME-172");
+  view.title.set_value("Fix ACME-173 for real");
+  view.create(spawning);
+  assert.equal(spawned.length, 0);
+  assert.equal(row(view, "T-2").ticket, undefined);
+  world.planeReply = null;
+});
+
+test("a project's settings reach its other space, new settings save, and saved pipelines can be forgotten or reset", () => {
+  const view = setupLive();
+  const key = "live:shop", other = "live:other", elsewhere = "live:elsewhere";
+  world.data[model.STORE] = { ...world.data[model.STORE], [other]: { ...model.createLive({ id: "other", name: "shop", cwd: "/work/shop", on: null, space: "gone" }, 0), space: "gone" },
+    [elsewhere]: { ...model.reduce(model.createLive({ id: "elsewhere", name: "blog", cwd: "/work/blog", on: null }, 0), { type: "create", title: "Draft" }, 0) } };
+  Object.assign(world.data[model.STORE][elsewhere].tasks[0], { status: "review" });
+  view.open("settings", cx, "checks");
+  view.tryInput.set_value("npm run dev"); view.saveTry(cx);
+  flip(view, "try-auto");
+  view.prepareInput.set_value('cp "$PIPELINE_SOURCE/.env" .'); click(view, "prepare-save");
+  view.open("settings", cx, "agent");
+  view.instructions.set_value("Commits in English."); click(view, "instructions-save");
+  flip(view, "evidence");
+  view.act({ type: "deliver", value: "pr" }, cx);
+  view.open("settings", cx, "delivery");
+  flip(view, "evidence-pr");
+  const mine = view.state(), theirs = world.data[model.STORE][other];
+  assert.deepEqual([mine.tryout, mine.tryAuto, mine.prepare, mine.instructions, mine.evidence, mine.evidencePr], ["npm run dev", true, 'cp "$PIPELINE_SOURCE/.env" .', "Commits in English.", true, true]);
+  assert.deepEqual([theirs.tryout, theirs.tryAuto, theirs.prepare, theirs.instructions, theirs.evidence, theirs.evidencePr, theirs.delivery], [mine.tryout, true, mine.prepare, mine.instructions, true, true, "pr"]);
+  assert.equal(world.data[model.STORE][elsewhere].tryout, undefined, "another project keeps its own");
+  view.open("settings", cx, "general");
+  let scene = view.render(cx);
+  assert.match(text(scene), /shared with its other pipeline/);
+  assert.match(text(find(scene, `saved-${other}`)), /its space is closed.*\/work\/shop · no tasks/s);
+  assert.match(text(find(scene, `saved-${elsewhere}`)), /1 unfinished task/);
+  assert.equal(find(scene, `forget-${elsewhere}`).styles.disabled[0], true, "work that isn't finished is never forgotten");
+  click(view, `forget-${other}`);
+  assert.equal(world.data[model.STORE][other], undefined);
+  assert.ok(world.data[model.STORE][elsewhere] && view.state());
+  view.act({ type: "create", title: "Keep me" }, cx);
+  click(view, "settings-reset");
+  assert.equal(view.state().tryout, "npm run dev", "reset asks first");
+  click(view, "settings-reset");
+  assert.deepEqual([view.state().tryout, view.state().instructions, view.state().delivery, view.state().setup, view.state().tasks.length], [undefined, undefined, "merge", true, 1]);
+});
+
+test("the inspector lists the agent's before and after screenshots and its walkthrough page", () => {
+  const view = setupLive();
+  view.act({ type: "create", title: "A" }, cx);
+  agentTask(view, "T-1", { status: "review", slot: null });
+  view.act({ type: "summary", id: "T-1", text: "Changed: the login.", evidence: { files: ["/g/herdr-evidence/01-before-login.png", "/g/herdr-evidence/01-after-login.png"], url: "https://claude.ai/artifact/1" } }, cx);
+  view.inspect("T-1", cx);
+  const calls = []; world.exec = (...args) => { calls.push(args); return { code: 0, stdout: "" }; };
+  assert.match(text(find(view.render(cx), "evidence-T-1")), /01-before-login.*01-after-login/s);
+  click(view, "evidence-T-1-1");
+  assert.deepEqual(calls.at(-1).slice(0, 2), ["herdr-show", ["/g/herdr-evidence/01-after-login.png", "--title", "T-1 · 01-after-login"]]);
+  click(view, "walkthrough-T-1");
+  assert.deepEqual(calls.at(-1).slice(0, 2), ["xdg-open", ["https://claude.ai/artifact/1"]]);
+  world.exec = null;
 });

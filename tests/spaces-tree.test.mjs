@@ -56,10 +56,10 @@ source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url),
   .replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
-const { reduce } = await import("../mods/pipeline/pipeline-model.js");
+const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = `const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, theme } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, reduce = globalThis.__pipelineReduce;\n` + source;
-globalThis.__pipelineReduce = reduce;
+source = `const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, theme } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)}, reduce = globalThis.__pipelineReduce, forgettable = globalThis.__pipelineForgettable;\n` + source;
+globalThis.__pipelineReduce = reduce; globalThis.__pipelineForgettable = forgettable;
 const { default: PipelineClose, closeDetail } = await import("data:text/javascript," + encodeURIComponent(source));
 source = (await readFile(new URL("../mods/menu-pin/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { View, div, svg, v_flex, h_flex, run, props, shared, setShared, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes } = globalThis.__spacesNative;\n" + source;

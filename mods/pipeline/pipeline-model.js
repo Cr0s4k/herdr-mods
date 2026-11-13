@@ -467,7 +467,77 @@ function unlink(state, id) {
     event(state, `${task.id} no longer waits for ${id}, which was removed.`, task.id);
   }
 }
-export const UPDATE_KINDS = { start: "When its agent starts", merge: "When the work merges" };
+export const UPDATE_KINDS = { start: "When its agent starts", review: "When it is ready for review", merge: "When the work merges" };
+// The usual three states, offered and never applied: in progress, in review and done, read from a tracker's own state types and names.
+export function guessUpdates(states) {
+  const rows = (states ?? []).map(row => ({ ...row, kind: row.type ?? row.group })), pick = row => row ? { id: row.id, name: row.name } : null;
+  const review = rows.find(row => /review/i.test(row.name) && !["completed", "canceled", "cancelled"].includes(row.kind));
+  const start = rows.find(row => row.kind === "started" && row !== review && /progress|doing|started/i.test(row.name)) ?? rows.find(row => row.kind === "started" && row !== review);
+  const merge = rows.find(row => row.kind === "completed" && /done|merged|complete/i.test(row.name)) ?? rows.find(row => row.kind === "completed");
+  return start || review || merge ? { start: pick(start), review: pick(review), merge: pick(merge) } : null;
+}
+export const updatesLabel = setup => Object.keys(UPDATE_KINDS).map(kind => setup?.[kind]?.name).filter(Boolean).join(" → ");
+// A Linear ticket typed into New task as its link or key.
+export function ticketRef(text) {
+  const value = String(text ?? "").trim();
+  return value.match(/^https?:\/\/linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)(?:[/?#]\S*)?$/)?.[1]?.toUpperCase() ?? value.match(/^[A-Z][A-Z0-9]{1,9}-\d+$/)?.[0] ?? null;
+}
+// The ticket prefix a repository's branches and commits use most, to guess its Linear team.
+export function ticketPrefix(text) {
+  const counts = new Map();
+  for (const [, prefix] of String(text ?? "").matchAll(/\b([A-Za-z][A-Za-z0-9]{1,9})-\d+\b/g)) counts.set(prefix.toUpperCase(), (counts.get(prefix.toUpperCase()) ?? 0) + 1);
+  const [best] = [...counts].filter(([prefix]) => !["T", "PR", "UTF", "ISO", "SHA", "HTTP", "V", "RFC", "CVE", "X86", "ES", "DEMO", "NEW"].includes(prefix)).sort((a, b) => b[1] - a[1]);
+  return best && best[1] >= 2 ? best[0] : null;
+}
+
+// What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
+export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "autoTrust", "quiet", "planner", "helper"];
+const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
+export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
+export function shareSettings(all, key, before, after) {
+  const changed = PROJECT_SETTINGS.filter(field => JSON.stringify(before?.[field] ?? null) !== JSON.stringify(after?.[field] ?? null));
+  if (!changed.length) return all;
+  const next = { ...all };
+  for (const [other, state] of projectPipelines(all, key)) {
+    const copy = { ...state };
+    for (const field of changed) { if (after[field] === undefined) delete copy[field]; else copy[field] = after[field]; }
+    next[other] = copy;
+  }
+  return next;
+}
+export function inheritSettings(all, state) {
+  const [from] = Object.values(all ?? {}).filter(other => sameProject(state, other)).sort((a, b) => (b.lastTick ?? 0) - (a.lastTick ?? 0));
+  if (!from) return state;
+  const next = { ...state, inherited: true, adopted: true };
+  for (const field of PROJECT_SETTINGS) if (from[field] !== undefined) next[field] = JSON.parse(JSON.stringify(from[field]));
+  return next;
+}
+// A pipeline saved before settings were the project's takes, once, what its folder's other pipelines had set and it had not.
+export function adoptSettings(all, state) {
+  if (!state?.live || state.adopted || newer(state)) return state;
+  const others = Object.values(all ?? {}).filter(other => other !== state && sameProject(state, other)).sort((a, b) => (b.lastTick ?? 0) - (a.lastTick ?? 0));
+  const next = { ...state, adopted: true };
+  for (const field of PROJECT_SETTINGS) {
+    const from = (state[field] ?? null) === null && others.find(other => (other[field] ?? null) !== null);
+    if (from) { next[field] = JSON.parse(JSON.stringify(from[field])); next.setup = true; next.inherited = true; }
+  }
+  return next;
+}
+export function resetSettings(state, now = Date.now()) {
+  const fresh = createLive(state.context, now), next = { ...state, setup: true };
+  for (const field of PROJECT_SETTINGS) { if (fresh[field] === undefined) delete next[field]; else next[field] = fresh[field]; }
+  delete next.inherited;
+  return next;
+}
+// A saved pipeline can go once nothing of it is left to finish: no agent, worktree or open pull request.
+export const forgettable = state => Boolean(state?.live && !state.running && (state.tasks ?? []).every(task => task.status === "done" || (task.status === "queued" && !task.workspaces && !task.planned)));
+// Each task's own port, so two branches can run their Try it command at once.
+export function taskPort(task) {
+  let hash = 0;
+  for (const char of `${task.id}/${Object.values(task.workspaces ?? {})[0]?.branch ?? ""}`) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return 4100 + hash % 900;
+}
 // Ticket updates wait on the task until the runner makes them; none of them changes the task's own status.
 function ticketUpdate(state, task, kind, again = false) {
   const ticket = task.ticket, setup = state.ticketUpdates?.[ticket?.provider];
@@ -534,6 +604,7 @@ const pushEvent = note => note ? ` · ${note.text}${note.ok ? "" : ` · ${note.e
 export const unpushedLabel = state => (state.unpushed ?? []).map(entry => (state.repositories?.length ?? 1) > 1 ? `${entry.branch} in ${entry.repo}` : entry.branch).join(", ");
 
 function reviewed(state, task) {
+  if (state.delivery !== "pr") ticketUpdate(state, task, "review");
   if (state.delivery === "pr" ? state.autoPr : state.autoMerge) approve(state, task);
 }
 
@@ -656,12 +727,12 @@ export function reduce(state, action, now = Date.now()) {
     case "ticketUpdates": {
       const provider = action.provider, name = SOURCES[provider];
       if (!next.live || !name) return state;
-      const now = { start: null, merge: null, link: false, ...next.ticketUpdates?.[provider] }, value = { ...now };
+      const now = { start: null, review: null, merge: null, link: false, ...next.ticketUpdates?.[provider] }, value = { ...now };
       for (const kind of Object.keys(UPDATE_KINDS)) if (kind in action) value[kind] = action[kind]?.id ? { id: String(action[kind].id), name: String(action[kind].name ?? action[kind].id) } : null;
       if ("link" in action) value.link = Boolean(action.link);
       if (JSON.stringify(value) === JSON.stringify(now)) return state;
       next.ticketUpdates = { ...next.ticketUpdates, [provider]: value };
-      const changes = [value.start && `move to ${value.start.name} when their agent starts`, value.merge && `move to ${value.merge.name} when their work merges`,
+      const changes = [value.start && `move to ${value.start.name} when their agent starts`, value.review && `move to ${value.review.name} when ready for review`, value.merge && `move to ${value.merge.name} when their work merges`,
         value.link && "get their pull request linked"].filter(Boolean);
       event(next, changes.length ? `${name} tickets ${changes.join(", ").replace(/, ([^,]*)$/, " and $1")}.` : `Pipeline no longer updates ${name} tickets.`);
       break;
@@ -1050,6 +1121,40 @@ export function reduce(state, action, now = Date.now()) {
       break;
     }
     case "autoTrust": if (!next.live) return state; next.autoTrust = !next.autoTrust; break;
+    case "tryAuto": if (!next.live) return state; next.tryAuto = !next.tryAuto; event(next, next.tryAuto ? "Try it starts when work is ready for review." : "Try it starts when you ask."); break;
+    case "evidence": if (!next.live) return state; next.evidence = !next.evidence; event(next, next.evidence ? "Agents are asked for before and after screenshots." : "Agents are no longer asked for screenshots."); break;
+    case "evidencePr": if (!next.live) return state; next.evidencePr = !next.evidencePr; event(next, next.evidencePr ? "Screenshots are added to pull requests." : "Screenshots stay out of pull requests."); break;
+    case "prepare": {
+      if (!next.live) return state;
+      const command = String(action.command ?? "").trim().slice(0, 500) || null;
+      if (command === (next.prepare ?? null)) return state;
+      next.prepare = command;
+      event(next, command ? `New worktrees are prepared with: ${command}.` : "New worktrees are not prepared.");
+      break;
+    }
+    case "prepared": {
+      const task = row(action.id);
+      if (!next.live || !task) return state;
+      event(next, action.error ? `${task.id} · preparing its worktree failed · ${String(action.error).split("\n").pop().slice(0, 300)}` : `${task.id} · prepared its worktree.`, task.id);
+      break;
+    }
+    case "instructions": {
+      if (!next.live) return state;
+      const text = String(action.text ?? "").trim().slice(0, 4000) || null;
+      if (text === (next.instructions ?? null)) return state;
+      next.instructions = text;
+      event(next, text ? "Agent instructions saved. New tasks start with them." : "Agent instructions cleared.");
+      break;
+    }
+    case "linear": {
+      if (!next.live) return state;
+      const clean = row => row?.id ? { id: String(row.id), name: String(row.name ?? row.id) } : null;
+      const value = { team: "team" in action ? clean(action.team) : next.linear?.team ?? null, project: "project" in action ? clean(action.project) : next.linear?.project ?? null };
+      if (JSON.stringify(value) === JSON.stringify({ team: null, project: null, ...next.linear })) return state;
+      next.linear = value.team || value.project ? value : null;
+      if ("team" in action) event(next, value.team ? `Linear team: ${value.team.name}.` : "No Linear team chosen.");
+      break;
+    }
     case "trusted": {
       const task = row(action.id);
       if (!next.live || !task) return state;
@@ -1108,6 +1213,7 @@ export function reduce(state, action, now = Date.now()) {
       event(next, task.repos.length > 1 ? `${task.id} · pull requests open: ${prList(prs)}. It finishes when every one is merged on GitHub.`
         : `${task.id} · pull request #${opened[0][1].number} opened. It finishes when it's merged on GitHub.`, task.id);
       ticketUpdate(next, task, "link");
+      ticketUpdate(next, task, "review");
       break;
     }
     case "prStatus": {
@@ -1187,8 +1293,11 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "summary": {
       const task = row(action.id), text = String(action.text ?? "").trim().slice(0, 6000);
-      if (!next.live || !task || !text || task.summary === text) return state;
-      task.summary = text;
+      const evidence = action.evidence?.files?.length || action.evidence?.url ? { files: (action.evidence.files ?? []).slice(0, 24).map(String), url: /^https:\/\/\S+$/.test(action.evidence.url ?? "") ? action.evidence.url : null } : null;
+      if (!next.live || !task) return state;
+      if ((!text || task.summary === text) && (!action.evidence || JSON.stringify(evidence) === JSON.stringify(task.evidence ?? null))) return state;
+      if (text) task.summary = text;
+      if (action.evidence) task.evidence = evidence;
       break;
     }
     case "mergeFailed": {
@@ -1201,7 +1310,7 @@ export function reduce(state, action, now = Date.now()) {
     case "cleaned": {
       const task = row(action.id);
       if (!next.live || !task) return state;
-      Object.assign(task, { workspaces: null, planned: null, terminal: null, space: null, tab: null });
+      Object.assign(task, { workspaces: null, planned: null, terminal: null, space: null, tab: null, ...(task.evidence ? { evidence: task.evidence.url ? { files: [], url: task.evidence.url } : null } : {}) });
       break;
     }
     case "discard": {

@@ -181,7 +181,7 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(self.git(self.repo, "status", "--porcelain"), "")
 
     def test_the_agent_summary_is_read_from_the_worktree_git_folder(self):
-        self.assertEqual(delivery.summary({"worktree": str(self.tree)}), {"text": ""})
+        self.assertEqual(delivery.summary({"worktree": str(self.tree)}), {"text": "", "evidence": None})
         Path(self.git(self.tree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-summary.md")).write_text("Added notes.\n\nNot sure about the name.\n")
         self.assertEqual(delivery.summary({"worktree": str(self.tree)})["text"], "Added notes.\n\nNot sure about the name.")
         self.assertEqual(self.git(self.tree, "status", "--porcelain"), "")
@@ -255,6 +255,43 @@ class DeliveryTest(unittest.TestCase):
         delivery.publish(self.payload("publish", target="main", body="Fallback", commit=True))
         self.assertEqual(self.git(remote, "log", "-1", "--format=%s", self.workspace["branch"]), "T-1 Add notes")
         self.assertIn("--body Sorts absences by date.\n\n- Sorted the list\n", log.read_text())
+
+    def evidence_folder(self):
+        folder = Path(self.git(self.tree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-evidence"))
+        folder.mkdir()
+        return folder
+
+    def test_screenshots_and_the_walkthrough_link_are_read_from_the_worktree_git_folder(self):
+        folder = self.evidence_folder()
+        for name in ("01-after-login.png", "01-before-login.png", "notes.txt"):
+            (folder / name).write_bytes(b"x")
+        (folder / "walkthrough.url").write_text("https://claude.ai/artifact/abc\n")
+        found = delivery.summary({"worktree": str(self.tree)})["evidence"]
+        self.assertEqual([Path(file).name for file in found["files"]], ["01-after-login.png", "01-before-login.png"])
+        self.assertEqual(found["url"], "https://claude.ai/artifact/abc")
+        self.assertEqual(self.git(self.tree, "status", "--porcelain"), "", "nothing of it can be committed")
+        rows = delivery.pairs(found["files"])
+        self.assertEqual({key: sorted(row) for key, row in rows.items()}, {"01-login": ["after", "before"]})
+
+    def test_publish_adds_before_and_after_screenshots_from_a_branch_of_their_own_only_when_asked(self):
+        remote = self.with_origin()
+        log = self.stub_gh('case "$1" in repo) echo "me/project";; *) echo "https://github.com/me/project/pull/12";; esac\n')
+        folder = self.evidence_folder()
+        for name in ("01-before-login.png", "01-after-login.png", "02-after-menu.png"):
+            (folder / name).write_bytes(name.encode())
+        self.agent_commits()
+        delivery.publish(self.payload("publish", target="main", body="Details"))
+        self.assertNotIn("Before and after", log.read_text())
+        self.assertIsNone(self.git_optional(remote, "rev-parse", "--verify", "-q", "pipeline-evidence"))
+        delivery.publish(self.payload("publish", target="main", body="Details", evidence=True))
+        commit = self.git(remote, "rev-parse", "pipeline-evidence")
+        self.assertEqual(self.git(remote, "ls-tree", "--name-only", commit).split("\n"), ["01-01-after-login.png", "02-01-before-login.png", "03-02-after-menu.png"])
+        body = log.read_text()
+        self.assertIn("## Before and after\n\n| Before | After |\n| --- | --- |\n| ![01-before-login](https://github.com/me/project/blob/%s/02-01-before-login.png?raw=true) | ![01-after-login]" % commit, body)
+        self.assertIn("![02-after-menu](https://github.com/me/project/blob/%s/03-02-after-menu.png?raw=true)" % commit, body)
+        delivery.publish(self.payload("publish", target="main", body="Details", evidence=True))
+        self.assertEqual(self.git(remote, "rev-parse", "pipeline-evidence^"), commit, "later screenshots are added after the earlier ones")
+        self.assertNotIn("notes.txt", self.git(remote, "ls-tree", "-r", "--name-only", "pipeline-evidence"), "the task's own files stay on its branch")
 
     def test_publishing_again_reuses_the_open_pull_request(self):
         self.with_origin()

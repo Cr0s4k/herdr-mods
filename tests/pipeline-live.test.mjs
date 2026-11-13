@@ -915,7 +915,7 @@ test("ticket updates are off by default, so a ticket's work leaves its tracker a
 
 test("ticket update settings are per provider and say what they will do", () => {
   let state = reduce(createLive(context, 0), { type: "ticketUpdates", provider: "plane", start: { id: "doing", name: "In Progress" } }, 0);
-  assert.deepEqual(state.ticketUpdates.plane, { start: { id: "doing", name: "In Progress" }, merge: null, link: false });
+  assert.deepEqual(state.ticketUpdates.plane, { start: { id: "doing", name: "In Progress" }, review: null, merge: null, link: false });
   assert.match(state.events[0].message, /^Plane tickets move to In Progress when their agent starts\.$/);
   assert.equal(reduce(state, { type: "ticketUpdates", provider: "plane", start: { id: "doing", name: "In Progress" } }, 0), state);
   state = reduce(state, { type: "ticketUpdates", provider: "linear", merge: { id: "Done", name: "Done" }, link: true }, 0);
@@ -1819,4 +1819,112 @@ test("a finished, removed or discarded task's image folder is deleted once, and 
     ticket: { provider: "linear", key: "LIN-1", uuid: "u1", status: "Done", moved: ["start", "merge"] } });
   ticketed = reduce(ticketed, { type: "reverted", id: "T-1" }, 0);
   assert.deepEqual(row(ticketed, "T-1").ticket.pending?.map(update => [update.kind, update.state.name]), [["start", "In Progress"]]);
+});
+
+test("a ticket moves to its review state when the pull request opens, or when local work reaches review", async () => {
+  const world = updating({ start: { id: "doing", name: "In Progress" }, review: { id: "review", name: "In Review" }, link: true });
+  world.host.delivery = async (_context, payload) => payload.op === "publish" ? { url: "https://github.com/me/shop/pull/12", number: 12 } : {};
+  const runner = new live.LiveRunner(world.host);
+  await settle(runner); await settle(runner);
+  world.agents = [{ address: "t9", status: "working" }]; await settle(runner);
+  world.agents = [{ address: "t9", status: "done" }]; await settle(runner);
+  assert.equal(world.updates.length, 1, "with pull requests, waiting for you in Pipeline is not yet review");
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "HMOD-4" }, 0) };
+  await settle(runner); await settle(runner); await settle(runner);
+  assert.deepEqual(world.updates.slice(1).map(call => call[2]), ["link", "review"]);
+  assert.equal(row(world.state(), "HMOD-4").ticket.update.text, "Moved to In Review in Plane");
+
+  let state = reduce(createLive(context, 0), { type: "addTickets", provider: "plane", issues: [ticket(5, { title: "Local" })] }, 0);
+  state = reduce(state, { type: "ticketUpdates", provider: "plane", review: { id: "review", name: "In Review" } }, 0);
+  assert.match(state.events[0].message, /move to In Review when ready for review/);
+  const task = row(state, "HMOD-5");
+  Object.assign(task, { status: "working", worked: true, slot: 0 });
+  state = reduce(state, { type: "observe", id: "HMOD-5", status: "review" }, 0);
+  assert.deepEqual(row(state, "HMOD-5").ticket.pending.map(update => [update.kind, update.state.name]), [["review", "In Review"]]);
+});
+
+test("the usual three states are guessed from a tracker's own, and a Linear link or key names its ticket", () => {
+  const states = [["Blocked", "unstarted"], ["In Review", "started"], ["Done", "completed"], ["Backlog", "backlog"], ["Todo", "unstarted"], ["Canceled", "canceled"], ["In Progress", "started"]]
+    .map(([name, type]) => ({ id: name, name, type }));
+  const guess = model.guessUpdates(states);
+  assert.equal(model.updatesLabel(guess), "In Progress → In Review → Done");
+  assert.equal(model.guessUpdates([]), null);
+  assert.equal(model.updatesLabel(model.guessUpdates([{ id: "a", name: "Doing", group: "started" }, { id: "b", name: "Shipped", group: "completed" }])), "Doing → Shipped");
+  assert.equal(model.updatesLabel({ link: true }), "");
+  assert.equal(model.ticketRef("https://linear.app/acme/issue/ACME-171/make-it-nicer"), "ACME-171");
+  assert.equal(model.ticketRef(" ACME-171 "), "ACME-171");
+  assert.equal(model.ticketRef("Fix ACME-171 properly"), null);
+  assert.equal(model.ticketRef("https://example.com/issue/ACME-171"), null);
+  assert.equal(model.ticketPrefix("acme-186-fix-login\nACME-165: refactor\nt-3-merge\nutf-8 sha-256"), "ACME");
+  assert.equal(model.ticketPrefix("main\nfix-1"), null);
+});
+
+test("a project's pipelines share their settings, a new space starts with them, and a finished one can be forgotten", () => {
+  const space = name => ({ ...context, id: JSON.stringify([null, context.cwd, name]), space: name });
+  const a = `${LIVE}a`, b = `${LIVE}b`, other = `${LIVE}other`;
+  let all = { [a]: createLive(space("a"), 0), [other]: createLive({ ...context, cwd: "/work/elsewhere" }, 0), sim: createPipeline(context, 0) };
+  const before = all[a], after = reduce(reduce(before, { type: "check", command: "npm test" }, 5), { type: "create", title: "Mine" }, 5);
+  all = { ...all, [b]: model.inheritSettings(all, createLive(space("b"), 9)) };
+  assert.equal(all[b].inherited, true);
+  all = model.shareSettings({ ...all, [a]: after }, a, before, after);
+  assert.deepEqual([all[b].check, all[b].tasks.length, all[other].check, all.sim.check], [{ command: "npm test", fix: true }, 0, undefined, undefined]);
+  const fresh = model.inheritSettings(all, createLive(space("c"), 20));
+  assert.deepEqual([fresh.check?.command, fresh.setup, fresh.tasks.length], ["npm test", true, 0]);
+  assert.equal(model.inheritSettings({}, before), before, "a first pipeline has nothing to start from");
+  const cleared = reduce(all[b], { type: "check", command: "" }, 0);
+  assert.equal(model.shareSettings({ ...all, [b]: cleared }, b, all[b], cleared)[a].check, null);
+  assert.equal(model.forgettable(all[b]), true);
+  assert.equal(model.forgettable(all[a]), true, "a queued task that never started holds nothing");
+  const busy = JSON.parse(JSON.stringify(all[a])); busy.tasks[0].status = "review";
+  assert.equal(model.forgettable(busy), false);
+  assert.equal(model.forgettable(reduce(all[a], { type: "run" }, 0)), false);
+  const old = { ...createLive(space("old"), 1), tryout: "npm start" }, saved = { [a]: { ...all[a], check: null, lastTick: 50 }, [b]: { ...all[b], tryout: "npm run dev", lastTick: 90 }, old };
+  const adopted = model.adoptSettings(saved, old);
+  assert.deepEqual([adopted.tryout, adopted.check?.command, adopted.setup, adopted.adopted], ["npm start", "npm test", true, true], "its own values stay; what it lacked comes from the newest that has it");
+  assert.equal(model.adoptSettings(saved, adopted), adopted, "once");
+  const reset = model.resetSettings({ ...all[a], instructions: "x" });
+  assert.deepEqual([reset.check, reset.instructions, reset.setup, reset.tasks.length], [undefined, undefined, true, 1]);
+});
+
+test("the first message carries the person's instructions and asks for before and after screenshots only when set", () => {
+  const state = typed("Restyle the login");
+  const ws = { cwd: "/wt", branch: "b", target: "main", base: "a".repeat(40), prBody: "/repo/.git/worktrees/wt/herdr-pr.md" };
+  assert.doesNotMatch(live.prompt(row(state, "T-1"), ws), /herdr-evidence|instructions for every task/);
+  const text = live.prompt(row(state, "T-1"), ws, "merge", { instructions: "Write commits in English.", evidence: true, tryout: "npm run dev", port: 4242 });
+  assert.match(text, /The person's instructions for every task in this project:\nWrite commits in English\.$/);
+  assert.match(text, /`npm run dev`, with PIPELINE_PORT=4242/);
+  assert.match(text, /\/repo\/\.git\/worktrees\/wt\/herdr-evidence/);
+  assert.match(text, /01-before-login\.png/);
+  let saved = reduce(state, { type: "summary", id: "T-1", text: "", evidence: { files: ["/g/01-before-a.png", "/g/01-after-a.png"], url: "https://claude.ai/artifact/1" } }, 0);
+  assert.deepEqual(row(saved, "T-1").evidence, { files: ["/g/01-before-a.png", "/g/01-after-a.png"], url: "https://claude.ai/artifact/1" });
+  saved = reduce(saved, { type: "cleaned", id: "T-1" }, 0);
+  assert.deepEqual(row(saved, "T-1").evidence, { files: [], url: "https://claude.ai/artifact/1" }, "the screenshots go with the worktree; the page stays");
+});
+
+test("a new worktree is prepared before its agent starts, and Try it starts by itself at review when asked", async () => {
+  let state = reduce(typed("Add a dark mode toggle"), { type: "prepare", command: "npm ci" }, 0);
+  state = reduce(reduce(state, { type: "tryout", command: "npm run dev" }, 0), { type: "tryAuto" }, 0);
+  const checks = [], tries = [];
+  const world = host(reduce(state, { type: "run" }, 0), {
+    check: async (_context, cwd, command) => { checks.push([cwd, command]); return { code: 1, output: "npm ERR! no lockfile" }; },
+    start: (_c, task, _w, _a, _s, _d, extras) => { world.extras = extras; return "tab"; },
+    tryout: async (_context, task, ws, command) => { tries.push([task.id, ws.cwd, command]); return "tb-try"; },
+  });
+  world.panes = [{ terminal: "t9" }]; world.host.read = async () => "";
+  const runner = new live.LiveRunner(world.host);
+  await step(runner);
+  assert.equal(checks.length, 1);
+  assert.match(checks[0][1], /^export PIPELINE_TASK='T-1'; export PIPELINE_SOURCE='\/work\/shop'; export PIPELINE_PORT='\d{4}'; npm ci$/);
+  assert.ok(world.state().events.some(item => /T-1 · preparing its worktree failed · npm ERR! no lockfile/.test(item.message)));
+  assert.equal(row(world.state(), "T-1").status, "working", "a failed prepare never stops the agent");
+  assert.deepEqual([world.extras.tryout, world.extras.evidence, world.extras.instructions], ["npm run dev", false, null]);
+  await settle(runner);
+  assert.equal(tries.length, 0, "not while it works");
+  world.agents = [{ address: "t9", status: "working" }]; await settle(runner);
+  world.agents = [{ address: "t9", status: "done" }]; await settle(runner); await settle(runner);
+  assert.deepEqual(tries, [["T-1", "/wt/T-1-add-a-dark-mode-toggle", "npm run dev"]]);
+  assert.equal(row(world.state(), "T-1").tried, "tb-try");
+  await settle(runner);
+  assert.equal(tries.length, 1, "once per task");
+  assert.equal(live.withEnv({ A: "it's" }, "run"), "export A='it'\\''s'; run");
 });

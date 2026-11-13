@@ -177,9 +177,12 @@ Live runs real agents on the project's Git repository, one isolated worktree and
 task, so parallel agents never touch each other or your checkout.
 
 A space's new live pipeline opens with a **Set up this pipeline** card over its empty canvas:
-the AI helper, the agent, the check command, Try it, delivery, the After merge command and
-where tickets come from, each
-with a button into its Settings section. What Pipeline recognises from file names is offered,
+the AI helper, the agent, the check command, Try it, delivery, the After merge command,
+where tickets come from and how tickets are updated, each
+with a button into its Settings section. When the repository's branches and commits name a
+Linear team (`ACME-186` names ACME), the card offers **Use Linear · Acme**; with a team or a
+linked Plane project it offers that tracker's usual three moves in one click, such as
+**Use In Progress → In Review → Done**. What Pipeline recognises from file names is offered,
 never applied: **Use npm test** for a check command it finds, **Use pull requests** when the
 repository is on GitHub and `gh` is installed. **Choose for me** (sparkles) asks the AI helper
 to read the repository, read-only, and set the check command, Try it, delivery and the After
@@ -190,7 +193,20 @@ takes about 20 seconds and costs about a cent. The card goes away with **Done** 
 **Start pipeline**; **Show setup** (Settings, General) brings it back, also on a pipeline made
 before the card existed.
 
-1. Type a task into **New task** and press Enter. Click it to add details for the agent;
+Settings belong to the project, not the space: the agent and its model, checks, Prepare, Try
+it, delivery, After merge, repositories, ticket updates, the Linear team and project, agent
+instructions and Show the change. A change in one space reaches every space open on the same
+folder, a new space starts with them (its setup card says so), and closing Pipeline keeps
+them. Tasks, the queue, watches, the schedule and Start stay with the space. **Saved
+pipelines** (Settings, General) lists every pipeline Herdr has saved, with **Forget** for
+one that has nothing left to finish (no agent, worktree or open pull request) and one button
+for all such. **Reset project settings** there (asked twice) starts the project's settings
+over and keeps the tasks. The Close dialog offers **Close and forget** when closing leaves
+nothing to finish.
+
+1. Type a task into **New task** and press Enter. A Linear link or key on its own
+   (`https://linear.app/…/issue/ACME-171/…`, `ACME-171`) becomes that ticket, read in full,
+   so its updates and pull request link work; if Linear can't be read it stays a typed task. Click it to add details for the agent;
    the title and details are its first message. Under the details, **Images** takes up to
    four screenshots or mockups (PNG, JPEG, GIF, WebP): drop them from Finder, or **Paste
    image** for one on the clipboard (macOS). Pipeline copies them into
@@ -213,9 +229,11 @@ before the card existed.
    before it is queued.
 
    By default Pipeline only reads Plane and Linear. **Ticket updates** in Settings lets it
-   move a ticket as its work goes, per tracker: a state **When its agent starts** and one
-   **When the work merges** (locally, or the pull request merged on GitHub), picked from the
-   linked Plane project's states or Linear's states for the teams of queued tickets, and
+   move a ticket as its work goes, per tracker: a state **When its agent starts**, one **When
+   it is ready for review** (the task reaches review, or with pull requests, the pull request
+   opens) and one **When the work merges** (locally, or the pull request merged on GitHub),
+   picked from the linked Plane project's states or Linear's states for the chosen team and
+   the teams of queued tickets, and
    **Link pull requests to the ticket**, which adds "PR #12: title" when the pull request
    opens. Each update first reads the ticket, so a state it already has or a link it already
    carries is left alone, and a retried task doesn't move its ticket again. Updates never
@@ -223,6 +241,8 @@ before the card existed.
    Plane"), or what failed with **Try again**, and the task history records each. Linear
    updates need a connection with Write permission; without it the inspector offers
    **Connect Linear**. Agents are still told not to change a ticket's status or assignee.
+   While updates are off, a ticket task's inspector says its ticket stays where it is, with
+   **Set up**.
 
    Tasks can wait for each other. A ticket brings its **blocked by** links from Plane or
    Linear: a blocker that is also in the pipeline holds the task until that task merges, and
@@ -312,8 +332,27 @@ before the card existed.
    script, a Makefile `run`, `dev` or `preview` target, or `cargo run`). **Try it** (T) in the
    inspector runs it in the task's worktree, in a tab of its own beside the agent, with the
    task id in `$PIPELINE_TASK`. Ctrl-C leaves a shell in the worktree; pressing it again shows
-   that tab; it closes when the task merges or is discarded. Several branches running at once
-   is up to the command, for example a dev server that picks a free port.
+   that tab; it closes when the task merges or is discarded. Each task has its own port in
+   `$PIPELINE_PORT` (4100 to 4999), so several branches can run at once when the command uses
+   it. **Start it when work is ready for review** starts it by itself, once per task, without
+   taking you away from where you are.
+
+   A fresh worktree has only what Git tracks. **Prepare a new worktree** (Settings, Checks
+   and Try it) runs a command once in each new worktree before its agent starts, such as
+   `cp "$PIPELINE_SOURCE/.env" . && npm ci`, with your project folder in `$PIPELINE_SOURCE`
+   and the task's id and port set. A failure is recorded in the task's history and the agent
+   still starts.
+
+   **Agent instructions** (Settings, Agent) is free text added to every task's first message.
+   **Show the change** there asks each agent for screenshots of the screens it changes, before
+   it changes anything and again when done, saved in Git's own folder (never committed) in
+   pairs like `01-before-login.png` and `01-after-login.png`. The inspector lists them under
+   **Before and after**; clicking one opens it in the Show panel. A Claude Code agent may also
+   publish a private page walking through the change, which the inspector opens with **Open
+   walkthrough**. With pull requests, **Add the screenshots to the pull request** (Settings,
+   Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin` and adds
+   a **Before and after** table to the description. How to start the app and which screens
+   matter belongs in the repository's `AGENTS.md` or a skill.
 
    **Revert** in a completed task's inspector (asked twice) undoes a task merged locally with
    one new commit, `Revert T-1 <title>`, on the branch it merged into: only that task's
