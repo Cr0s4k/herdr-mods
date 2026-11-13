@@ -1619,7 +1619,7 @@ export default class Pipeline extends View {
       body.child(this.label("Added to every task's first message, after Pipeline's own. For what is yours; how to run and test the project belongs in the repository's AGENTS.md or a skill, which agents read anyway.", t));
       body.child(Textarea.new(this.instructions).w_full().p(8).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("Agent instructions"));
       body.child(h_flex().child(this.button("instructions-save", "Save", cx => this.saveInstructions(cx), t, { small: true, disabled: this.instructions.value().trim() === (state.instructions ?? "") })));
-      body.child(this.switchRow("evidence", "Show the change", "Asks each agent for before and after screenshots of what it changes. They appear in the task's inspector, with its walkthrough page when it publishes one.",
+      body.child(this.switchRow("evidence", "Show the change", "Asks each agent for before and after screenshots of what it changes, presented on a private page it publishes. The task's inspector opens it.",
         Boolean(state.evidence), cx => this.act({ type: "evidence" }, cx), t));
     } else if (section === "limits") this.limits(body, state, t);
     else if (section === "helper") this.helperSettings(body, state, t);
@@ -1775,9 +1775,11 @@ export default class Pipeline extends View {
   evidenceDetail(body, task, t) {
     const files = task.evidence.files ?? [], local = !this.context.on, name = file => file.split("/").pop().replace(/\.[a-z]+$/i, "");
     body.child(this.heading("Before and after"));
+    if (task.evidence.url) body.child(h_flex().child(this.button(`walkthrough-${task.id}`, "Open walkthrough", () => this.openLink(task.evidence.url), t,
+      { icon: "sparkles", primary: true, hint: `The agent's page with the screenshots side by side\n${task.evidence.url}` })));
+    else if (files.length) body.child(this.label("Its agent published no page, so here are the screenshots on their own.", t));
     if (files.length) body.child(h_flex().id(`pipeline-evidence-${task.id}`).gap(6).flex_wrap().children(files.map((file, i) => this.button(`evidence-${task.id}-${i}`, name(file), () => this.showEvidence(task, file), t,
       { small: true, icon: "eye", disabled: !local, hint: local ? "Opens it in the Show panel, where you can mark it up" : "Saved in its worktree on the project's machine" }))));
-    if (task.evidence.url) body.child(h_flex().child(this.button(`walkthrough-${task.id}`, "Open walkthrough", () => this.openLink(task.evidence.url), t, { small: true, icon: "sparkles", hint: task.evidence.url })));
   }
   ticketUpdateDetail(body, task, t) {
     const ticket = task.ticket, service = SOURCES[ticket.provider], failed = ticket.failed ?? [];
@@ -1895,12 +1897,12 @@ export default class Pipeline extends View {
           return label ? h_flex().gap(8).items_start().child(div().w(56).flex_none().text_color(label === "Unsure" ? t.ansi3 : t.muted).child(label)).child(div().flex_1().min_w(0).child(rest)) : div().child(line);
         })));
     if (task.evidence && task.status !== "queued") this.evidenceDetail(body, task, t);
-    if (task.terminal && trees.length && !task.evidence?.files?.length && ["working", "input", "review"].includes(task.status) && !task.discard) {
+    if (task.terminal && trees.length && !(task.evidence?.files?.length && task.evidence.url) && ["working", "input", "review"].includes(task.status) && !task.discard) {
       const asked = this.asked?.id === task.id ? this.asked : null;
       body.child(h_flex().gap(8).items_center()
-        .child(this.button(`evidence-ask-${task.id}`, asked?.pending ? "Asking…" : "Ask for screenshots", cx => this.askEvidence(task, cx), t,
-          { small: true, icon: "eye", disabled: Boolean(asked?.pending || asked?.sent), hint: "Asks its agent for before and after screenshots of what it changed. They appear here when its turn ends" }))
-        .when(Boolean(asked && !asked.pending), el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child(asked.sent ? "Asked. They appear here when its turn ends." : "Couldn't reach its terminal."))));
+        .child(this.button(`evidence-ask-${task.id}`, asked?.pending ? "Asking…" : task.evidence?.files?.length ? "Ask for the walkthrough page" : "Ask for screenshots", cx => this.askEvidence(task, cx), t,
+          { small: true, icon: "eye", disabled: Boolean(asked?.pending || asked?.sent), hint: "Asks its agent for before and after screenshots of what it changed, presented on a page. It appears here when its turn ends" }))
+        .when(Boolean(asked && !asked.pending), el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child(asked.sent ? "Asked. The page appears here when its turn ends." : "Couldn't reach its terminal."))));
     }
     if (task.terminal && task.status !== "done" && !task.discard) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))

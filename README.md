@@ -346,12 +346,14 @@ nothing to finish.
    **Agent instructions** (Settings, Agent) is free text added to every task's first message.
    **Show the change** there asks each agent for screenshots of the screens it changes, before
    it changes anything and again when done, saved in Git's own folder (never committed) in
-   pairs like `01-before-login.png` and `01-after-login.png`. The inspector lists them under
-   **Before and after**; clicking one opens it in the Show panel. A Claude Code agent may also
-   publish a private page walking through the change, which the inspector opens with **Open
-   walkthrough**. The setup card has a **Screenshots** row that turns it on. A task that
+   pairs like `01-before-login.png` and `01-after-login.png`, and to present them on one
+   private page published with Claude Code's Artifact tool: each pair side by side, what
+   changed, and how to try it locally. **Open walkthrough** under **Before and after** in the
+   inspector opens that page; the screenshots are listed below it and open in the Show panel.
+   An agent without an Artifact tool leaves the page out, and the inspector says so. The setup card has a **Screenshots** row that turns it on. A task that
    started without it has **Ask for screenshots** in its inspector, which sends its agent the
-   same request (with "before" taken from the commit its branch started from). With pull requests, **Add the screenshots to the pull request** (Settings,
+   same request (with "before" taken from the commit its branch started from); with
+   screenshots but no page it reads **Ask for the walkthrough page**. With pull requests, **Add the screenshots to the pull request** (Settings,
    Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin` and adds
    a **Before and after** table to the description. How to start the app and which screens
    matter belongs in the repository's `AGENTS.md` or a skill.
