@@ -207,6 +207,22 @@ test("the After merge command runs in the project folder once merges land, and a
   assert.match(world.state().events[0].message, /Ran \.\/install\.sh after T-1 merged\./);
 });
 
+test("an After merge command that never reports back stops after three starts and waits for Run again", async () => {
+  const runs = [], said = [];
+  const world = host({ ...reduce(reduce(typed("A"), { type: "afterMerge", command: "./install.sh" }, 0), { type: "run" }, 0), afterRuns: [{ repo: "shop", root: "/work/shop", task: "T-1", error: null }] }, {
+    check: (_context, cwd) => { runs.push(cwd); return new Promise(() => {}); }, announce: (_id, notice) => said.push(notice.title) });
+  const reload = async () => { new live.LiveRunner(world.host).step({ spawn: fn => { fn({ sleep: async () => {} }); } }); await new Promise(setImmediate); };
+  for (let i = 0; i < 5; i++) await reload();
+  assert.equal(runs.length, model.AFTER_STARTS, "each reload starts it again, up to the limit");
+  assert.match(model.afterFailed(world.state())[0].error, /started 3 times and never finished/);
+  assert.ok(world.state().events.some(row => /\.\/install\.sh never finished after T-1 merged/.test(row.message)));
+  assert.ok(said.includes("T-1 merged, but ./install.sh failed"));
+  world.store = { [id]: reduce(world.state(), { type: "afterMergeNow" }, 0) };
+  assert.deepEqual(world.state().afterRuns, [{ repo: "shop", root: "/work/shop", task: "T-1", error: null }], "Run again starts the count over");
+  await reload();
+  assert.equal(runs.length, model.AFTER_STARTS + 1);
+});
+
 test("one After merge run covers every merge before it, and no command means no run", () => {
   const merged = (state, task) => reduce({ ...state, tasks: state.tasks.map(row => row.id === task ? { ...row, status: "merging", workspaces: { shop: { source: "/work/shop", root: `/wt/${task}` } } } : row) },
     { type: "merged", id: task, target: "main", repos: ["shop"] }, 0);

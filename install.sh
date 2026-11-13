@@ -8,9 +8,18 @@ app="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 layout=main-custom
 mods=("$repo"/mods/*)
 
+# Copies only files whose content differs and prints each one. macOS rsync re-stamps unchanged
+# files, Herdr reloads every mod on that, and a reload restarts Pipeline's After merge run of
+# this script: an endless loop.
 copy() {
-  rsync "$@" --copy-links --exclude gpui-kit.d.ts --exclude jsconfig.json "${mods[@]}" "$app/mods/"
-  rsync "$@" "$repo"/layouts/*.json "$app/layouts/"
+  local src rel dest
+  { find -L "$repo/mods" -type f ! -name gpui-kit.d.ts ! -name jsconfig.json -print0
+    find "$repo/layouts" -maxdepth 1 -name '*.json' -print0; } | while IFS= read -r -d '' src; do
+    rel="${src#"$repo"/}" dest="$app/$rel"
+    if cmp -s "$src" "$dest" && { [ ! -x "$src" ] || [ -x "$dest" ]; }; then continue; fi
+    echo "$rel"
+    mkdir -p "$(dirname "$dest")" && cp -p "$src" "$dest"
+  done
 }
 
 check() {
@@ -27,7 +36,7 @@ behind() {
 }
 
 mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills" "$HOME/.agents/skills"
-copy -a
+copy >/dev/null
 for m in "${mods[@]}"; do
   for f in "$m"/*; do
     [ -f "$f" ] && [ -x "$f" ] && ln -sf "$app/mods/$(basename "$m")/$(basename "$f")" "$HOME/.local/bin/$(basename "$f")"
@@ -47,9 +56,8 @@ stale="$(behind)"
 if [ "${1:-}" = "--watch" ]; then
   echo "Watching $repo (ctrl-c to stop)"
   while sleep 1; do
-    changed="$(copy -ai --dry-run)"
+    changed="$(copy)"
     if [ -n "$changed" ]; then
-      copy -a
       echo "$(date +%H:%M:%S) synced"; echo "$changed" | sed 's/^/  /'
       check || true
     fi

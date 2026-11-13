@@ -693,9 +693,12 @@ export class LiveRunner {
 
   // Runs in the Git queue, after the merges waiting there, so it sees a folder no merge is changing.
   // Its entries stay due until it reports, so a run cut short by Pipeline's own reload starts again.
+  // Each start is counted in the store, where a reload can't lose it.
   async runAfter(id) {
     const state = this.host.shared(STORE)[id], results = [];
     for (const entry of state.afterRuns.filter(entry => !entry.error)) {
+      this.apply(id, { type: "afterMergeStart", root: entry.root });
+      if (this.host.shared(STORE)[id].afterRuns.find(row => row.root === entry.root)?.error) continue;
       const result = await this.host.check(state.context, entry.root, state.afterMerge).catch(error => ({ code: -1, output: error?.message || String(error) }));
       results.push({ root: entry.root, code: result.code, output: tail(result.output, 12) });
     }

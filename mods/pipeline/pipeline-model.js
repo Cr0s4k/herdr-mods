@@ -454,6 +454,8 @@ const started = task => Object.keys(task.workspaces ?? {}).length > 0;
 const repoNames = task => task.repos.length > 1 ? ` in ${task.repos.join(" + ")}` : "";
 const PRIORITIES = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
 export const CHECK_FIXES = 2;
+// A command that reloads Pipeline every time it runs would restart itself forever.
+export const AFTER_STARTS = 3;
 function seat(state, task) {
   const used = new Set(state.tasks.filter(other => other !== task && ACTIVE.includes(other.status)).map(other => other.slot));
   task.slot = 0; while (used.has(task.slot)) task.slot++;
@@ -1047,8 +1049,16 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "afterMergeNow": {
       if (!next.live || !next.afterMerge || !afterFailed(next).length) return state;
-      next.afterRuns = next.afterRuns.map(entry => ({ ...entry, error: null }));
+      next.afterRuns = next.afterRuns.map(({ starts, ...entry }) => ({ ...entry, error: null }));
       event(next, `Running ${next.afterMerge} again.`);
+      break;
+    }
+    case "afterMergeStart": {
+      const entry = (next.afterRuns ?? []).find(entry => entry.root === action.root && !entry.error);
+      if (!next.live || !next.afterMerge || !entry) return state;
+      if ((entry.starts ?? 0) < AFTER_STARTS) { entry.starts = (entry.starts ?? 0) + 1; break; }
+      entry.error = `It started ${AFTER_STARTS} times and never finished, so Pipeline stopped running it. A command that reloads Herdr's mods on every run restarts itself.`;
+      event(next, `${next.afterMerge} never finished after ${entry.task} merged · stopped after ${AFTER_STARTS} starts.`, entry.task);
       break;
     }
     case "afterMergeRan": {
