@@ -26,6 +26,7 @@ function element() {
 const cx = { notify() {}, stop_propagation() {}, spawn() {}, timer: { every() {} }, focus_handle() { return { focus() {}, is_focused: () => false }; } };
 globalThis.__spacesNative = {
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element,
+  ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   spaces: () => world.spaces, panes: () => world.panes, agents: () => world.agents,
   terminals: () => world.terminals, focused: () => ({ agent: world.agents.find(a => a.focused)?.address }),
   machines: () => [], run: (...args) => world.calls.push(args),
@@ -54,7 +55,7 @@ source = `const { div, svg, h_flex, run, shared, openOverlay, spaceKey } = globa
 Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -209,6 +210,31 @@ test("worktrees fold under the checkout and retain pins and rail access without 
   assert.ok(find(root, "spaces-expand-sidebar"));
   click(root, "spaces-expand-sidebar");
   assert.deepEqual(world.calls.at(-1), ["layout.resize", { id: "sidebar", px: 268 }]);
+});
+
+test("the active space is brought into view at its place among the list's own children", () => {
+  const view = setup();
+  const scrolled = [];
+  view.scroll = { scroll_to_item: i => scrolled.push(i) };
+  world.spaces = [space("app"), space("worktree", true), space("other")];
+  view.shown.add("worktree");
+  view.git = {
+    '[null,"/work/app"]': { repo: "repo", name: "app", branch: "main", linked: false },
+    '[null,"/work/worktree"]': { repo: "repo", name: "app", branch: "feature", linked: true },
+  };
+  let root = view.render();
+  const list = () => find(root, "spaces-all-list");
+  assert.equal(list().styles.track_scroll[0], view.scroll);
+  assert.deepEqual(scrolled, [0]); // A worktree is inside its checkout's tree.
+  view.render();
+  assert.deepEqual(scrolled, [0]);
+  sharedState.set("space.pinned", ["other"]);
+  root = view.render();
+  assert.equal(list().nodes[2], find(root, "space-tree-app"));
+  assert.deepEqual(scrolled, [0, 2]); // The pinned space and its line come first.
+  world.width = 76; root = view.render();
+  assert.ok(find(list().nodes[3], "space-worktree"));
+  assert.deepEqual(scrolled, [0, 2, 3]);
 });
 
 test("a worktree terminal first in a space keeps the checkout's name and groups its agents under the branch", () => {
