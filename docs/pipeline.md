@@ -94,6 +94,14 @@ Task cards are 164 wide below 1320 px of window width, 188 up to 1500 and 212 be
 
 `move` (`{id, delta}`) swaps a queued task with its neighbour in `queueOrder`, then writes `order` on every queued task and clears their `rank`; `startOrder` sorts by `rank`, then `order`, before the planner's order, priority and arrival.
 
+### Converting an open agent
+
+`outsideAgents(all, state, panes)` lists the panes whose program is an agent, whose folder is the project's (`context.cwd` or below, on `context.on`) and whose terminal no task in any pipeline has as `terminal` or `adopt.terminal`. The toolbar's `outsideButton` counts them and the `outside` drawer offers Convert, which sends `adopt` (`{terminal, tab, space, program, agent, title}`). The reducer makes a task `routing` with `launch: "asking"` and `task.adopt`, seated in a slot past the parallel limit if need be. `adoptStep` names where it is for the card.
+
+The runner's `askAdopted` runs beside the Git queue, since the agent's turn may take minutes to end: `delivery.py adopt_ask` clears and returns `herdr-adopt-<task>.json` in the repository's common Git folder, `adoptAsked` is recorded before `adoptAsk` is sent (so a reload never asks twice), and `adopt_read` is polled every three seconds until the file parses. `adoptDescribed` stores the title, description and `adopt.files` and clears `launch`, which hands the task to the Git queue; fifteen minutes without an answer (`ADOPT_WAIT`) or a closed terminal is a `launchFailed`, which forgets `asked` so Retry asks again.
+
+`launch` then makes the worktree as for any task and calls `delivery.py adopt_move`: it keeps the listed paths that `git status` shows as changed (a listed folder covers what is under it; paths outside the repository are dropped), stashes exactly those with `--include-untracked`, applies the stash in the worktree by its commit and drops it. If it doesn't apply, the worktree is reset and the stash popped back in the project folder. `adoptMoved` records the count in `adopt.moved`, so a retry never moves twice. A pane still open whose program is in `SWITCHES` (Claude Code) is sent `prompt` with `switching`, which opens with the EnterWorktree instruction instead of the title and details, and `launched` records the same terminal with `own: "pane"`. Otherwise an installed agent of the pane's kind (else the pipeline's) starts in the worktree through `host.start`, in the pane's space when the pipeline has none, its `prompt` says the changes are already there, and the old terminal is told to stop. `clean` closes only the pane of an `own: "pane"` task. `untouched` is a queued task or a conversion with no planned worktree; `discard` and `close` remove those without touching the agent.
+
 ## Next milestone
 
 Pull requests on hosts other than GitHub.

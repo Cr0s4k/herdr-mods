@@ -228,6 +228,18 @@ nothing to finish.
    the queue. Linear's list shortens descriptions, so Pipeline reads each ticket in full
    before it is queued.
 
+   Agents you started by hand in the project's folder can become tasks too. While any are
+   open, the toolbar shows **N agents outside**; its drawer lists them with **Open** and
+   **Convert to task**. Converting asks the agent, in its terminal, for a title, a description
+   and the uncommitted files that are its own (several agents may share the folder). Pipeline
+   then makes the task's worktree and branch and moves exactly those files out of the project
+   folder into it; commits already made stay where they are. A Claude Code agent is told to
+   switch its session into the worktree, so the conversation carries on there (Claude Code
+   asks you once to allow the move). Any other agent gets a note that the work moved, and a
+   new one of its kind continues in the worktree from the description. From then on it is a
+   task like any other. **Cancel** in the inspector stops a conversion before anything moved;
+   merging or discarding a converted task closes only its agent's pane, not the whole tab.
+
    By default Pipeline only reads Plane and Linear. **Ticket updates** in Settings lets it
    move a ticket as its work goes, per tracker: a state **When its agent starts**, one **When
    it is ready for review** (the task reaches review, or with pull requests, the pull request

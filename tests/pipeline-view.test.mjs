@@ -1745,3 +1745,28 @@ test("a Linear connection that can only read is named before a ticket fails, and
   assert.equal(find(view.render(cx), "setup-demo-use"), undefined, "offered once");
   world.planeReply = null;
 });
+
+test("agents outside the pipeline are counted in the toolbar, listed, and converted into a task", () => {
+  const view = setupLive();
+  assert.equal(find(view.render(cx), "outside"), undefined);
+  world.spaces = [{ id: "s4", tabs: [{ id: "tb4", name: "api" }] }];
+  world.panes = [{ terminal: "t4", pane: "p4", tab: "tb4", cwd: "/work/shop", app: "claude-code", status: "idle", program: { key: "claude", name: "Claude Code", agent: true }, title: "✳ Fix the login form" },
+    { terminal: "t5", pane: "p5", tab: "tb4", cwd: "/work/shop/api", app: "codex", status: "blocked", program: { key: "codex", name: "Codex", agent: true }, title: "Tidy routes" }];
+  assert.match(text(find(view.render(cx), "outside")), /2 agents outside/);
+  click(view, "outside");
+  const drawer = view.render(cx);
+  assert.match(text(find(drawer, "outside-t4")), /Fix the login form.*Claude Code · tab api · idle/);
+  assert.equal(find(drawer, "outside-convert-t5").styles.disabled[0], true);
+  click(view, "outside-open-t4");
+  assert.deepEqual(world.runs.slice(-3), [["space.select", { id: "s4" }], ["tab.select", { id: "tb4" }], ["pane.focus", { terminal: "t4" }]]);
+  click(view, "outside-convert-t4");
+  const task = row(view, "T-1");
+  assert.deepEqual([task.status, task.launch, task.title, task.adopt.terminal, task.adopt.space, task.adopt.program], ["routing", "asking", "Fix the login form", "t4", "s4", "claude"]);
+  assert.equal(view.selected, "T-1");
+  const detail = view.render(cx);
+  assert.match(text(detail), /Asking its agent/);
+  assert.match(text(find(detail, "outside")), /1 agent outside/);
+  click(view, "remove-T-1");
+  assert.equal(view.state().tasks.length, 0);
+  world.panes = []; world.spaces = [];
+});

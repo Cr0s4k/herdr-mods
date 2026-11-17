@@ -2038,3 +2038,83 @@ test("a new worktree is prepared before its agent starts, and Try it starts by i
   assert.equal(tries.length, 1, "once per task");
   assert.equal(live.withEnv({ A: "it's" }, "run"), "export A='it'\\''s'; run");
 });
+
+function converting(program = "claude", overrides = {}) {
+  const pane = { terminal: "t4", pane: "p4", tab: "tb4", cwd: "/work/shop", app: program === "claude" ? "claude-code" : program, program: { key: program, name: program === "claude" ? "Claude Code" : "Codex", agent: true }, title: "✳ Fix the login form" };
+  const sent = [], answers = { adopt_ask: { path: "/work/shop/.git/herdr-adopt-T-1.json", root: "/work/shop" }, adopt_read: { found: false }, adopt_move: { moved: ["src/login.js", "src/login.css"], skipped: [] } };
+  const world = host(createLive(context, 1000), {
+    send: async (terminal, text) => { sent.push([terminal, text]); },
+    async delivery(_context, payload) { world.scripts.push(["delivery", payload]); return answers[payload.op] ?? { target: "main" }; },
+    async worktree(_context, payload) {
+      world.scripts.push(["worktree", payload]);
+      if (payload.op === "inspect") return { base: "a".repeat(40), branch: "main", workspaces: [{ root: "/wt/T-1", branch: "T-1-fix" }] };
+      return { root: "/wt/T-1", cwd: "/wt/T-1", branch: "T-1-fix" };
+    },
+    ...overrides,
+  });
+  world.panes = [pane];
+  world.sent = sent; world.answers = answers; world.pane = pane;
+  world.store[id] = reduce(world.state(), { type: "adopt", terminal: "t4", tab: "tb4", space: "s4", program, agent: pane.program.name, title: "Fix the login form" }, 1000);
+  return world;
+}
+
+test("an agent open in the project folder is listed until a pipeline takes it", () => {
+  const world = converting();
+  const fresh = createLive(context, 1000), other = { ...world.pane, terminal: "t5", pane: "p5" };
+  const panes = [world.pane, other, { ...other, terminal: "t6", cwd: "/work/elsewhere" }, { ...other, terminal: "t7", app: null, program: { key: "shell", agent: false } }, { ...other, terminal: "box/t8" }];
+  assert.deepEqual(model.outsideAgents({ [id]: fresh }, fresh, panes).map(pane => pane.terminal), ["t4", "t5"]);
+  assert.deepEqual(model.outsideAgents(world.store, world.state(), panes).map(pane => pane.terminal), ["t5"]);
+  assert.equal(reduce(world.state(), { type: "adopt", terminal: "t4" }, 1000), world.state());
+});
+
+test("converting a Claude Code agent asks for its files, moves them and switches it into the worktree", async () => {
+  const world = converting(), runner = new live.LiveRunner(world.host);
+  assert.equal(row(world.state(), "T-1").launch, "asking");
+  await step(runner);
+  assert.equal(world.sent.length, 1);
+  assert.match(world.sent[0][1], /herdr-adopt-T-1\.json/);
+  await step(runner);
+  assert.equal(world.sent.length, 1);
+  assert.equal(world.started.length, 0);
+  world.answers.adopt_read = { found: true, title: "Fix the login form's validation", description: "Half done.", files: ["src/login.js", "src/login.css"] };
+  world.host.now = () => 5000;
+  await step(runner);
+  assert.equal(row(world.state(), "T-1").title, "Fix the login form's validation");
+  await step(runner);
+  const task = row(world.state(), "T-1"), move = world.scripts.find(([, payload]) => payload.op === "adopt_move")[1];
+  assert.deepEqual([move.root, move.worktree, move.files], ["/work/shop", "/wt/T-1", ["src/login.js", "src/login.css"]]);
+  assert.deepEqual([task.status, task.terminal, task.tab, task.space, task.own, task.agent], ["working", "t4", "tb4", "s4", "pane", "Claude Code"]);
+  assert.equal(world.started.length, 0);
+  assert.match(world.sent[1][1], /EnterWorktree tool \(path: \/wt\/T-1\)/);
+  assert.match(world.sent[1][1], /moved your 2 uncommitted files there, out of \/work\/shop/);
+  assert.match(world.sent[1][1], /herdr-summary\.md/);
+  await runner.clean(context, task, true);
+  assert.deepEqual(world.calls.at(-1), ["pane.close", { pane: "p4" }]);
+});
+
+test("converting another agent starts a new one in the worktree from its description", async () => {
+  const world = converting("codex", { knownAgents: async () => [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: true }] });
+  const runner = new live.LiveRunner(world.host);
+  world.answers.adopt_read = { found: true, title: "Fix login", description: "Half done.", files: ["src/login.js"] };
+  await step(runner);
+  world.host.now = () => 5000;
+  await step(runner);
+  await step(runner);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.terminal, task.own, task.agent], ["working", "t9", "tab", "Codex"]);
+  assert.equal(world.started[0].agent, "Codex");
+  assert.match(world.sent.at(-1)[1], /Stop working on it here/);
+  assert.match(live.prompt(task, model.workspacesOf(task), "merge"), /continues work from another conversation\. Its uncommitted changes are already in your worktree/);
+});
+
+test("a conversion that hasn't moved anything is cancelled without touching the agent, and one never answered fails", async () => {
+  const world = converting(), runner = new live.LiveRunner(world.host);
+  await step(runner);
+  world.host.now = () => 1000 + live.ADOPT_WAIT + 5000;
+  await step(runner);
+  assert.equal(row(world.state(), "T-1").status, "failed");
+  assert.match(row(world.state(), "T-1").error, /didn't describe its work/);
+  world.store[id] = reduce(world.state(), { type: "discard", id: "T-1" }, 2000);
+  assert.equal(world.state().tasks.length, 0);
+  assert.equal(world.calls.length, 0);
+});

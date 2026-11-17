@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -65,7 +65,7 @@ const conflicted = task => task.status === "review" && task.error && task.termin
 const uncommitted = task => task.status === "review" && !task.discard && /task's worktree has uncommitted changes/.test(task.error ?? "");
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
-const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner"];
+const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner", "outside"];
 const SECTIONS = {
   live: { agent: "Agent", limits: "Usage limits", helper: "AI helper", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
   simulation: { pipeline: "Pipeline", simulation: "Simulation", general: "General" },
@@ -93,6 +93,7 @@ function cardStatus(state, task) {
   if (state.live && task.status === "done" && afterFailed(state).some(entry => entry.task === task.id)) return "Merged · after-merge failed";
   const pushed = state.live && task.status === "done" && pushNote(task);
   if (pushed) return `Merged${task.repos.length < 2 && task.target ? ` into ${task.target}` : ""} · ${pushed.text}`;
+  if (state.live && adoptStep(task)) return adoptStep(task);
   if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
   if (task.status === "queued") {
     const waits = dependencies(state, task);
@@ -896,7 +897,7 @@ export default class Pipeline extends View {
         .when(typed.length > TITLE, el => el.child(div().id("pipeline-create-long").flex_none().text_size(11).text_color(t.muted).child("Title + details")))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true,
           hint: typed.length > TITLE ? "Add to the queue (Enter). The title is its first sentence or opening words; the whole text goes in its details" : "Add to the queue (Enter)" }))),
-      ...(state.live ? [this.ticketsButton(state, t), this.statusChip(state, t)]
+      ...(state.live ? [this.ticketsButton(state, t), ...this.outsideButton(state, t), this.statusChip(state, t)]
         : [this.button("add", "Examples", toggle("picker"), t, { icon: "plus", selected: this.drawer === "picker", hint: "Pick example tasks (A)" }),
           this.button("watch", state.watch ? `Watching ${state.column}` : "Watch column", toggle("watch"), t, { icon: "eye", selected: state.watch }),
           this.button("parallel", `${state.parallel} parallel`, cx => this.open("settings", cx, "pipeline"), t, { icon: "pipeline", hint: "Parallel work slots" }),
@@ -913,6 +914,44 @@ export default class Pipeline extends View {
     const error = Object.values(state.sourceErrors ?? {}).find(Boolean);
     return this.button("tickets", watches.length ? `Watching ${watches.join(" + ")}` : "Add from tickets", cx => this.open(SOURCES[this.drawer] ? null : provider, cx), t,
       { icon: provider, selected: Boolean(SOURCES[this.drawer]) || watches.length > 0, hint: error ?? "Queue tickets from Plane (P) or Linear (L), or watch a state so they join by themselves" });
+  }
+  outside(state) { return outsideAgents(shared(STORE), state, panes()); }
+  outsideButton(state, t) {
+    const found = this.outside(state).length;
+    if (!found && this.drawer !== "outside") return [];
+    return [this.button("outside", `${count(found, "agent")} outside`, cx => this.open(this.drawer === "outside" ? null : "outside", cx), t,
+      { icon: "terminal", selected: this.drawer === "outside", hint: `${found === 1 ? "An agent is" : "Agents are"} working in ${state.repo} outside the pipeline. Convert one to review and merge its work here` })];
+  }
+  showPane(pane) {
+    try {
+      const space = spaces().find(row => row.tabs.some(tab => tab.id === pane.tab));
+      if (space) run("space.select", { id: space.id });
+      run("tab.select", { id: pane.tab });
+      run("pane.focus", { terminal: pane.terminal });
+    } catch { /* It closed meanwhile; the list follows. */ }
+  }
+  convert(pane, cx) {
+    const space = spaces().find(row => row.tabs.some(tab => tab.id === pane.tab));
+    this.act({ type: "adopt", terminal: pane.terminal, tab: pane.tab, space: space?.id ?? null, program: pane.program?.key ?? null, agent: pane.program?.name ?? null,
+      title: String(pane.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "") }, cx);
+    const task = this.state()?.tasks.find(task => task.adopt?.terminal === pane.terminal);
+    if (task) this.inspect(task.id, cx);
+  }
+  outsideDrawer(body, state, t) {
+    const found = this.outside(state);
+    body.child(this.label(`Agents working in ${state.repo}'s folder that Pipeline didn't start. Convert one and its agent names the uncommitted files that are its own; Pipeline moves them into a worktree and branch for a new task, and the work is reviewed and ${state.delivery === "pr" ? "opened as a pull request" : "merged"} from here.`, t));
+    if (!found.length) body.child(this.label("None right now.", t));
+    for (const pane of found) {
+      const tab = spaces().flatMap(space => space.tabs).find(tab => tab.id === pane.tab), agent = pane.program?.name ?? "Agent", moves = pane.program?.key === "claude";
+      const status = { working: "working", blocked: "waiting for you", done: "finished", idle: "idle" }[pane.status] ?? "no status yet";
+      body.child(v_flex().id(`pipeline-outside-${pane.terminal}`).w_full().p(10).gap(8).rounded(6).bg(t.surface).border_1().border_color(t.border)
+        .child(div().text_size(12).font_medium().child(String(pane.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "") || agent))
+        .child(div().text_size(11).text_color(pane.status === "blocked" ? t.blocked : t.muted).child([agent, tab?.name && `tab ${tab.name}`, status].filter(Boolean).join(" · ")))
+        .child(h_flex().gap(6)
+          .child(this.button(`outside-convert-${pane.terminal}`, "Convert to task", cx => this.convert(pane, cx), t, { small: true, primary: true, icon: "plus", disabled: pane.status === "blocked",
+            hint: pane.status === "blocked" ? "It is waiting for you in its terminal. Answer it first" : moves ? "Its conversation moves into the task's worktree and carries on there" : `Its work moves into the task's worktree, where a new ${agent} continues from its description` }))
+          .child(this.button(`outside-open-${pane.terminal}`, "Open", () => this.showPane(pane), t, { small: true, icon: "terminal", hint: "Show its terminal" }))));
+    }
   }
   statusChip(state, t) {
     const used = this.limitPercent(state), held = state.running && state.tasks.some(task => task.status === "queued" && quotaHeld(state, task, Date.now()));
@@ -1340,7 +1379,7 @@ export default class Pipeline extends View {
   }
 
   inspector(state, t, cx) {
-    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Plan", schedule: "Schedule", task: this.selected ?? "Task" };
+    const titles = { plane: this.sources.plane.project ? `Plane · ${this.sources.plane.project}` : "Plane", linear: `Linear · ${filterLabel(this.linearFilter)}`, picker: "Example tasks", queue: "Queue", review: "Review", prs: "Pull requests", done: "Completed", activity: "Activity", watch: "Watch a column", quota: "Quota", planner: "Plan", schedule: "Schedule", outside: "Agents outside the pipeline", task: this.selected ?? "Task" };
     const panel = v_flex().id("pipeline-inspector").w(Math.min(330, this.size.width - 16)).h_full().min_h(0).flex_none().bg(t.surface).border_l(1).border_color(t.border)
       .child(h_flex().px(18).py(12).gap(8).items_center().flex_none().border_b(1).border_color(t.border)
         .child(div().flex_1().font_semibold().text_size(14).truncate().child(titles[this.drawer]))
@@ -1376,6 +1415,7 @@ export default class Pipeline extends View {
     }
     else if (this.drawer === "quota") this.quota(body, state, t);
     else if (this.drawer === "planner") this.plannerView(body, state, t);
+    else if (this.drawer === "outside") this.outsideDrawer(body, state, t);
     else if (this.drawer === "watch") this.watch(body, state, t);
     else if (this.drawer === "schedule") this.schedule(body, state, t);
     else if (this.drawer === "task") this.detail(body, state, t, cx);
@@ -1907,10 +1947,16 @@ export default class Pipeline extends View {
     const trees = workspacesOf(task), several = task.repos.length > 1, target = targetOf(task) ?? this.repo?.branch ?? "your branch";
     const branch = (trees[0] ?? Object.values(task.planned ?? {})[0])?.branch;
     body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
-    body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : labelFor(state, task.status)))
+    body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : adoptStep(task) ?? labelFor(state, task.status)))
       .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}`)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
+    if (adoptStep(task) && !task.discard) {
+      const pane = panes().find(row => row.terminal === task.adopt.terminal), agent = task.adopt.agent ?? "Its agent";
+      body.child(this.label(!task.adopt.files ? `${agent} was asked what it is working on and which uncommitted files are its own. It answers when its current turn ends; then Pipeline makes the worktree and moves those files.`
+        : task.adopt.moved === undefined ? "Making its worktree and moving its files out of the project folder." : `Telling ${agent} to carry on in the worktree.`, t));
+      if (pane) body.child(this.button(`open-${task.id}`, "Open agent", () => this.showPane(pane), t, { icon: "terminal", hint: "Show its terminal" }));
+    }
     if (task.stalled) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Its terminal has shown nothing new for ${elapsed(Date.now() - task.stalled)}. Open its agent to see whether it is stuck.`));
     if (conflicted(task)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${target}`, cx => this.resolve(task, cx), t,
       { icon: "reset", primary: true, hint: "Sends the refusal to its agent, which rebases, resolves the conflicts and stops for review again" }));
@@ -2041,7 +2087,9 @@ export default class Pipeline extends View {
     if (task.status === "done" && task.prs) for (const [name, pr] of Object.entries(task.prs)) body.child(this.button(`pr-link-${task.id}${several ? `-${name}` : ""}`, `${several ? `${name} · ` : ""}Pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", hint: pr.url }));
     if (task.status === "failed" && task.reason !== "checks" && !task.discard) body.child(this.button(`retry-task-${task.id}`, trees.length ? `Retry in the same worktree${trees.length > 1 ? "s" : ""}` : "Retry", cx => this.act({ type: "retry", id: task.id }, cx), t, { primary: true, icon: "reset" }));
     if (task.images?.length && task.status !== "queued") body.child(this.label(`Its agent was given ${count(task.images.length, "image")}: ${task.images.map(item => item.path.replace(/^.*\//, "")).join(", ")}`, t));
-    if (task.status === "queued" && !trees.length) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
+    if (task.adopt && !trees.length && !task.planned && ["routing", "failed"].includes(task.status) && !task.discard) body.child(this.button(`remove-${task.id}`, "Cancel", cx => { this.act({ type: "discard", id: task.id }, cx); this.open(null, cx); }, t,
+      { icon: "x", hint: "Nothing has moved yet. Its agent keeps working where it is" }));
+    else if (task.status === "queued" && !trees.length) body.child(this.button(`remove-${task.id}`, "Remove from queue", cx => { this.act({ type: "remove", id: task.id }, cx); this.open(null, cx); }, t));
     else if (!["merging", "pr", "done"].includes(task.status) && !task.discard) {
       const sure = this.confirm === task.id;
       body.child(this.button(`discard-${task.id}`, sure ? `Delete its branch and worktree${several ? "s" : ""}` : "Discard", cx => {

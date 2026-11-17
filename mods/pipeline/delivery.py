@@ -394,10 +394,94 @@ def remove(payload):
     return {"removed": True}
 
 
+def adopt_file(payload):
+    top = git(payload["root"], "rev-parse", "--show-toplevel")
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,40}", payload["task"]):
+        raise ValueError("Invalid task id.")
+    folder = Path(git(top, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    return top, folder / ("herdr-adopt-" + payload["task"] + ".json")
+
+
+def adopt_ask(payload):
+    top, path = adopt_file(payload)
+    path.unlink(missing_ok=True)
+    return {"path": str(path), "root": top}
+
+
+def adopt_read(payload):
+    _, path = adopt_file(payload)
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {"found": False}
+    if not isinstance(data, dict):
+        return {"found": False}
+    files = [name for name in data.get("files") or [] if isinstance(name, str) and name.strip()] if isinstance(data.get("files"), list) else []
+    return {"found": True, "title": str(data.get("title") or "")[:300], "description": str(data.get("description") or "")[:4000], "files": files[:500]}
+
+
+def uncommitted(top):
+    listed = subprocess.run(["git", "-C", str(top), "status", "--porcelain=v1", "-z", "--untracked-files=all"], capture_output=True, text=True, timeout=60)
+    if listed.returncode:
+        raise ValueError(listed.stderr.strip() or "Git failed.")
+    entries, paths = listed.stdout.split("\0"), []
+    while entries:
+        entry = entries.pop(0)
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC" and entries:
+            paths.append(entries.pop(0))
+    return paths
+
+
+def stash_index(top, commit):
+    listed = (git(top, "stash", "list", "--format=%H") or "").split()
+    return "stash@{" + str(listed.index(commit)) + "}" if commit in listed else None
+
+
+# The agent's uncommitted files leave the project folder as one stash, which is applied in the task's worktree.
+# Whatever goes wrong, they are put back where they were.
+def adopt_move(payload):
+    top, worktree = Path(git(payload["root"], "rev-parse", "--show-toplevel")).resolve(), Path(payload["worktree"])
+    if git(top, "rev-parse", "HEAD") != git(worktree, "rev-parse", "HEAD"):
+        raise ValueError("The project folder moved to another commit while the worktree was made. Retry.")
+    wanted = []
+    for name in payload.get("files") or []:
+        path = Path(name)
+        path = (path if path.is_absolute() else top / path).resolve()
+        if path != top and top in path.parents:
+            wanted.append(path.relative_to(top).as_posix())
+    dirty = uncommitted(top)
+    moving = [path for path in dirty if any(path == name or path.startswith(name + "/") for name in wanted)]
+    skipped = [name for name in wanted if not any(path == name or path.startswith(name + "/") for path in dirty)]
+    if not moving:
+        return {"moved": [], "skipped": skipped}
+    before = git(top, "rev-parse", "-q", "--verify", "refs/stash", optional=True)
+    git(top, "stash", "push", "-q", "--include-untracked", "-m", "herdr-pipeline " + payload["task"], "--", *moving)
+    commit = git(top, "rev-parse", "-q", "--verify", "refs/stash", optional=True)
+    if not commit or commit == before:
+        raise ValueError("Git saved nothing to move. The files are still in the project folder.")
+    try:
+        git(worktree, "stash", "apply", "-q", commit)
+    except (ValueError, subprocess.TimeoutExpired) as error:
+        git(worktree, "reset", "-q", "--hard", optional=True)
+        git(worktree, "clean", "-fdq", optional=True)
+        back = stash_index(top, commit)
+        if back and git(top, "stash", "pop", "-q", back, optional=True) is not None:
+            raise ValueError("The changes didn't apply in the new worktree, so they are back in the project folder: " + str(error))
+        raise ValueError("The changes didn't apply in the new worktree. They are saved as the stash \"herdr-pipeline " + payload["task"] + "\" in the project folder: " + str(error))
+    saved = stash_index(top, commit)
+    if saved:
+        git(top, "stash", "drop", "-q", saved, optional=True)
+    return {"moved": moving, "skipped": skipped}
+
+
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed}
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
+                      "adopt_ask": adopt_ask, "adopt_read": adopt_read, "adopt_move": adopt_move}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))

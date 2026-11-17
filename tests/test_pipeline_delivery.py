@@ -56,6 +56,35 @@ class DeliveryTest(unittest.TestCase):
         return {"op": op, "root": str(self.repo), "worktree": str(self.tree), "branch": self.workspace["branch"],
                 "base": self.base, "title": "T-1 Add notes", **extra}
 
+    def test_adoption_asks_reads_and_moves_only_the_agents_files(self):
+        asked = delivery.adopt_ask({"root": str(self.repo), "task": "T-2"})
+        self.assertEqual(delivery.adopt_read({"root": str(self.repo), "task": "T-2"}), {"found": False})
+        Path(asked["path"]).write_text(json.dumps({"title": "Notes", "description": "Half done", "files": ["app.txt", "new/notes.txt", "gone.txt", "../outside.txt"]}))
+        read = delivery.adopt_read({"root": str(self.repo), "task": "T-2"})
+        self.assertEqual((read["title"], read["description"]), ("Notes", "Half done"))
+        (self.repo / "app.txt").write_text("one\ntwo\nthree\nfour\n")
+        (self.repo / "new").mkdir()
+        (self.repo / "new/notes.txt").write_text("notes\n")
+        (self.repo / "other.txt").write_text("someone else\n")
+        moved = delivery.adopt_move({"root": str(self.repo), "worktree": str(self.tree), "task": "T-2", "files": read["files"]})
+        self.assertEqual(sorted(moved["moved"]), ["app.txt", "new/notes.txt"])
+        self.assertEqual(moved["skipped"], ["gone.txt"])
+        self.assertEqual((self.tree / "app.txt").read_text(), "one\ntwo\nthree\nfour\n")
+        self.assertEqual((self.tree / "new/notes.txt").read_text(), "notes\n")
+        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "?? other.txt")
+        self.assertEqual(self.git(self.repo, "stash", "list"), "")
+
+    def test_adoption_puts_the_files_back_when_they_do_not_apply(self):
+        (self.repo / "notes.txt").write_text("mine\n")
+        (self.tree / "notes.txt").write_text("already here\n")
+        with self.assertRaisesRegex(ValueError, "back in the project folder"):
+            delivery.adopt_move({"root": str(self.repo), "worktree": str(self.tree), "task": "T-2", "files": ["notes.txt"]})
+        self.assertEqual((self.repo / "notes.txt").read_text(), "mine\n")
+        self.assertEqual(self.git(self.repo, "stash", "list"), "")
+
+    def test_adoption_with_nothing_uncommitted_moves_nothing(self):
+        self.assertEqual(delivery.adopt_move({"root": str(self.repo), "worktree": str(self.tree), "task": "T-2", "files": ["app.txt"]}), {"moved": [], "skipped": ["app.txt"]})
+
     def agent_commits(self, name="notes.txt", text="notes\n"):
         (self.tree / name).write_text(text)
         self.git(self.tree, "add", ".")

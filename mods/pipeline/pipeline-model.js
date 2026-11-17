@@ -452,6 +452,16 @@ function followUpDetails(origin, extra) {
 const liveTask = (state, fields, source) => ({ ...fresh({ repos: [state.repo], priority: 2, depends: [], column: "Ready", description: "", ...fields }, "queued", source),
   workspaces: null, planned: null, prs: null, terminal: null, space: null, launch: null, worked: false, merge: false, discard: false, error: null });
 const started = task => Object.keys(task.workspaces ?? {}).length > 0;
+// Nothing of it exists outside Pipeline yet: a queued task, or a converted agent whose work hasn't been given a worktree.
+const untouched = task => !started(task) && (task.status === "queued" || Boolean(task.adopt && !task.planned && ["routing", "failed"].includes(task.status)));
+export function outsideAgents(all, state, panes) {
+  const cwd = state?.context?.cwd, on = state?.context?.on ?? null;
+  if (!state?.live || !cwd) return [];
+  const taken = new Set(Object.values(all ?? {}).flatMap(other => (other?.tasks ?? []).flatMap(task => [task.terminal, task.adopt?.terminal])).filter(Boolean));
+  return (panes ?? []).filter(pane => pane.terminal && (pane.app || pane.program?.agent) && !taken.has(pane.terminal)
+    && (pane.cwd === cwd || String(pane.cwd ?? "").startsWith(`${cwd}/`)) && (on ? pane.terminal.startsWith(`${on}/`) : !pane.terminal.includes("/")));
+}
+export const adoptStep = task => !task?.adopt || task.status !== "routing" ? null : !task.adopt.files ? "Asking its agent" : task.adopt.moved === undefined ? "Moving its work" : "Switching its agent";
 const repoNames = task => task.repos.length > 1 ? ` in ${task.repos.join(" + ")}` : "";
 const PRIORITIES = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
 export const CHECK_FIXES = 2;
@@ -976,6 +986,43 @@ export function reduce(state, action, now = Date.now()) {
       if (action.workspace) task.workspaces = { ...task.workspaces, [action.repo]: action.workspace };
       break;
     }
+    case "adopt": {
+      const terminal = String(action.terminal ?? "");
+      if (!next.live || !terminal || next.tasks.some(task => task.terminal === terminal || task.adopt?.terminal === terminal)) return state;
+      next.created = (next.created ?? 0) + 1;
+      const id = `T-${next.created}`, title = String(action.title ?? "").replace(/\s+/g, " ").trim().slice(0, TITLE) || "Work from an open agent";
+      const task = { ...liveTask(next, { id, title }, "Converted"), status: "routing", since: now, attempts: 1, launch: "asking",
+        adopt: { terminal, tab: action.tab ?? null, space: action.space ?? null, program: action.program ?? null, agent: action.agent ?? null } };
+      next.tasks.push(task);
+      seat(next, task);
+      event(next, `${id} · asking ${task.adopt.agent ?? "the agent"} what it is working on, to take its work over.`, id);
+      break;
+    }
+    case "adoptAsked": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "routing" || !task.adopt || task.adopt.asked) return state;
+      task.adopt.asked = now;
+      break;
+    }
+    case "adoptDescribed": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "routing" || !task.adopt || task.adopt.files) return state;
+      const title = String(action.title ?? "").replace(/\s+/g, " ").trim();
+      if (title) task.title = title.length > TITLE ? `${title.slice(0, TITLE - 1)}…` : title;
+      task.description = String(action.description ?? "").trim().slice(0, 4000);
+      task.adopt.files = (Array.isArray(action.files) ? action.files : []).map(String).slice(0, 500);
+      task.launch = null;
+      event(next, `${task.id} · “${task.title}” · making its worktree${task.adopt.files.length ? ` and moving ${count(task.adopt.files.length, "file")} there` : ""}.`, task.id);
+      break;
+    }
+    case "adoptMoved": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "routing" || !task.adopt) return state;
+      const moved = (action.moved ?? []).length, skipped = (action.skipped ?? []).map(String);
+      task.adopt.moved = moved;
+      event(next, `${task.id} · ${moved ? `moved ${count(moved, "uncommitted file")} into its worktree` : "had no uncommitted files to move"}${skipped.length ? ` · unchanged, so left: ${skipped.slice(0, 5).join(", ")}` : ""}.`, task.id);
+      break;
+    }
     case "launched": {
       const task = row(action.id);
       if (!next.live || task?.status !== "routing") return state;
@@ -988,6 +1035,7 @@ export function reduce(state, action, now = Date.now()) {
       const task = row(action.id);
       if (!next.live || !task) return state;
       Object.assign(task, { status: "failed", slot: null, launch: null, error: action.error });
+      if (task.adopt && !task.adopt.files) delete task.adopt.asked;
       event(next, `${task.id} could not start · ${action.error}`, task.id);
       break;
     }
@@ -1358,7 +1406,7 @@ export function reduce(state, action, now = Date.now()) {
     case "discard": {
       const task = row(action.id);
       if (!next.live || !task || task.discard || ["merging", "pr", "done"].includes(task.status)) return state;
-      if (task.status === "queued" && !started(task)) { next.tasks = next.tasks.filter(other => other !== task); event(next, `${task.id} removed.`); unlink(next, task.id); break; }
+      if (untouched(task)) { next.tasks = next.tasks.filter(other => other !== task); event(next, task.adopt ? `${task.id} removed. Its agent keeps working where it was.` : `${task.id} removed.`); unlink(next, task.id); break; }
       task.discard = true;
       event(next, `${task.id} · stopping its agent and deleting its worktree and branch.`, task.id);
       break;
@@ -1368,7 +1416,7 @@ export function reduce(state, action, now = Date.now()) {
       next.running = false; next.schedule = null; next.watching = {};
       for (const task of [...next.tasks]) {
         if (task.discard || ["merging", "pr", "done"].includes(task.status)) continue;
-        if (task.status === "queued" && !started(task)) { next.tasks = next.tasks.filter(other => other !== task); unlink(next, task.id); }
+        if (untouched(task)) { next.tasks = next.tasks.filter(other => other !== task); unlink(next, task.id); }
         else task.discard = true;
       }
       event(next, "Pipeline closed. Stopping its agents and deleting their worktrees and branches.");
