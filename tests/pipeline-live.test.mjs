@@ -34,9 +34,9 @@ function host(state, overrides = {}) {
   return world;
 }
 async function step(runner) {
-  let job;
-  runner.step({ spawn: fn => { job = fn({ sleep: async () => {} }); } });
-  await job;
+  const jobs = [];
+  runner.step({ spawn: fn => { jobs.push(fn({ sleep: async () => {} })); } });
+  await Promise.all(jobs);
 }
 const typed = (...titles) => titles.reduce((state, title) => reduce(state, { type: "create", title }, 0), createLive(context, 0));
 
@@ -645,6 +645,70 @@ test("a merged PR finishes the task and cleans up; a closed one returns it to re
   closed.clock(1000); await settle(again);
   const back = row(closed.state(), "T-1");
   assert.deepEqual([back.status, back.prs, back.error], ["review", null, "Pull request #12 was closed without merging."]);
+});
+
+test("a pull request opened by hand on a task's branch is followed like one Pipeline opened", async () => {
+  let found = null, github = { state: "OPEN" };
+  const world = prHost(() => github);
+  const base = world.host.delivery;
+  world.host.delivery = async (context, payload) => payload.op === "pr_find" ? (world.scripts.push(["delivery", payload]), { found }) : base(context, payload);
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  assert.equal(row(world.state(), "T-1").status, "review", "no pull request yet");
+  const asked = world.scripts.find(([, payload]) => payload.op === "pr_find")[1];
+  assert.deepEqual([asked.worktree, asked.branch, asked.base], ["/wt/T-1-add-a-dark-mode-toggle", "pipeline/T-1-add-a-dark-mode-toggle-abc", "a".repeat(40)]);
+  found = { url: "https://github.com/me/shop/pull/7", number: 7, merged: false };
+  world.clock(30000); await settle(runner);
+  assert.equal(row(world.state(), "T-1").status, "review", "asked once a minute");
+  world.clock(61000); await settle(runner);
+  const task = row(world.state(), "T-1");
+  assert.deepEqual([task.status, task.prs], ["pr", { shop: { url: "https://github.com/me/shop/pull/7", number: 7 } }]);
+  assert.match(world.state().events[0].message, /found pull request #7 on its branch/);
+  github = { state: "MERGED" };
+  world.clock(62000); await settle(runner);
+  assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").workspaces], ["done", null]);
+});
+
+test("a found pull request moves a task that still needs someone only once it has merged", () => {
+  const pr = { url: "https://github.com/me/shop/pull/7", number: 7 };
+  let state = reduce(reduce(typed("A"), { type: "run" }, 0), { type: "launch", id: "T-1", phase: "creating", repo: "shop", workspace: { root: "/wt/a", cwd: "/wt/a", branch: "a", base: "b" } }, 0);
+  state = reduce(reduce(state, { type: "launched", id: "T-1", space: "s", tab: "t", terminal: "t9" }, 0), { type: "observe", id: "T-1", status: "input" }, 0);
+  assert.equal(row(state, "T-1").status, "input");
+  assert.equal(reduce(state, { type: "prFound", id: "T-1", prs: { shop: { ...pr, merged: false } } }, 0), state, "an open one waits for the agent's turn to end");
+  assert.equal(row(reduce(state, { type: "prFound", id: "T-1", prs: { shop: { ...pr, merged: true } } }, 0), "T-1").status, "pr");
+  const approved = reduce(reduce(state, { type: "observe", id: "T-1", status: "review" }, 0), { type: "approve", id: "T-1" }, 0);
+  assert.equal(reduce(approved, { type: "prFound", id: "T-1", prs: { shop: pr } }, 0), approved, "an approved task is already being delivered");
+});
+
+test("GitHub is asked every ten minutes about a pipeline that is off screen, and at once when its Pipeline tab opens", async () => {
+  const world = prHost();
+  let shown = { space: "sp-other", viewing: false };
+  world.host.shown = () => shown;
+  const runner = new live.LiveRunner(world.host);
+  world.store = { [id]: { ...world.state(), space: "sp-project" } };
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  const asked = () => world.scripts.filter(([, payload]) => payload.op === "pr_state").length;
+  world.clock(1000); await settle(runner);
+  assert.equal(asked(), 1);
+  world.clock(301000); await settle(runner);
+  assert.equal(asked(), 1, "five minutes later it still waits");
+  world.clock(602000); await settle(runner);
+  assert.equal(asked(), 2);
+  shown = { space: "sp-project", viewing: false };
+  world.clock(630000); await settle(runner);
+  assert.equal(asked(), 2, "in its space, once a minute");
+  shown = { space: "sp-project", viewing: true };
+  world.clock(631000); await settle(runner);
+  assert.equal(asked(), 3, "opening the Pipeline tab asks again");
+  world.clock(640000); await settle(runner);
+  assert.equal(asked(), 3);
+  shown = { space: "sp-other", viewing: false };
+  world.store = { [id]: reduce(reduce(world.state(), { type: "reviewLimit", value: 1 }, 0), { type: "create", title: "B" }, 0) };
+  assert.equal(row(world.state(), "T-2").status, "queued", "held by the review limit until the pull request merges");
+  world.clock(700000); await settle(runner);
+  assert.equal(asked(), 4, "queued work a merge could release keeps a running pipeline asked once a minute");
 });
 
 test("an open PR keeps what it waits for from GitHub, without rewriting state when nothing changed", async () => {
@@ -1422,9 +1486,9 @@ test("the runner hands each notice to the host as the change lands", async () =>
   await step(runner);
   world.agents = [{ address: "t9", status: "working" }]; await step(runner);
   world.agents = [{ address: "t9", status: "done" }]; await step(runner);
-  let job;
-  runner.step({ spawn: fn => { job = fn({ sleep: async () => {} }); } });
-  await job;
+  const jobs = [];
+  runner.step({ spawn: fn => { jobs.push(fn({ sleep: async () => {} })); } });
+  await Promise.all(jobs);
   assert.equal(row(world.state(), "T-1").status, "failed");
   assert.deepEqual(said, ["T-1 checks failed"]);
 });

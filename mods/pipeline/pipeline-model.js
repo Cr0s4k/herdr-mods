@@ -1232,6 +1232,18 @@ export function reduce(state, action, now = Date.now()) {
       ticketUpdate(next, task, "review");
       break;
     }
+    case "prFound": {
+      const task = row(action.id), found = Object.entries(action.prs ?? {});
+      const waits = task?.status === "review" || (["input", "failed"].includes(task?.status) && found.every(([, pr]) => pr.merged));
+      if (!next.live || !task || task.discard || !waits || task.approvals?.length || !found.length) return state;
+      const prs = { ...task.prs };
+      for (const [name, pr] of found) prs[name] = { url: pr.url, number: pr.number };
+      Object.assign(task, { status: "pr", merge: false, commit: false, error: null, prs });
+      event(next, `${task.id} · found ${found.length > 1 ? `pull requests ${prList(action.prs)}` : `pull request #${found[0][1].number}`} on its branch. It finishes when ${found.length > 1 ? "every one is" : "it's"} merged on GitHub.`, task.id);
+      ticketUpdate(next, task, "link");
+      ticketUpdate(next, task, "review");
+      break;
+    }
     case "prStatus": {
       const task = row(action.id), pr = task?.prs?.[action.repo];
       if (!next.live || task?.status !== "pr" || !pr || pr.url !== action.url || !action.status) return state;

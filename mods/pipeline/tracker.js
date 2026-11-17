@@ -19,6 +19,7 @@ async function python(file, context, payload, timeout = 120000) {
 export const liveHost = {
   shared, setShared, agents, terminals, panes, run, now: () => Date.now(),
   announce: (_id, notice) => { if (!watching()) notify({ title: notice.title, body: notice.body, level: notice.level, action: { name: "tabs-show.pipeline" } }); },
+  shown: () => { const at = focused(); return at ? { space: at.space, viewing: panes().some(pane => pane.mod === "pipeline" && pane.tab === at.tab) } : null; },
   knownAgents: context => knownAgents({ on: context.on }),
   tickets: readTickets, describe: fullTickets, blockers: ticketBlockers, updateTicket,
   read: async terminal => { const result = await hc(["read", terminal, "--lines", "40"]); return result.code === 0 ? result.stdout : ""; },

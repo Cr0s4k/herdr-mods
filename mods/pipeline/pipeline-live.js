@@ -274,14 +274,31 @@ export const rebaseRequest = (target, error) => [`Merging this branch into ${tar
 export const fixRequest = (command, output) => ["The check command failed after your change:", `$ ${command}`, output || "(no output)", "",
   "Fix the problem, commit on this branch, and stop when the check passes."].join("\n");
 
+const PR_READ = 60000, PR_READ_AWAY = 600000;
 // Starts, merges and discards real agents' work, one job at a time, and maps agent status onto tasks.
 export class LiveRunner {
   constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.trying = new Set(); this.screens = new Map(); this.counted = new Map(); this.summarised = new Map(); this.forgetting = new Set(); this.queues = new Map(); this.planning = new Set(); }
 
-  // Open pull requests are asked about once a minute: what they wait for, and whether GitHub merged or closed them.
+  // GitHub is asked once a minute only where the answer is waited for: the pipeline of the space on screen, and a running one with queued work a merge could release. The rest are asked every ten minutes.
+  pace(state) {
+    const shown = this.host.shown?.();
+    const near = !this.host.shown || (shown && (state.space ?? state.context.space) === shown.space);
+    return near || (state.running && state.tasks.some(task => task.status === "queued")) ? PR_READ : PR_READ_AWAY;
+  }
+  // Opening a Pipeline tab asks again right away, so what it shows is never a stale answer.
+  refreshShown() {
+    const shown = this.host.shown?.(), viewing = shown?.viewing ? shown.space : null, now = this.host.now();
+    if (viewing && viewing !== this.viewing) for (const [id, state] of this.pipelines()) {
+      if ((state.space ?? state.context.space) !== viewing) continue;
+      for (const [key, at] of this.polled) if ((key.startsWith(`pr/${id}/`) || key.startsWith(`find/${id}/`)) && now - at >= 10000) this.polled.delete(key);
+    }
+    this.viewing = viewing;
+  }
+
+  // Open pull requests are asked about: what they wait for, and whether GitHub merged or closed them.
   watchPullRequest(id, state, task, repo, cx) {
     const pr = task.prs[repo], key = `pr/${id}/${task.id}/${repo}`, now = this.host.now();
-    if (this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < 60000) return;
+    if (this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < this.pace(state)) return;
     this.polled.set(key, now); this.polling.add(key);
     cx.spawn(async () => {
       try {
@@ -297,6 +314,24 @@ export class LiveRunner {
           try { await this.clean(state.context, after, true); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
           this.apply(id, { type: "cleaned", id: task.id });
         } else if (github === "CLOSED") this.apply(id, { type: "prClosed", id: task.id, repo, url: pr.url });
+      } catch { /* Try again next minute. */ } finally { this.polling.delete(key); }
+    });
+  }
+
+  // A pull request opened by hand on a task's branch is found here, so the task follows it like one Pipeline opened.
+  watchBranch(id, state, task, cx) {
+    const key = `find/${id}/${task.id}`, now = this.host.now(), workspaces = workspacesOf(task).filter(ws => !task.prs?.[ws.name]);
+    if (!workspaces.length || task.approvals?.length || this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < this.pace(state)) return;
+    this.polled.set(key, now); this.polling.add(key);
+    cx.spawn(async () => {
+      try {
+        const prs = {};
+        for (const ws of workspaces) {
+          const { found } = await this.host.delivery({ cwd: ws.source, on: state.context.on }, { op: "pr_find", root: ws.source, worktree: ws.root, branch: ws.branch, base: ws.base });
+          if (!found) return;
+          prs[ws.name] = found;
+        }
+        this.apply(id, { type: "prFound", id: task.id, prs });
       } catch { /* Try again next minute. */ } finally { this.polling.delete(key); }
     });
   }
@@ -418,6 +453,7 @@ export class LiveRunner {
   }
 
   step(cx) {
+    this.refreshShown();
     this.watchLimits(cx);
     for (const [id, state] of this.pipelines()) {
       for (const provider of Object.keys(SOURCES)) this.watchTickets(id, state, provider, cx);
@@ -433,6 +469,7 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
       if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) this.watchPullRequest(id, state, task, repo, cx);
+      if (["review", "input", "failed"].includes(task.status) && !task.discard) this.watchBranch(id, state, task, cx);
     }
     for (const [id, state] of this.pipelines()) this.updateTickets(id, state, cx);
     for (const [id, state] of this.pipelines()) this.startTries(id, state, cx);

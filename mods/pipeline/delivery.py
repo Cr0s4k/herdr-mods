@@ -342,6 +342,27 @@ def pr_state(payload):
     return {"state": pr.get("state", "OPEN"), "status": status}
 
 
+# A pull request someone opened by hand on the task's branch. An older one from a branch that had the same name doesn't count.
+def pr_find(payload):
+    worktree = Path(payload["worktree"])
+    if not worktree.is_dir():
+        return {"found": None}
+    branch = branch_of(worktree, payload["branch"])
+    pushed = git(worktree, "config", "branch." + branch + ".remote", optional=True) or git(worktree, "for-each-ref", "refs/remotes/*/" + branch)
+    if not pushed:
+        return {"found": None}
+    viewed = gh(worktree, "pr", "view", branch, "--json", "url,number,state,headRefOid")
+    if viewed.returncode:
+        return {"found": None}
+    pr, base = json.loads(viewed.stdout), payload.get("base")
+    head = pr.get("headRefOid") or ""
+    ours = bool(head) and git(worktree, "merge-base", "--is-ancestor", head, "HEAD", optional=True) is not None
+    old = ours and bool(base) and git(worktree, "merge-base", "--is-ancestor", head, base, optional=True) is not None
+    if pr.get("state") not in ("OPEN", "MERGED") or not ours or old:
+        return {"found": None}
+    return {"found": {"url": pr["url"], "number": pr["number"], "merged": pr["state"] == "MERGED"}}
+
+
 SPANS = "\n\nThis change spans "
 
 
@@ -376,7 +397,7 @@ def remove(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed}
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
         print(json.dumps({"data": operations[payload["op"]](payload)}))

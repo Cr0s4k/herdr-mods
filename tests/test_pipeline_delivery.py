@@ -415,6 +415,30 @@ class DeliveryTest(unittest.TestCase):
         status = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["status"]
         self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "failed": 0, "failing": [], "pending": 0, "passed": 0})
 
+    def found(self, state, head):
+        self.stub_gh("cat <<'EOF'\n" + json.dumps({"url": "https://github.com/me/project/pull/7", "number": 7, "state": state, "headRefOid": head}) + "\nEOF\n")
+        return delivery.pr_find(self.payload("pr_find"))["found"]
+
+    def test_a_pull_request_opened_by_hand_is_found_once_the_branch_was_pushed(self):
+        self.with_origin()
+        self.agent_commits()
+        head = self.git(self.tree, "rev-parse", "HEAD")
+        log = self.home / "gh.log"
+        self.assertIsNone(self.found("OPEN", head), "a branch that was never pushed has no pull request")
+        self.assertFalse(log.exists(), "so GitHub isn't asked")
+        self.git(self.tree, "push", "-q", "-u", "origin", self.workspace["branch"])
+        self.assertEqual(self.found("OPEN", head), {"url": "https://github.com/me/project/pull/7", "number": 7, "merged": False})
+        self.assertIn("pr view " + self.workspace["branch"], log.read_text())
+        self.assertTrue(self.found("MERGED", head)["merged"])
+        self.assertIsNone(self.found("CLOSED", head))
+
+    def test_a_pull_request_from_an_older_branch_of_the_same_name_is_not_found(self):
+        self.with_origin()
+        self.agent_commits()
+        self.git(self.tree, "push", "-q", "-u", "origin", self.workspace["branch"])
+        self.assertIsNone(self.found("MERGED", self.base), "its head was already in the branch the task started from")
+        self.assertIsNone(self.found("MERGED", "f" * 40), "its head isn't in this branch at all")
+
     def second_repository(self):
         repo = self.home / "web"
         repo.mkdir()
