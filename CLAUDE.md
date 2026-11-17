@@ -1,7 +1,7 @@
 # herdr-mods
 
 Additions to the Herdr app: mods, the `main-custom` layout that wires them in, and Claude
-skills. See README.md for the features.
+skills. README.md lists the features; each has a guide in `docs/features/`.
 
 ## This repo is the source; Herdr runs a copy
 

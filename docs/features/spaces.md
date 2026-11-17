@@ -1,0 +1,77 @@
+# Spaces and agents
+
+The sidebar **+** offers **New space** for the usual terminal, or **From a project…**
+to search the folders in `~/Projects`. Choose a project to create a local space with
+the default terminal on the left and **Changes + terminal** on the right. Both
+terminals start in the project folder, and focus stays in the left terminal.
+Use ↑/↓ and Enter to choose; Esc closes the picker. **Refresh projects** rereads the
+folder list. Reading the list requires Python 3, like the other local readers.
+
+The sidebar is one tree: agents appear under their space, with subtle connecting
+lines. Click a space to select it, or its chevron to expand or collapse its children
+without changing focus. Click an agent to focus its pane. Worktree spaces remain
+under their checkout and start collapsed; subagents start collapsed too, and clicking
+a subagent opens its live preview. Expansion choices survive restarts.
+
+A space's other terminals are listed after its agents: each is named after its tab (when
+you named it) or its folder, with the program running in it beside the name (`web  node`).
+Click one to focus its pane. Two with the same name also show their tab number, or their
+address when they share a tab. **Needs you** leaves them out.
+
+Herdr names a space after its first terminal's live folder, so a `cd` or a new worktree
+renames it. Here a space is locked to the first place it has outside your home folder: it
+takes that repo's (or folder's) name as its own, and the sidebar and the status bar keep
+showing that folder's repo and branch wherever its terminals go. A space opened at `~` waits
+for its first `cd`. To move a space, right-click → rename it to nothing: it locks again to
+where its first terminal is now. Files and Changes still follow the focused terminal.
+
+A Pipeline task's worktree could also rename the whole space. While one of its terminals, or the folder it was made in, is in the
+repo's main checkout, the sidebar keeps the space there and under the repo's name (a name you
+gave it always wins). Agents working in another worktree sit under a branch row inside their
+space; click the branch to focus its first agent.
+
+Status indicators appear on agent rows. **Needs you** filters the tree to agents
+waiting for input, revealing their ancestors without changing saved expansion choices.
+Turn the filter off to return to all spaces. It also reveals matching agents inside
+collapsed machine groups. Agent pins stay at the top of their own space. Agent keyboard
+shortcuts follow the tree order, including agents in folded branches. The narrow sidebar
+keeps every space accessible, with an expand button at the bottom.
+
+Hover a space and click the focus icon beside its pin, or right-click and choose
+**Focus this space**, to show only its agents and terminals in the sidebar. Its name stays visible
+above the list. **All spaces** returns to the full
+tree with its folds, filter and scroll position preserved. A small count beside
+the back button appears when agents in other spaces need you. Focus stays on the
+chosen space as agents finish or focus moves elsewhere; clicking its name shows
+that space again. Closing the space returns the sidebar to the full tree.
+
+Hover a space and click the hide icon just before the pin, or right-click →
+**Hide space until…**. Choose 30 minutes, 1 hour, 4 hours, tomorrow at 09:00,
+or a custom local date and time. The space and its agents leave the sidebar
+until then; terminals keep running. **Hidden spaces** at the bottom lets you
+show one early. Deadlines, pins and positions survive restarts. Hiding a checkout
+leaves its other worktree spaces visible.
+
+The **Tidy** button beside the sidebar's **+** sorts the spaces by when you last used them,
+most recent first, and folds every space unused for an hour. A space is in use while it is the
+one shown (with Herdr in front) or an agent is working in it; a program left running in a
+terminal doesn't count. Pinned spaces are sorted among themselves and stay above the line, and
+a worktree space moves with its checkout. Nothing moves until you click it again. For a space
+it hasn't watched yet, the last use is its folder's last commit or checkout, or its newest
+Claude session, whichever is later.
+
+## Pinned spaces
+
+Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
+click it again to unpin. You can also right-click → **Pin to top**, or drag a space above
+the line to pin it, below to unpin it. Pinned spaces stay above the rest, with a line under them. Pins are saved
+in Herdr's shared state (`space.pinned`), so they survive restarts.
+
+## Keyboard
+
+**Ctrl-A E** (or moving left past the first pane) puts the keyboard in the sidebar, with an
+accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
+spaces, their agents and terminals; **→ ←** unfold and fold a space, and **←** on an agent or
+terminal goes back to its space. **Enter** shows the space or focuses the agent or terminal. On a space, **P** pins it, **F**
+focuses it, **H** hides it and **M** opens its menu; **N** adds a space and **T** tidies. **Esc** leaves focus
+mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.

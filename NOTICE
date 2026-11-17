@@ -1,0 +1,39 @@
+herdr-mods
+Copyright 2026 Omar (Cr0s4k)
+
+Licensed under the Apache License, Version 2.0 (see LICENSE), except where noted below.
+
+Herdr
+-----
+This repository contains modified copies of mods and a layout that ship with the Herdr app,
+which is distributed under the Apache License, Version 2.0, copyright its authors:
+
+  layouts/main-custom.json
+  mods/changes-modal/
+  mods/files-modal/
+  mods/menu-pin/
+  mods/pane-titles/
+  mods/spaces-pin/
+  mods/tabs-show/
+  mods/workspace-chrome-minimal/
+  mods/workspace-status-git/
+
+Each of these names its original and the Herdr version it came from under "cloned_from"
+(in mod.json, or in the layout file). The "upstream" branch holds the unmodified originals,
+one commit per Herdr version; `git diff upstream main -- <path>` shows every change made here.
+
+This project is not affiliated with or endorsed by Herdr.
+
+Material Icon Theme
+-------------------
+mods/files-modal/icons/ contains icons from Material Icon Theme
+(https://github.com/material-extensions/vscode-material-icon-theme),
+Copyright (c) 2025 Material Extensions, under the MIT License in
+mods/files-modal/icons/LICENSE.
+
+Companion
+----
+The images in mods/companion/art/ and mods/companion/sprites/ are unofficial fan art of Companion from
+"fan art" by Kentaro Miura, published by Hakusensha. The character belongs to its rights
+holders. These images are not covered by the Apache License above, are not for commercial
+use, and will be removed at a rights holder's request.

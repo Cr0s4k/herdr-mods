@@ -24,7 +24,7 @@ Work in the herdr-mods repo on `main` with a clean tree.
 2. Resolve every listed conflict. For each file, read both sides of the change:
    - Herdr's: `git diff $base upstream -- <path>`
    - Ours: `git diff $base ORIG_HEAD -- <path>`, plus `git log --oneline -- <path>` and the
-     README's "What's in here" for the intent behind it.
+     README's "What is in here" for the intent behind it.
 
    Write Herdr's new line, then re-apply our edit on top of it, so the file has both. Where Herdr
    changed code our clone deleted (the panels' inline viewers), carry the change over only if our

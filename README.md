@@ -1,932 +1,102 @@
 # herdr-mods
 
-My additions to the Herdr app: mods, a layout that wires them in, and the
-agent skills that go with them.
+Mods for [Herdr](https://herdr.dev), the terminal app for running coding agents side by side:
+a task pipeline, panels for screenshots, tickets, goals and watchers, a sidebar that shows
+agents under their spaces, and the agent skills that go with them.
+
+This is an unofficial, personal setup, shared as is. It isn't affiliated with Herdr. It
+follows the newest Herdr release (0.1.16 at the time of writing), is used daily on macOS only,
+and has a few of my habits built in (see [Things to know](#things-to-know)). Take the whole
+thing, or copy the mods you like.
+
+## What you get
+
+| Feature | What it does | Guide |
+|---|---|---|
+| **Pipeline** | Queue tasks, typed or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
+| **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
+| **Files and Changes** | Files and diffs open in a large dialog, with push and pull counts, image previews and Material file icons. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
+| **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
+| **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
+| **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
+| **Watchers** | Get told when a pull request is reviewed, checked or merged, or when a shell command succeeds. | [watchers.md](docs/features/watchers.md) |
+| **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
+| **Skills** | A searchable inventory of the agent skills available in a folder and on the machine. | [skills.md](docs/features/skills.md) |
+| **Tab bar** | A GitHub button for the current project, and on/off switches for most of the above. | [tab-bar.md](docs/features/tab-bar.md) |
+| **Companion** | A pixel-art companion in the sidebar who cuts down a zombie whenever an agent finishes a turn. | [companion.md](docs/features/companion.md) |
+
+## Install
+
+You need Herdr with its `herdr-app` command, macOS, Git, Python 3 and `jq`. Some features need
+more:
+
+- pull requests and Watchers: GitHub's `gh`, signed in
+- Show: the Swift toolchain (Xcode command line tools)
+- highlighted diffs: [`bat`](https://github.com/sharkdp/bat)
+- the GitHub button: Firefox
+- rebuilding Companion's sprites: `ffmpeg`
 
 ```sh
+git clone https://github.com/Cr0s4k/herdr-mods.git
+cd herdr-mods
 ./install.sh           # copy everything into Herdr and switch to the main-custom layout
 ./install.sh --watch   # keep copying while you edit; Herdr reloads mods live
 ```
 
-Install copies `mods/*` and `layouts/*` into `~/.config/herdr-app`, links any executable at the
-top of a mod folder into `~/.local/bin`, and links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex).
-`ctrl-shift-l` switches back to Herdr's own layouts.
+Install does three things:
 
-**GitHub** in the tab bar opens the current project in a new Firefox tab. It follows the
-focused terminal's folder, including subfolders and worktrees, and reads HTTPS or SSH
-GitHub remotes. It prefers `origin`, then the first GitHub fetch remote. Remote spaces
-read Git on their machine and open Firefox on this computer. Firefox must be installed.
+- copies `mods/*` and `layouts/*` into `~/.config/herdr-app`, replacing mods of the same name
+  that are already there
+- links any executable at the top of a mod folder (`herdr-show`, `herdr-watch`,
+  `herdr-pipeline`, …) into `~/.local/bin`
+- links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex)
 
-## Show
+`ctrl-shift-l` switches back to Herdr's own layouts at any time. To remove everything, switch
+layout, then delete those copies and links.
 
-A **Show** panel (top right, next to Files and Changes). Claude or Codex posts screenshots there; you
-mark them up, send them back, and the fixed screenshot lands underneath.
+## Things to know
 
-```
-pricing-card.png          ← the agent posts it
-pricing-card.marked.png   ← you draw on it, add a note, "Save & send back"
-pricing-card.fixed.png    ← the agent fixes it and posts the new screenshot
-```
+**Credentials.** Nothing here sends data anywhere except the services you connect, and there
+is no telemetry. Three features read credentials on your machine:
 
-From any terminal in Herdr (the agent does this itself, via the `herdr-show` skill):
+- **Pipeline's usage limits** read Claude Code's own login from the macOS keychain (or
+  `~/.claude/.credentials.json`) and send it only to Anthropic's usage endpoint, which is
+  undocumented and may change. The token is kept in memory and never written anywhere.
+- **Linear** reuses Claude Code's Linear MCP login when there is one, read from the same
+  places and sent only to Linear's MCP server. You can give it its own API key instead, saved
+  with owner-only permissions in `~/.config/herdr-app/linear/credentials.json`.
+- **Plane** saves your instance URL and access token with owner-only permissions in
+  `~/.config/herdr-app/plane/credentials.json`.
+
+Loops, Skills and Pipeline's token counts also read your agents' local session files
+(Claude Code, Codex, OpenCode), read-only.
+
+**Agents act on your repositories.** Live Pipeline starts real agents, creates worktrees and
+branches, and merges or pushes when you approve (or by itself, if you turn that on). Try the
+demo first: Pipeline's Settings, General, **Try a demo**.
+
+**Built-in habits.** The GitHub button opens Firefox, and **From a project…** lists the
+folders in `~/Projects`. Both are easy to change in `mods/tabs-show/github.js` and
+`mods/space-new/`.
+
+**Companion** is fan art of the character from Kentaro Miura's *fan art*, generated from a
+reference image. It is not official and not covered by this repository's licence; see
+[NOTICE](NOTICE). Switch him off under Features in the tab bar.
+
+## Working on it
+
+Herdr runs a copy, so edit the files here and let `./install.sh --watch` copy them over.
+Tests need no setup:
 
 ```sh
-herdr-show shot.png --title "Landing page v2"   # post an image
-herdr-show fixed.png --fixes <id>               # post the fix for a marked-up image
+node --test tests/*.test.mjs
+python3 -m pytest tests
 ```
 
-In the panel, click an image to mark it up: Pen, Arrow, Circle, Box, Text, numbered Pins,
-five colors, ⌘Z to undo, a note field. **Save & send back** pastes the marked image's path,
-your note and the `--fixes` command into the agent terminal that posted the original.
-Images and their metadata are stored in `~/.config/herdr-app/show/`.
-**Clear** removes every image in the current view and its stored copy and metadata. It
-respects the space filter: switch to **All** to clear images across all spaces. Original
-source files are kept.
+[docs/pipeline.md](docs/pipeline.md) explains Pipeline's code. [CLAUDE.md](CLAUDE.md) holds
+the working notes agents follow in this repository; they are useful to people too.
 
-Needs macOS (Swift toolchain, `sips`) and Python 3.
-
-In Codex, `herdr-show` must run outside the sandbox: approve it when Codex asks, or choose
-"don't ask again" for `herdr-show`. Codex's commands don't see the terminal's `HC_TERMINAL_ID`,
-so `herdr-show` looks up the one agent working in that project instead.
-
-## Files and Changes in a dialog
-
-The Files and Changes panels only list; clicking a file opens it in a large dialog instead of
-the narrow panel. ↑/↓ steps through the listed files, Esc closes.
-
-- **Files** shows the file with syntax highlighting (Herdr's code view).
-  Use **Collapse all folders** in its header to close every expanded folder at once.
-- **Changes** shows the diff, **Split** (old and new side by side) or **Unified** (`S` toggles,
-  and the choice sticks). Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
-  when it's installed (`brew install bat`), in the theme's terminal colors; without it they're plain.
-- Images (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, TIFF) show as pictures: in Files on their own,
-  in Changes as **Before** (`HEAD`) and **After** (working copy) side by side, like GitHub. SVGs
-  stay text. Local folders only; the copies Herdr needs to load them live in
-  `~/.config/herdr-app/data/image-preview/` and are deleted after a day.
-- The bottom of **Changes** shows the branch and, like VS Code, how many commits are waiting:
-  **↑N Push** for local commits not yet pushed, **↓N Pull** for commits on the remote you don't
-  have. It fetches when the folder changes and every 3 minutes (**↻** fetches now). A branch
-  with no upstream shows **Publish** (`git push -u origin HEAD`). Pull runs plain `git pull`, so
-  your `pull.rebase` setting applies; failures show in red above the bar.
-  The bottom status bar shows the same counts beside the space's branch (`main ↑2 ↓1`), only when
-  there is something to push or pull. Click **↓N** to pull or **↑N** to push; a failure shows in
-  red beside them for a few seconds. It checks every 10 seconds and fetches every 3 minutes.
-- Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
-  file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
-
-**Changes + terminal** is a separate action beside the Files, Changes, Show and Loops side-panel
-toggles. It opens Changes as a normal pane on the right, with a normal terminal pane below
-it, starting at equal height. Once open, the action becomes **Focus changes** and returns
-to that pane without creating another terminal or closing your chosen side panel.
-Pane navigation, swapping, dragging, splitting, zooming and closing use Herdr's usual
-shortcuts and controls. The arrangement belongs to its tab and Herdr remembers it.
-**Changes** toggles the normal side panel, just like Files, Show and Loops. It works
-independently of the review panes, so either view is available when you want it.
-
-Files, Changes, Show and Loops each have a **Move to pane** icon in their side-panel header.
-It opens that view as a normal pane in the current tab, then hides the side panel. New panes
-keep the current folder expansion, commit draft or filters. If that view already has a pane
-in the tab, the action focuses it and keeps its existing state. These panes support the usual
-navigation, drag, split, zoom and close controls. Use the toolbar toggle whenever you want
-the side panel again. Moving a panel does not start a terminal; **Changes + terminal**
-remains the shortcut for the paired layout.
-
-## Companion
-
-A detailed pixel-art **Companion from fan art** stands above the sidebar footer. He raises
-the sword when a new agent appears or starts a turn, then cuts down a zombie
-when an agent finishes a turn. The zombie dissolves into pixels. This follows live
-Codex, Claude and other agent reports across spaces; the caption also highlights
-agents waiting for your input. A finished turn is a celebration of activity, not a claim that its task succeeded.
-
-Click Companion to spar with a zombie. The small pause button stops animations and remembers
-your choice. macOS Reduce Motion also keeps him still. He rests between events and while the window is inactive. Parallel events
-are grouped into short sequences, and reloading never replays old activity. The narrow
-sidebar keeps a compact view of the whole fight. The expanded view leaves room for
-full-length sword swings while keeping his face, armor and cape readable. Narrowing the sidebar
-reduces both the scene and its footer height. Animations use native image playback.
-
-For a show/hide shortcut, bind `ctrl-a g` to `layout.toggle:companion` in the
-`layout:main-custom` section of your Herdr `keys.json`. Press **Ctrl+A**, release,
-then **G**. Hiding Companion gives the space back to the sidebar; Herdr remembers his
-visibility separately from the animation pause setting.
-
-The reference-led sprite sheets, fixed blade layer and exact imagegen prompts are in `mods/companion/art/`.
-Rebuild the playback assets with `python3 mods/companion/build_sprites.py` (Python 3 and
-`ffmpeg`); the checked-in sprites need no build step or extra runtime dependency.
-
-## Skills
-
-**Skills** in the top toolbar opens a searchable inventory for the working folder and
-machine. **Available here** combines discovered project and personal skills with skills
-from plugins enabled in local configuration. **Personal library** shows personal,
-managed, built-in and cached plugin skills, including disabled or unverified copies.
-Filter either view by **All agents**, **Codex**, **Claude** or **OpenCode**. Plugin and built-in groups
-start collapsed; searching also searches inside them.
-
-Claude's `skills/synced/` cache is classified from its sync manifest: Anthropic-provided
-skills appear under **Built-in skills**, plugin-provided skills under **Plugin skills**,
-and other synced skills under **Account skills**. They are separate from authored
-personal skills. Unlisted cached files remain unverified in Personal library. Synced
-skills use the full `/anthropic-skills:<name>` invocation to avoid local-name collisions.
-
-Skills linked to the same file appear once, with both agent labels when applicable.
-Different files with the same name stay separate. Open a skill to read its Markdown,
-inspect its original source and discovery locations, or copy its path or agent-specific
-invocation. Copying never sends text to a terminal. **Move to pane** keeps the filters and
-search and binds the view to that tab.
-
-The inventory reads `.agents/skills`, `.codex/skills`, and `.claude/skills` from the
-working folder and its repository ancestors, plus personal skills under `~/.agents`,
-`$CODEX_HOME` (default `~/.codex`) and `$CLAUDE_CONFIG_DIR` (default `~/.claude`). It also
-reads Claude's legacy commands and plugin registry, Codex's plugin cache and skill
-configuration, Codex's on-disk built-ins, and `/etc/codex/skills` when present.
-OpenCode's skills aren't read from folders: the reader asks OpenCode's own server
-(`opencode api GET /api/skill`) what a session in the working folder loads, so they include
-the Claude and `.agents` skills it picks up and its built-ins, which open from the text the
-server returns. OpenCode has no command to copy for a skill.
-The reader runs on the selected space's machine, using Python 3, and refreshes every
-15 seconds or manually. The folder follows terminal focus; a moved pane stays in its tab.
-
-This is **filesystem discovery, not a running agent's loaded-skills list**. Per-session
-options, trust, managed policies, account state and agent versions can change what loads.
-Cached Codex plugins without confirmed enablement, or with multiple cached versions,
-appear only in Personal library as unverified. Claude's built-ins that have no local
-manifest are not indexed. A plain repository `skills/` folder contains source files and
-does not itself install those skills for any agent.
-
-## Pipeline
-
-**Pipeline** in the top toolbar opens a visual task pipeline for the current project in its
-own tab. Opened from a project it is **Live**: real coding agents on your repository.
-**Try a demo** (Settings, General) switches to the **Simulation**, example tasks and pretend
-agents, marked **Demo** in the header; **Exit demo** there returns to your pipeline, which
-keeps running meanwhile. Without a project folder Pipeline is the demo only.
-
-The view button beside Settings switches between the **map** (the default: work flowing
-through the agents at the centre) and the **board**: Queue, Working and Review as three
-columns, with the plan as one line above them, pull requests under their own heading in
-Review, and the same cards, buttons and inspector. Pipeline remembers the choice.
-
-In the sidebar, a space lists its **Pipeline** above its agents while the Pipeline tab is open
-there, the live pipeline is started, or it has tasks that aren't merged yet. It spins while the
-pipeline is started; click it to open the pipeline in that space. The × that appears on hover
-closes the pipeline after a confirmation that lists what goes: it stops the pipeline and clears the
-schedule and ticket watches, removes queued tasks, stops the agents still at work and deletes their
-worktrees and branches, and closes the Pipeline tab. Tasks merging or waiting on a pull request stay.
-
-### Live
-
-Live runs real agents on the project's Git repository, one isolated worktree and branch per
-task, so parallel agents never touch each other or your checkout.
-
-A space's new live pipeline opens with a **Set up this pipeline** card over its empty canvas:
-the AI helper, the agent, the check command, Try it, delivery, the After merge command,
-where tickets come from and how tickets are updated, each
-with a button into its Settings section. When the repository's branches and commits name a
-Linear team (`ACME-186` names ACME), the card offers **Use Linear · Acme**; with a team or a
-linked Plane project it offers that tracker's usual three moves in one click, such as
-**Use In Progress → In Review → Done**. What Pipeline recognises from file names is offered,
-never applied: **Use npm test** for a check command it finds, **Use pull requests** when the
-repository is on GitHub and `gh` is installed. **Choose for me** (sparkles) asks the AI helper
-to read the repository, read-only, and set the check command, Try it, delivery and the After
-merge command; each choice
-it made shows its reason under the row. The AI helper is the agent that also plans the queue:
-**AI helper** in Settings picks its agent (Claude Code, Codex or OpenCode), model and effort once for both, from the same model list as the Agent section,
-whether or not **Plan with an agent** is on. On a small model a run
-takes about 20 seconds and costs about a cent. The card goes away with **Done** or the next
-**Start pipeline**; **Show setup** (Settings, General) brings it back, also on a pipeline made
-before the card existed.
-
-Settings belong to the project, not the space: the agent and its model, checks, Prepare, Try
-it, delivery, After merge, repositories, ticket updates, the Linear team and project, agent
-instructions and Show the change. A change in one space reaches every space open on the same
-folder, a new space starts with them (its setup card says so), and closing Pipeline keeps
-them. Tasks, the queue, watches, the schedule and Start stay with the space. **Saved
-pipelines** (Settings, General) lists every pipeline Herdr has saved, with **Forget** for
-one that has nothing left to finish (no agent, worktree or open pull request) and one button
-for all such. **Reset project settings** there (asked twice) starts the project's settings
-over and keeps the tasks. The Close dialog offers **Close and forget** when closing leaves
-nothing to finish.
-
-1. Type a task into **New task** and press Enter. A Linear link or key on its own
-   (`https://linear.app/…/issue/ACME-171/…`, `ACME-171`) becomes that ticket, read in full,
-   so its updates and pull request link work; if Linear can't be read it stays a typed task. Click it to add details for the agent;
-   the title and details are its first message. Under the details, **Images** takes up to
-   four screenshots or mockups (PNG, JPEG, GIF, WebP): drop them from Finder, or **Paste
-   image** for one on the clipboard (macOS). Pipeline copies them into
-   `~/.config/herdr-app/pipeline-images`, lists them in the agent's first message and gives
-   Claude Code and Codex that folder to read. A project on another machine takes none. The
-   copies are deleted when the task is merged, discarded or removed. Text too long for a title (over 90
-   characters, marked **Title + details** in the field) keeps its first sentence or opening
-   words as the title, and the whole text goes into its details. Or bring tickets with
-   **Add from tickets**, which opens the tracker this pipeline used last and switches between
-   the two at the top of its drawer. **Plane** (P) is the
-   project linked to this repository in the Tasks panel: pick open tickets and **Queue**
-   them, or **Watch a state** (say Ready) so tickets in it join the queue by themselves within
-   a minute, each one once. A Plane task keeps the ticket's key (HMOD-12), priority and
-   description, and the inspector links back to it.
-   **Linear** (L) works the same way, with the connection the Linear panel uses: choose My
-   tickets, Unassigned or All tickets and optionally a Linear project, then pick tickets (up
-   to 10 at a time) or watch a state. States are merged by name across the teams of the listed
-   tickets, and a watch needs My tickets or a project, so a workspace-wide state can't flood
-   the queue. Linear's list shortens descriptions, so Pipeline reads each ticket in full
-   before it is queued.
-
-   Agents you started by hand in the project's folder can become tasks too. While any are
-   open, the toolbar shows **N agents outside**; its drawer lists them with **Open** and
-   **Convert to task**. Converting asks the agent, in its terminal, for a title, a description
-   and the uncommitted files that are its own (several agents may share the folder). Pipeline
-   then makes the task's worktree and branch and moves exactly those files out of the project
-   folder into it; commits already made stay where they are. A Claude Code agent is told to
-   switch its session into the worktree, so the conversation carries on there (Claude Code
-   asks you once to allow the move). Any other agent gets a note that the work moved, and a
-   new one of its kind continues in the worktree from the description. From then on it is a
-   task like any other. **Cancel** in the inspector stops a conversion before anything moved;
-   merging or discarding a converted task closes only its agent's pane, not the whole tab.
-
-   By default Pipeline only reads Plane and Linear. **Ticket updates** in Settings lets it
-   move a ticket as its work goes, per tracker: a state **When its agent starts**, one **When
-   it is ready for review** (the task reaches review, or with pull requests, the pull request
-   opens) and one **When the work merges** (locally, or the pull request merged on GitHub),
-   picked from the linked Plane project's states or Linear's states for the chosen team and
-   the teams of queued tickets, and
-   **Link pull requests to the ticket**, which adds "PR #12: title" when the pull request
-   opens. Each update first reads the ticket, so a state it already has or a link it already
-   carries is left alone, and a retried task doesn't move its ticket again. Updates never
-   hold up or stop a task: the inspector shows the last one ("Moved to In Progress in
-   Plane"), or what failed with **Try again**, and the task history records each. Linear
-   updates need a connection with Write permission; without it the inspector offers
-   **Connect Linear**. Agents are still told not to change a ticket's status or assignee.
-   While updates are off, a ticket task's inspector says its ticket stays where it is, with
-   **Set up**. When Linear updates are on but the connection can only read (a read-only
-   Claude login), the setup card and **Ticket updates** say so with **Connect Linear** before
-   any ticket fails; an API key shows what it may do only when it is used.
-
-   Tasks can wait for each other. A ticket brings its **blocked by** links from Plane or
-   Linear: a blocker that is also in the pipeline holds the task until that task merges, and
-   one outside it holds the task until its ticket is completed or cancelled (Pipeline asks
-   once a minute). To make any queued task wait for another, pick that task under **Waits
-   for** in the inspector; a circle is refused. **Start anyway** lets a waiting task go, and
-   removing or discarding a task frees the ones waiting for it. With pull requests, a task
-   that waited starts from its branch freshly fetched from `origin`, so it has its blocker's
-   merge; with local merges it starts from your project folder, so pull first if a blocker
-   landed somewhere else.
-
-   The queue starts in the order it is drawn: by priority (a ticket's own; typed tasks are
-   Medium), then arrival. **Start first** in a queued task's inspector puts it ahead of the
-   rest, whatever its priority; the last one marked goes first, and clicking again puts it
-   back. **Move up** and **Move down** beside it swap the task with its neighbour: the queue
-   then keeps the order you gave it, Start first still goes ahead of it, and tasks added
-   later join after the ones you ordered. **Model and effort for this task** there lets one task start with its own (a small
-   model for a docs change, say); what you leave **As set** follows Settings. An agent with many models (OpenCode) shows the same searchable list there as in Settings.
-
-   **Plan with an agent** (Settings, AI helper) hands the ordering to Claude Code, Codex or OpenCode: the one you
-   pick there, else Codex when tasks start with it, else Claude Code. OpenCode has no output schema, so it is asked for JSON in its reply, and it reads through its plan agent on a private server that refuses edits and the shell. Whenever a task joins the queue, its details
-   change or one of its ticket blockers changes, Pipeline asks it, read-only, to look at the
-   queue, each ticket's Plane or Linear blockers, the work already started and the
-   repositories, and to answer with the
-   order to start tasks in, which must wait for which (because one builds on another, or
-   both would change the same lines), and a reason for each. The plan appears above the
-   centre, each queued task's inspector shows its reason, and cards
-   show the waits. New agents wait for the plan; if planning fails, tasks start by priority
-   and only a new or changed task asks again. Pipeline still keeps its own rules: the
-   parallel and review limits, waits you set, no circles, and a wait that contradicts the
-   plan's own order is dropped. Click the plan card on the map, **The plan · by …** (or the centre while it says
-   **Planning**, or **See what the planner did** in Settings) for the **Planner** view: who
-   planned and with what model and effort, how long it took, its tokens and (for Claude
-   Code) cost, its summary, its order with every task's reason and waits (kept after the
-   tasks start), the files it read and the searches and commands it ran, and what it was
-   asked. **Watch the next plan** runs the next one in a terminal tab, so you see it read as
-   it goes. Ticket blockers hold a task whether the planner is on or
-   not; the planner sees them so it can plan around them. **Start first** and **Start
-   anyway** still win. Pick its model and effort there (Default is the agent's own); a plan
-   takes seconds on a small model.
-2. **Start pipeline** (Space). For each queued task, up to the parallel limit (2 by
-   default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
-   and opens the agent as a tab named after the task in the space you started from, so it
-   appears under that space in the sidebar. The agent is the first installed one Herdr knows
-   (Claude Code, Codex…); pick another in Settings, which the toolbar's chip opens (**Claude Code · 2 parallel · 34% used**: the agent with its model and effort, how many run at once, and how full its usage limits are). For Claude Code, Codex and OpenCode,
-   Settings also sets the **Model** (Claude's aliases such as opus, the models Codex lists in
-   its `models_cache.json`, the models OpenCode's server lists, as `provider/model`, or any
-   model name typed in) and **Effort**, passed as launch
-   flags; **Default** leaves the agent's own setting. The chip and each task's
-   inspector show what it started with. The models are a scrolling
-   list headed by **Default**; OpenCode's are grouped by provider with the free ones first,
-   as its own model dialog shows them. Typing in the field narrows the list by name,
-   provider or "free", and Enter picks the first match, or uses the name as typed when
-   nothing matches. OpenCode's effort is the model's variant, so it is
-   offered once a model is picked, and a task with a model runs on a private OpenCode
-   server (`--standalone`): the shared one can't be told a model per session.
-3. The card follows the agent: **Working** with how long its agent has had the task,
-   **Needs you** when it waits for you, and **Ready for review** when it finishes. **Answer**
-   (or Q) opens what it asks in the task's inspector, the way the simulation does: Pipeline
-   reads the agent's menu off its screen (a question, or a permission to run something),
-   shows the options as buttons (or press their number) and a field for your own answer, and
-   presses the keys in its terminal for you. When a screen has no menu it can read, the
-   inspector shows the end of the screen, **Open agent**, and a field to message it. A new worktree first asks whether to trust the folder:
-   click **Trust** on the card, or turn on **Trust new worktrees automatically** in
-   Settings.
-4. With a **Check before review** command in Settings (Pipeline suggests one it recognises,
-   such as `npm test`, `make check` or `python3 -m pytest`), a finished agent's worktree is
-   checked first: the card shows **Running checks**, and passing work moves to review marked
-   **Checks passed**. A failure goes back to its agent with the end of the output, up to two
-   times, and is checked again when it finishes; after that (or with **Failures wait for
-   you**) the task stops as **Checks failed** with the output and **Fix**, **Review anyway**
-   and **Run checks again**. Checks run in the worktree with your environment, for up to 10
-   minutes, beside merges and launches rather than in front of them.
-5. Review the work: **Summary from the agent** in the inspector is what its agent wrote before
-   it stopped, in at most three short lines: **Changed**, **Checked** and, when there is one,
-   **Unsure**. Agents are asked for it in their first message and write it into Git's own
-   folder, so it is never committed; Pipeline reads it when the agent's turn ends and keeps
-   it on the task after the merge. An agent that writes none leaves the box out. The inspector lists the files the task changed since it started, with
-   lines added and removed. Click a file, or **Read the changes** (D), to read the full diff
-   in the changes dialog, file by file. The list is there while the agent works too; the
-   round arrow reads it again. Send feedback if it needs another pass, then
-   **Merge** (or **Merge N tasks**, Y). Merging rebases its branch onto the branch your project
-   folder is on and fast-forwards, so history stays linear. It refuses, and keeps the task in
-   review with the reason, while your folder or the agent's worktree has uncommitted changes,
-   or the branch conflicts. Pipeline never commits for the agent on its own: **Ask the agent
-   to commit** sends it back to commit (or finish first), **Commit them anyway** commits
-   everything as one commit. Afterwards the agent's tab closes and its worktree and branch are
-   removed. **Discard** (asked twice) stops the agent and deletes the worktree and branch. When
-   a merge is refused because the branch conflicts, **Ask the agent to rebase** sends the
-   refusal to its agent, which rebases, resolves the conflicts and comes back to review.
-
-   To use the change before merging, set a **Try it** command in Settings (Pipeline suggests
-   an executable `./try.sh` or `./preview.sh`, a package.json `dev`, `start` or `preview`
-   script, a Makefile `run`, `dev` or `preview` target, or `cargo run`). **Try it** (T) in the
-   inspector runs it in the task's worktree, in a tab of its own beside the agent, with the
-   task id in `$PIPELINE_TASK`. Ctrl-C leaves a shell in the worktree; pressing it again shows
-   that tab; it closes when the task merges or is discarded. Each task has its own port in
-   `$PIPELINE_PORT` (4100 to 4999), so several branches can run at once when the command uses
-   it. **Start it when work is ready for review** starts it by itself, once per task, without
-   taking you away from where you are. While its tab runs, the inspector offers **Open
-   localhost:5174** for the last local address the command printed.
-
-   A fresh worktree has only what Git tracks. **Prepare a new worktree** (Settings, Checks
-   and Try it) runs a command once in each new worktree before its agent starts, such as
-   `cp "$PIPELINE_SOURCE/.env" . && npm ci`, with your project folder in `$PIPELINE_SOURCE`
-   and the task's id and port set. A failure is recorded in the task's history and the agent
-   still starts. The setup card's **Prepare** row offers one built from what the repository
-   ignores but needs: copying an untracked `.env` or `.env.local` (at the top or one folder
-   down, such as `crm/.env`), and the install command of
-   its lockfile.
-
-   **Agent instructions** (Settings, Agent) is free text added to every task's first message.
-   **Show the change** there asks each agent for screenshots of the screens it changes, before
-   it changes anything and again when done, saved in Git's own folder (never committed) in
-   pairs like `01-before-login.png` and `01-after-login.png`, and to present them on one
-   private page published with Claude Code's Artifact tool: each pair side by side, what
-   changed, and how to try it locally. **Open walkthrough** under **Before and after** in the
-   inspector opens that page; the screenshots are listed below it and open in the Show panel.
-   An agent without an Artifact tool leaves the page out, and the inspector says so. The setup
-   card has a **Screenshots** row that turns it on. A task that started without it has **Ask
-   for screenshots** in its inspector, which sends its agent the same request (with "before"
-   taken from the commit its branch started from); with screenshots but no page it reads **Ask
-   for the walkthrough page**. With pull requests, **Add the screenshots to the pull request**
-   (Settings, Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin`
-   and adds a **Before and after** table to the description. How to start the app and which
-   screens matter belongs in the repository's `AGENTS.md` or a skill. When the repository has
-   neither, the setup card's Screenshots row offers **Queue: write how to run it**: a task
-   whose agent writes `.claude/skills/demo/SKILL.md` (start it from a fresh worktree, sign in
-   locally, the screens that matter, how to stop it) and follows it once to prove it.
-
-   **Revert** in a completed task's inspector (asked twice) undoes a task merged locally with
-   one new commit, `Revert T-1 <title>`, on the branch it merged into: only that task's
-   commits, with work merged since left alone and no history rewritten. The commit is pushed
-   when merges are, and the After merge command runs again. It refuses, changing nothing and
-   saying why, while your project folder has uncommitted changes, is on another branch, or
-   later work changed the same lines (it then names the `git revert` to run by hand). The
-   task stays in Completed, marked **Reverted**, and with ticket updates on its ticket goes
-   back to the **When its agent starts** state. A task delivered as a pull request reverts
-   differently: Revert opens a pull request that undoes it (`gh pr revert`), linked from the
-   inspector, and nothing changes until you merge that on GitHub; Pipeline does not follow
-   it. Tasks merged locally before Pipeline recorded their commits have no Revert.
-
-   Turn on **Merge automatically** (Settings, Delivery) to skip the approval: work that
-   finishes with passing checks (or with no check set) merges straight away. Work you sent
-   on with **Review anyway**, and a merge that was refused, still wait for you.
-
-   When merged work only takes effect once something is run (an install or deploy script),
-   set an **After merge** command (Settings, Delivery; Pipeline suggests an executable
-   `./install.sh` or `./deploy.sh`, or a Makefile `install` or `deploy` target). It runs in
-   your project folder, never a worktree, once the merges waiting have landed, in each
-   repository a task merged into; one run covers every merge before it, so several spaces'
-   tasks merging into the same folder each leave it installed from the merged state. If it
-   fails the merge stays, the task's card says **Merged · after-merge failed**, you get a
-   notification, and **Run again** in the status bar or the task's inspector runs it again.
-   It is not used with pull requests, where nothing merges locally.
-
-   To review on GitHub instead, set **Delivery** to **Open a pull request** in Settings. The
-   approve action becomes **Open PR**: Pipeline pushes the branch to `origin` and runs
-   `gh pr create` into the branch the worktree started from (a Plane or Linear task's PR is
-   titled with its key). The branch is named after the task (`hmod-7-fix-login`, no
-   prefix), and the agent is told to follow the repository's conventions: it renames the
-   branch if the repository names them differently, and writes the description from the
-   repository's PR template or rules, or one summary line, a few bullets and the ticket link.
-   It writes it to `herdr-pr.md` in the worktree's Git folder, so it is never committed;
-   without one the description is just the ticket link. The card then moves to its own **Pull requests**
-   section under Review, with a link. Pipeline asks GitHub once a minute what the PR waits for and
-   puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
-   **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by
-   branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
-   merge state. The task finishes when the PR is merged (then cleans up as above), or returns to
-   review if the PR is closed. Needs `gh`, signed in, and a GitHub
-   `origin`. An interrupted push or PR is safe to repeat: an open PR is reused. Turn on
-   **Open pull requests automatically** to skip the approval: work that finishes with passing
-   checks (or with no check set) is pushed straight away, and you review it on GitHub.
-
-A task can change several repositories. Add them under **Repositories** in Settings: type a
-path on the project's machine (`~/code/api`, or relative to the project folder) and **Add**;
-Pipeline checks it's a Git repository and refuses one already listed. The project's own
-repository always comes first. A queued task's inspector then shows the repositories as
-chips; new tasks, typed or from tickets, start with the project's only. Cards and the
-inspector name a task's repositories when it has more than one ("shop + api").
-
-- Such a task gets a worktree in each repository, all on the same branch name. Its agent
-  starts in the first one and can open the others (Claude Code and Codex get `--add-dir`
-  for each), and its first message lists every worktree with its branch and start commit.
-- The check command runs in every worktree and passes only if all pass; a failure names the
-  repository, and goes back to the one agent as usual.
-- The inspector shows the changes per repository. **Merge** merges every repository or none:
-  each branch is rebased first, and only when all rebased cleanly are they fast-forwarded. A
-  repository the agent left alone is skipped. If a fast-forward still fails after others
-  landed, the task stays in review and says which merged; merging again finishes the rest.
-- With pull requests, each changed repository gets its own PR, and once all are open each
-  description links the others. The card shows the most pressing need across them
-  ("api · Checks failing · 1") and the inspector a checklist per PR. The task finishes when
-  every PR is merged; one closed without merging sends it back to review with the others
-  left open, and approving again opens a new one only where it's needed.
-- Two tasks never merge into the same repository at once: an approved task waits
-  (**Approved · merging next**) until the one ahead of it is done. **Branches waiting for
-  review** counts repositories, so a task across two holds two. **Discard** removes every
-  worktree and branch.
-
-While you're looking elsewhere, Pipeline posts a notification for what Herdr doesn't already
-announce: failed checks, checked work ready for review, a refused merge, an agent that
-stopped or asks to trust its worktree, and a pull request that turns ready to merge, gets
-blocked, is closed or is merged. Clicking one opens Pipeline. **Notify me** in Settings
-turns them off. Completed tasks say how long they took.
-
-**Follow up** in a completed task's inspector queues a new task from what you type: a fresh
-agent that starts from the branch as it is now, with details that say what the first task
-was, what its agent reported, where its commits are, and its pull request or ticket. It opens
-in the queue, where the details can be edited before it starts.
-
-A working agent redraws its terminal all the time. When one shows nothing new for ten
-minutes, its card turns to **No output for 12 min** and Pipeline notifies you that it may be
-stuck; the flag clears by itself when the screen moves again. For Claude Code, Codex and OpenCode, a
-task's inspector also says how many tokens its agent used (written, read and read from cache),
-counted from the agent's own session files for the worktree (OpenCode's session database) each time a turn ends, and
-**Completed** adds up agent time and tokens written. Each task keeps its own history, so it
-is still there after the activity log has moved on.
-
-In Live the circle at the centre says what waits for you (**1 needs you**, **2 stopped**,
-**3 to review**) and clicking it takes you there.
-
-Agents run in herdr-core, so they keep going when the Pipeline tab or Herdr is closed; the
-tab-bar tracker catches up when Herdr opens. A start that Herdr can't confirm after a
-restart is never repeated: the task stops with a note to check before retrying. Live needs
-Python 3 and Git where the project lives, and a project folder (open Pipeline from a
-space).
-
-### Usage limits
-
-In Live, the toolbar's chip ends with how full the usage limits of the agent your tasks start with are
-(**49% used**). **Usage limits** in Settings shows each of Claude's and Codex's limits (5-hour, weekly, and a
-model's own weekly limit such as Fable's), how full each is and when it resets.
-
-While a limit is at **Hold at** (90% by default) or more, no new agent starts: the queued task says **Held by usage
-limit**, and the plan says which limit and when it resets. Agents already working keep going, and new ones start
-when the limit resets. A model's own limit only holds tasks set to that model. **Hold new agents near a limit**
-turns this off, for example when Claude's extra usage is on and you'd rather spend it.
-
-Claude's limits come from Anthropic every five minutes, asked with Claude Code's own login from the keychain (or
-`~/.claude/.credentials.json` off macOS). This uses Anthropic's usage endpoint, which isn't documented and may
-change. Codex's limits come from its newest session on that machine, so they are as fresh as Codex's last reply.
-**Read again** reads both now. A project on another machine reads that machine's limits.
-
-### Schedule
-
-The clock on the right half of the **Start pipeline** button opens the schedule, which sets a daily **Start at** and **Pause at** time (22:00, 7:30
-or 9pm), in Live and Simulation. When a time comes round, Pipeline does what the Start or
-Pause button does: a pause stops new work entering, and agents already working keep going.
-Either time can be left empty. Starting or pausing by hand still works; the schedule acts
-again at its next time. A time that already passed when you save it waits until tomorrow.
-The clock shows the next time that changes anything: beside Start pipeline the next start,
-beside Pause the next pause.
-Times are the computer's local time and need Herdr open; if Herdr was closed, the latest
-missed time applies when it opens.
-
-### Simulation
-
-The simulation uses example tasks and repositories: it does not start agents, update Plane
-or Linear, create PRs, or change Git repositories.
-
-Type a task into **New task** and press Enter; it joins the queue at once, with its
-repositories guessed from the title (change them in the task's inspector while it waits).
-The field keeps focus, so you can type several in a row. **Examples** adds tasks from the
-example backlog: pick some, **Add all**, or **Generate 6 more examples**. **Watch column**
-continuously feeds the same queue; its **Move example task** button simulates a new board
-arrival.
-
-**Start pipeline** (Space) sends work to the planner at the centre. Tasks appear as comets
-on its orbit, launch into the work slots around it, and particles stream along the busy
-paths while a stage bar fills. Checked work lands in **Review**: approve a task with the
-**Approve** button on its card, or everything at once with **Approve N tasks** in the status
-strip (Y). Merged tasks become stars in the completed constellation. Dependencies wait
-for their prerequisite changes to merge, and the plan above the planner says why anything
-waits. Failed checks get **Retry** on the card or **Retry N failed** (R).
-
-Some example tasks stop halfway through implementing to ask you a question, the way a real
-agent waits for input: the card shows **Needs you** and keeps its slot, the toolbar's
-**Pipeline** button shows **Needs you N**, and a toast appears unless Pipeline already has
-focus (click it to open Pipeline). **Answer** on the card, **Answer N questions** in the
-status bar, or Q opens the question; pick an option (or press its number) or type your
-own answer, and the task resumes where it stopped and the next question opens. Settings
-has **Simulate a question** to make the next working task ask. Real agents will appear in
-the sidebar on their own; this only simulates that moment.
-
-Pipeline keeps two bars around the scene: controls on top (the New task field and its
-buttons sit beside the title in a wide window, and on their own row in a narrow one) and one
-status bar at the bottom with the state, the latest activity (click it for the log)
-and the actions that wait for you. **?** (or the small button at the end of the status bar)
-shows every key for the mode you are in; Esc closes it. Settings lists them too.
-
-Keys, with the scene focused: Space start/pause, N new task, the arrow keys (or J and K)
-to walk the tasks in the order the scene shows them, A examples (in Live: P for
-Plane, L for Linear, D to read the selected task's changes), Q answer (in Live: the next agent that needs you), Y approve all (in Live: merge all), R retry failed,
-S speed, Esc close. The bolt button runs the simulation at 1×, 2× or 4×.
-**PR approval** in the status bar switches to **Auto-merge** (merge after checks); in Live,
-that is **Merge automatically** in Settings.
-Settings has the parallel limit (1–6), the outstanding PR limit, a failed-check scenario,
-the animation toggle and **Reset example pipeline**. **Quota** simulates exhaustion and
-replenishment with a configurable reserve. System Reduce Motion is respected, and motion
-stops while Herdr isn't the active window.
-
-The tab-bar tracker keeps simulations progressing while their view is closed. It writes
-the shared state only when a stage changes, so an idle or waiting pipeline costs nothing.
-State is saved per project folder and machine, and resumes without fast-forwarding while
-Herdr was closed. The agreed design and what comes next are in
-[docs/pipeline.md](docs/pipeline.md).
-
-`herdr-pipeline` prints a live pipeline from any terminal, read-only and short enough for an
-agent to read cheaply: the project's unfinished tasks, how long each has been in its status and
-what holds it. `herdr-pipeline T-3` shows one task (worktree, error, the end of its check
-output, summary, tokens and its history with times); `.` picks the task of the worktree you're
-in. `--events N`, `--done`, `--full`, `--all` and `--json` widen it.
-
-## Tasks and Plane
-
-**Tasks** in the toolbar opens a Plane backlog beside your terminals. Connect your
-self-hosted instance, then choose the Plane project for the working
-repository. A local repository's subfolders and Git worktrees share its project mapping.
-Remote mappings belong to the exact folder on that machine. Each instance and workspace
-has separate mappings. **Unlink** removes the mapping without changing anything in Plane.
-
-Choose **My tickets**, **Unassigned**, or **All**, search task identifiers, titles and
-descriptions, and use **Include done** to show completed or cancelled tasks. The Plane v1
-API does not filter these list requests, so the adapter checks actual rows: it reads up to
-three pages of 100 tasks per request, stopping earlier after at least 50 matches or the
-last page. **Load more tickets** continues from the next unchecked page. A sparse search
-can require several loads; an empty partial result says to keep searching. Projects use
-the same bounded pagination. Refresh runs every minute while browsing and keeps the last
-results when a request fails.
-
-**New task** captures a title, description and priority directly into the linked Plane
-project. Descriptions are saved as escaped rich text; existing Plane rich text is converted
-to Markdown for reading and agent handoffs. A save with an uncertain result is not retried:
-open the project in Plane to check whether the task was created. Starting an agent does
-not change Plane status or assignee.
-
-Open a task to read its full description, open it in Plane, copy the agent task, or
-**Assign to agent…**. Start a new agent or send the task to an idle agent in the same
-folder. For isolated work, **Select tickets → Launch N…** reviews the destination,
-starting commit and agent before creating one `plane/` branch and Git worktree per task.
-The shared launcher and its retry safeguards work as described below for Linear.
-**Move to pane** preserves the filters and selection. Finish or leave task capture before
-moving the panel.
-
-The Tasks connection settings open a local terminal for your instance URL, workspace slug
-and personal access token. The same setup is available with `herdr-plane connect`.
-Credentials are saved with owner-only permissions in
-`~/.config/herdr-app/plane/credentials.json`; mappings are in `plane/projects.json`.
-`PLANE_BASE_URL`, `PLANE_WORKSPACE` and `PLANE_API_KEY` override the corresponding saved
-values. Credentials and API requests stay on this computer when the agent destination
-is remote. Python 3 and access to the Plane instance are required; private Tailscale
-addresses require an active connection. The adapter uses the public Plane v1 REST API.
-
-This integration supports backlog capture and manual launches. Durable scheduled agent
-runs and a phone scheduling page are follow-up work; Plane's planning dates do not
-automatically launch agents.
-
-## Linear
-
-**Open Linear** in **Tasks → connection settings** opens your tickets beside the terminals. Choose **My tickets**,
-**Unassigned**, or **All**, search titles and descriptions, and filter by a Linear project.
-The project selection is remembered per space. Closed tickets start hidden; **Include done**
-shows them. Results load 50 at a time, with **Load more tickets** for the next page. The
-footer distinguishes visible tickets from loaded results. Refresh runs every minute while
-browsing; failed refreshes keep the last results and show the error.
-
-Open a ticket to read its full Markdown description or open it in Linear. Linear's collapsible
-description sections start closed; click their heading to expand or collapse them. Nested
-sections toggle independently, and agent handoffs always include the full description.
-**Assign to agent…**
-shows the working folder and machine, installed agents for a new session, and idle agents
-already in that exact folder and space. Add optional instructions, then **Start agent with
-ticket** or **Send task to agent**. The task includes the description, link, priority,
-project and recorded blockers. A new session opens in a tab named after the ticket; sending
-to an existing agent rechecks its folder and idle state. **Copy task** is also available.
-These actions hand work to a Herdr agent; they do not change the ticket's Linear assignee
-or status. **Move to pane** preserves the current filters and binds the view to that tab.
-
-For parallel work, choose **Select tickets**, click the tickets you want, then **Launch N…**.
-**Select shown** selects only the currently visible, loaded results; selections survive
-searches and filters in the same space. Review the destination, starting commit, agent and
-recorded blockers, add optional shared instructions, and choose **Launch N agents**.
-Remove dependent tickets from the review if they should wait: the launcher starts all
-selected tickets and does not schedule dependencies.
-
-Each ticket gets a new branch and Git worktree under `~/.herdr/worktrees/` on the destination
-machine, starting at the same reviewed commit. A selected subfolder is preserved. Uncommitted
-changes stay in the source checkout; they are not copied into worktrees. Each agent opens in
-a worktree space with a ticket-named tab, leaving your current view selected. Ordinary
-single-ticket handoffs above still use the selected folder.
-
-**Launches** shows per-ticket startup progress and returns to each opened agent. Closing
-the panel does not stop launch preparation: its worker belongs to the `main-custom`
-toolbar. **Stop remaining launches** leaves existing agents and worktrees in place.
-**Retry failed** retries definite failures only, reusing a worktree when one was already
-created. An unconfirmed start or app reload is marked **Check workspace** and is never
-automatically replayed; **Allow new launch** releases that ticket after you check that
-it has no agent running. Active launches and live sessions, including parked terminals,
-prevent duplicate launches from another panel. Worktrees are retained for review, and
-changes are never merged automatically. The newest 20 finished launch records and all
-active records are kept in Herdr's shared state.
-
-The reader reuses an existing Claude Code Linear MCP login from its credential file or the
-standard macOS keychain entry. Claude continues to manage that login: if it expires, reconnect
-with Claude's `/mcp`. Herdr does not copy, refresh, or modify Claude's credentials. For a
-separate connection, use the header's **Linear connection** settings button, then **Connect
-with API key**. A local terminal asks privately for a key with Read permission (add Write if
-Pipeline should update tickets), validates it,
-and saves it with owner-only permissions at `~/.config/herdr-app/linear/credentials.json`.
-Return to the panel and refresh. The same setup is available with `herdr-linear connect`.
-The reader prefers `LINEAR_API_KEY`, then its saved key, then Claude's login.
-
-Linear access uses the [official MCP server](https://linear.app/docs/mcp) and Python 3's
-standard library. The panel only reads; the reader refuses every write except the two
-Pipeline's ticket updates make with `save_issue` (a state, or a link). Ticket access and credentials stay on this
-computer; a selected remote machine is only the destination for an agent handoff.
-
-## Loops
-
-The **Loops** tab beside Show lists local **Codex, Claude and OpenCode `/goal` goals** and **Claude
-scheduled `/loop` tasks**, labeled by source. It refreshes every ten seconds, with a manual refresh button. Codex goals show
-status, tokens used (and budget when set), and working time. Budget usage is not a measure
-of task completion.
-
-**This space** follows the space's live terminal folders; **All projects** includes saved
-goals and schedules from other local projects. **History** includes completed, failed,
-cleared, cancelled, ended, expired, and inactive entries. The **Codex**, **Claude** and **OpenCode**
-header buttons independently toggle each source; all start enabled. Claude includes
-goals and scheduled tasks. Counts follow the selected sources. All filters are remembered.
-**Open session** opens the exact Codex thread with
-`codex resume` in a new tab, or the exact OpenCode session with `opencode --session`. From a remote space it opens a local space instead.
-
-Claude goals come from structured `goal_status` attachments in local session transcripts
-under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`). **Saved goal** means the
-last recorded goal is unresolved; it does not prove that Claude is still running. Token
-spend, elapsed time, and evaluated turns appear when recorded, usually when the goal ends.
-Clearing a goal is distinct from completing it. **Copy session ID** copies its exact session
-ID. The panel never runs the Claude CLI, including when refreshing or clicking a Claude row.
-
-OpenCode goals come from its session database (`~/.local/share/opencode/opencode.db`,
-`XDG_DATA_HOME` respected), read-only: one goal per session, **Active**, **Paused** or
-**Completed**, with the reviewer's reason in the status tooltip and how many times it sent
-the agent on. OpenCode records no tokens or time per goal, so none are shown, and a goal
-you clear is gone rather than kept in History.
-
-Claude schedules come from confirmed `CronCreate`, `CronDelete`, `CronList`, and
-`ScheduleWakeup` results and `session_cron_carry` snapshots in those same transcripts.
-The panel also reads `.claude/scheduled_tasks.json` in known project folders (including
-local Herdr spaces) and their parents. Project files are authoritative for durable tasks;
-copied schedules belonging to another project are marked inactive. Both recurring and
-one-shot cron tasks and self-paced wakeups appear with their prompt and schedule.
-
-**Saved schedule** describes the last recorded state, not a running session. **Recorded
-run** is the time Claude saved, including its scheduler offset; the panel does not invent
-a live next-run time. **Run time passed** leaves execution unconfirmed. Confirmed
-cancellations are distinct from tasks that ended with no outcome recorded. Recurring
-tasks past Claude's seven-day lifetime appear as **Expired**; Claude may fire them one
-final time before removal. Permanent project schedules do not expire. A project task
-without a session ID offers **Copy task ID** instead.
-
-The reader uses Python 3's SQLite support to read Codex's local `goals_*.sqlite` and
-`state_*.sqlite` databases under `$CODEX_HOME` (default `~/.codex`). It never updates goal
-state, Claude transcripts, or project schedule files. These are internal files: incompatible formats show an error
-instead of silently showing an empty list. Each source refreshes independently; if one
-fails, its previous entries stay visible with an error while the other sources update.
-Cloud/Desktop schedules, Monitor-based loops without scheduler records, and remote goals
-are not included.
-
-## Watchers
-
-The **Watchers** tab beside Show waits for things that happen outside Herdr and tells you when
-they do: a toast in Herdr with the alert sound, and a macOS notification when Herdr isn't the
-app in front. Clicking the toast opens the panel. The tab shows how many are still waiting
-(**Watchers (2)**).
-
-**New watcher** has two kinds:
-
-- **Pull request**: a number or link, or nothing for the pull request of the branch in the
-  focused terminal's folder. Pick what to wait for: **Review** (approved, or changes
-  requested), **Checks** (its checks finish, passing or failing), **Ready** (approved, checks
-  passed and no conflicts; it also ends on what blocks it: requested changes, a failed check or
-  conflicts), **Merged**, or **Comment** (a new comment or review). Every pull request watcher
-  also ends when the pull request merges or is closed. A review that was already there when
-  the watch began isn't news; only a newer one counts.
-- **Command**: a name and a shell command, run with `sh` in that folder. It ends when the
-  command **exits 0**, or when its **output changes** from the first run. Use it for anything
-  else: a deploy answering, a release appearing, a file showing up.
-
-Watchers are grouped by the space whose folders hold them. The shown space's group comes first
-and is open; the others are folded to one line with their counts (click to open). A watcher of
-a folder no space has open sits under that folder's name.
-
-A waiting watcher shows what it read last (review, checks, draft, conflicts, or the command's
-exit code and last line), when it was checked, **Check now** and **Stop**. Finished ones move
-to the end of their group with their outcome until you **Remove** them or **Clear finished**. A watcher that
-can't be read (no network, `gh` logged out) says why and keeps trying.
-
-From a terminal, and for agents through the `herdr-watch` skill:
-
-```sh
-herdr-watch pr                         # this branch's pull request, until it is reviewed
-herdr-watch pr 42 --until checks
-herdr-watch pr 42 --until ready --then "Merge it with gh pr merge --squash, then pull main."
-herdr-watch command --name "Staging is up" -- curl -sf https://staging.example.com/health
-herdr-watch list
-herdr-watch remove <id>
-```
-
-`--then` sends that message, after the outcome, to the terminal the watch was set from, so an
-agent can pick up where it left off (`--terminal` names another one). `--every` sets the
-seconds between checks (60 by default, at least 15).
-
-Watchers are checked every 15 seconds for the ones that are due, from this computer, while
-Herdr is open: a quit Herdr checks nothing and catches up on the next start. Pull requests are
-read with GitHub's `gh` (GitHub only), so a remote space's pull request needs its link.
-Watchers live in `~/.config/herdr-app/watchers/`, one file each. Needs Python 3.
-
-## Since you left
-
-The **Brief** toolbar button opens a persistent handoff for the current space. Its
-count shows unread results and requests for input. **Mark as read** clears that view; **History**
-keeps reviewed updates available. Opening a space or focusing an agent does not
-mark its brief read. Each space has its own read receipts, even when several
-spaces share a project folder.
-
-While Herdr is open on `main-custom`, the toolbar records requests for input
-across spaces. Finishing a turn no longer creates an update. Existing finished-turn
-notices and routine reports whose title and opening sentence announce a commit or
-push are kept in **History**, without adding to the unread count. Reports with
-questions, caveats or reported failures remain in the main feed. The initial agent state
-is a baseline; activity while the app is closed is not reconstructed.
-
-For substantive results, Codex and Claude can leave a handoff using the installed
-`herdr-brief` skill and command:
-
-```sh
-herdr-brief post --title "Hide quiet spaces" \
-  --summary "Hide a space until a time you choose." \
-  --change "Terminals keep running; restore early from Hidden spaces." \
-  --test "All sidebar tests passed; checked hiding and early restore in the app."
-```
-
-Briefs show a short title and a one-sentence summary. **Read more** expands
-optional practical changes. Questions stay visible under
-**Needs your answer**. Use `--caveat` for important failures or limitations; these
-stay visible under **Keep in mind**. Validation stays in the saved record and is
-not displayed in the panel. Older briefs without caveats still load normally. The installed
-skill asks for plain-language outcomes and skips routine commit, push and status notices. The optional flags
-repeat. **Open conversation** (or **Reply to agent**) returns to
-the handoff's exact live terminal in its original space. Handoffs are routed by
-terminal identity, with a unique working agent in the exact task folder as a
-fallback; ambiguous matches fail instead of using the focused space. The command
-uses local `herdr-app` and `hc` access. Existing agents may need to load the new
-skill before they start posting richer handoffs.
-
-The panel can **Move to pane** like the other panels. A moved brief remains bound
-to its tab's space. Shared activity and read receipts survive restarts. Handoffs
-are stored atomically under `~/.config/herdr-app/brief/items/`; the panel loads the
-newest 500 handoffs and retains the last 500 observed events across spaces. It
-refreshes handoffs every ten seconds, keeps previous results on errors, and never
-reads terminal transcripts or treats a status indicator as a test result.
-
-## Spaces and agents
-
-The sidebar **+** offers **New space** for the usual terminal, or **From a project…**
-to search the folders in `~/Projects`. Choose a project to create a local space with
-the default terminal on the left and **Changes + terminal** on the right. Both
-terminals start in the project folder, and focus stays in the left terminal.
-Use ↑/↓ and Enter to choose; Esc closes the picker. **Refresh projects** rereads the
-folder list. Reading the list requires Python 3, like the other local readers.
-
-The sidebar is one tree: agents appear under their space, with subtle connecting
-lines. Click a space to select it, or its chevron to expand or collapse its children
-without changing focus. Click an agent to focus its pane. Worktree spaces remain
-under their checkout and start collapsed; subagents start collapsed too, and clicking
-a subagent opens its live preview. Expansion choices survive restarts.
-
-A space's other terminals are listed after its agents: each is named after its tab (when
-you named it) or its folder, with the program running in it beside the name (`web  node`).
-Click one to focus its pane. Two with the same name also show their tab number, or their
-address when they share a tab. **Needs you** leaves them out.
-
-Herdr names a space after its first terminal's live folder, so a `cd` or a new worktree
-renames it. Here a space is locked to the first place it has outside your home folder: it
-takes that repo's (or folder's) name as its own, and the sidebar and the status bar keep
-showing that folder's repo and branch wherever its terminals go. A space opened at `~` waits
-for its first `cd`. To move a space, right-click → rename it to nothing: it locks again to
-where its first terminal is now. Files and Changes still follow the focused terminal.
-
-A Pipeline task's worktree could also rename the whole space. While one of its terminals, or the folder it was made in, is in the
-repo's main checkout, the sidebar keeps the space there and under the repo's name (a name you
-gave it always wins). Agents working in another worktree sit under a branch row inside their
-space; click the branch to focus its first agent.
-
-Status indicators appear on agent rows. **Needs you** filters the tree to agents
-waiting for input, revealing their ancestors without changing saved expansion choices.
-Turn the filter off to return to all spaces. It also reveals matching agents inside
-collapsed machine groups. Agent pins stay at the top of their own space. Agent keyboard
-shortcuts follow the tree order, including agents in folded branches. The narrow sidebar
-keeps every space accessible, with an expand button at the bottom.
-
-Hover a space and click the focus icon beside its pin, or right-click and choose
-**Focus this space**, to show only its agents and terminals in the sidebar. Its name stays visible
-above the list. **All spaces** returns to the full
-tree with its folds, filter and scroll position preserved. A small count beside
-the back button appears when agents in other spaces need you. Focus stays on the
-chosen space as agents finish or focus moves elsewhere; clicking its name shows
-that space again. Closing the space returns the sidebar to the full tree.
-
-Hover a space and click the hide icon just before the pin, or right-click →
-**Hide space until…**. Choose 30 minutes, 1 hour, 4 hours, tomorrow at 09:00,
-or a custom local date and time. The space and its agents leave the sidebar
-until then; terminals keep running. **Hidden spaces** at the bottom lets you
-show one early. Deadlines, pins and positions survive restarts. Hiding a checkout
-leaves its other worktree spaces visible.
-
-The **Tidy** button beside the sidebar's **+** sorts the spaces by when you last used them,
-most recent first, and folds every space unused for an hour. A space is in use while it is the
-one shown (with Herdr in front) or an agent is working in it; a program left running in a
-terminal doesn't count. Pinned spaces are sorted among themselves and stay above the line, and
-a worktree space moves with its checkout. Nothing moves until you click it again. For a space
-it hasn't watched yet, the last use is its folder's last commit or checkout, or its newest
-Claude session, whichever is later.
-
-### Pinned spaces
-
-Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
-click it again to unpin. You can also right-click → **Pin to top**, or drag a space above
-the line to pin it, below to unpin it. Pinned spaces stay above the rest, with a line under them. Pins are saved
-in Herdr's shared state (`space.pinned`), so they survive restarts.
-
-### Keyboard
-
-**Ctrl-A E** (or moving left past the first pane) puts the keyboard in the sidebar, with an
-accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
-spaces, their agents and terminals; **→ ←** unfold and fold a space, and **←** on an agent or
-terminal goes back to its space. **Enter** shows the space or focuses the agent or terminal. On a space, **P** pins it, **F**
-focuses it, **H** hides it and **M** opens its menu; **N** adds a space and **T** tidies. **Esc** leaves focus
-mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.
-
-## Feature toggles
-
-The switch icon in the tab bar, after GitHub, opens **Features**: on/off switches for parts
-of the mods. Everything is on until you switch it off, and changes apply at once.
-
-- **Commit message box**: the message field and Commit button at the bottom of Changes.
-- **Push and pull**: the branch bar with ahead/behind counts and Push/Pull in Changes.
-- **Loops**: the Loops button in the tab bar and its side panel.
-- **Skills**: the Skills button in the tab bar and its side panel.
-- **Watchers**: the Watchers button in the tab bar and its side panel. Off, watchers still
-  check and notify.
-- **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
-  shows every space.
-- **Terminals in the sidebar**: the terminals listed under their space, after its agents.
-- **Companion**: the companion at the bottom of the sidebar. This one switches Herdr's own
-  visibility of his block, so it stays in step with the `layout.toggle:companion` shortcut.
-
-Switches live in Herdr's shared state (`features`), so they survive restarts. To add one,
-add a row to `FEATURES` in `mods/toggles/main.js` and check
-`shared("features")?.<key> !== false` where the feature is drawn. The popup grows to fit
-the new row.
-
-## What's in here
+## What is in here
 
 | Path | What it is |
 |---|---|
@@ -982,5 +152,10 @@ Conflicts are left for you, or run `/herdr-mods-upgrade` in Claude to resolve an
 
 1. Make `mods/<name>/` with `main.js` and `mod.json` (or `herdr-app do mod.clone '{"name":"<shipped mod>","as":"<name>"}'` and move the copy here).
 2. If it belongs in the window, point a block in `layouts/main-custom.json` at it.
-3. `./install.sh`. A new section here if it's a feature.
+3. `./install.sh`. For a feature, add a guide in `docs/features/` and a row in the table above.
 4. For a clone: sort its `mod.json` (`jq -S`), commit, then `./upgrade.sh` records Herdr's original on `upstream`.
+
+## Licence
+
+Apache 2.0, the licence Herdr's own mods carry; see [LICENSE](LICENSE). [NOTICE](NOTICE) lists
+what comes from Herdr and from Material Icon Theme, and the status of the Companion artwork.
