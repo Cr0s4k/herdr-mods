@@ -53,9 +53,12 @@ globalThis.__spacesNative.spaceKey = spaceKey;
 source = (await readFile(new URL("../mods/spaces-pin/pipeline-row.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = `const { div, svg, h_flex, run, shared, openOverlay, spaceKey } = globalThis.__spacesNative; const STORE = ${JSON.stringify(STORE)};\n` + source;
 Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
+source = (await readFile(new URL("../mods/spaces-pin/terminal-row.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { div, svg, h_flex, run } = globalThis.__spacesNative;\n" + source;
+Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, spaceTerminals, terminalRow } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -665,4 +668,28 @@ test("closing a space's pipeline asks first, then stops it, discards its work an
   assert.ok(find(view.render(), "pipeline-app"), "an open pull request keeps it listed");
   state.tasks = state.tasks.filter(task => task.id !== "T-3");
   assert.equal(find(view.render(), "pipeline-app"), undefined);
+});
+
+test("terminals that aren't agents are listed under their space and focus their pane", () => {
+  const view = setup();
+  const shell = { name: "zsh", key: "shell", icon: null, shell: true, agent: false };
+  const pane = (id, extra = {}) => ({ pane: id, terminal: `t-${id}`, tab: "app-tab", title: "", cwd: "/work/app", program: shell, focused: false, ...extra });
+  world.panes = [pane("one-pane", { program }), pane("sh"), pane("dev", { cwd: "/work/app/web", program: { ...shell, name: "node", key: "program", shell: false } }),
+    pane("sh2"), { pane: "files", terminal: null, mod: "files", tab: "app-tab", title: "Files", focused: false }];
+  let root = view.render();
+  const tree = find(root, "space-tree-app");
+  assert.equal(find(tree, "term-one-pane"), undefined);
+  assert.equal(find(tree, "term-files"), undefined);
+  assert.match(text(find(tree, "term-sh")), /app · t-sh/);
+  assert.match(text(find(tree, "term-sh2")), /app · t-sh2/);
+  assert.match(text(find(tree, "term-dev")), /web +node/);
+  assert.equal(find(find(root, "space-tree-other"), "term-sh"), undefined);
+  click(root, "term-dev");
+  assert.deepEqual(world.calls, [["pane.focus", { pane: "dev" }]]);
+  assert.deepEqual(world.order, ["one", "two"]);
+  click(root, "spaces-needs-you");
+  assert.equal(find(view.render(), "term-sh"), undefined);
+  click(view.render(), "spaces-needs-you");
+  sharedState.set("features", { terminals: false });
+  assert.equal(find(view.render(), "term-sh"), undefined);
 });

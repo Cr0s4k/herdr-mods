@@ -792,6 +792,11 @@ without changing focus. Click an agent to focus its pane. Worktree spaces remain
 under their checkout and start collapsed; subagents start collapsed too, and clicking
 a subagent opens its live preview. Expansion choices survive restarts.
 
+A space's other terminals are listed after its agents: each is named after its tab (when
+you named it) or its folder, with the program running in it beside the name (`web  node`).
+Click one to focus its pane. Two with the same name also show their tab number, or their
+address when they share a tab. **Needs you** leaves them out.
+
 Herdr names a space after its first terminal's live folder, so a `cd` or a new worktree
 renames it. Here a space is locked to the first place it has outside your home folder: it
 takes that repo's (or folder's) name as its own, and the sidebar and the status bar keep
@@ -812,7 +817,7 @@ shortcuts follow the tree order, including agents in folded branches. The narrow
 keeps every space accessible, with an expand button at the bottom.
 
 Hover a space and click the focus icon beside its pin, or right-click and choose
-**Focus this space**, to show only its agents in the sidebar. Its name stays visible
+**Focus this space**, to show only its agents and terminals in the sidebar. Its name stays visible
 above the list. **All spaces** returns to the full
 tree with its folds, filter and scroll position preserved. A small count beside
 the back button appears when agents in other spaces need you. Focus stays on the
@@ -837,8 +842,8 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 
 **Ctrl-A E** (or moving left past the first pane) puts the keyboard in the sidebar, with an
 accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
-spaces and their agents; **→ ←** unfold and fold a space, and **←** on an agent goes back to
-its space. **Enter** shows the space or focuses the agent. On a space, **P** pins it, **F**
+spaces, their agents and terminals; **→ ←** unfold and fold a space, and **←** on an agent or
+terminal goes back to its space. **Enter** shows the space or focuses the agent or terminal. On a space, **P** pins it, **F**
 focuses it, **H** hides it and **M** opens its menu; **N** adds a space. **Esc** leaves focus
 mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.
 
@@ -853,6 +858,7 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 - **Skills**: the Skills button in the tab bar and its side panel.
 - **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
   shows every space.
+- **Terminals in the sidebar**: the terminals listed under their space, after its agents.
 - **Companion**: the companion at the bottom of the sidebar. This one switches Herdr's own
   visibility of his block, so it stays in step with the `layout.toggle:companion` shortcut.
 

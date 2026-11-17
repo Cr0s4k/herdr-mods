@@ -1,7 +1,7 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
 // its first terminal is in now, only where unusual: branch, ahead/behind.
-// Agents and worktrees live under their space. Click to switch, right-click
+// Agents, worktrees and terminals live under their space. Click to switch, right-click
 // for its menu, drag to reorder; chevrons fold without changing focus.
 
 import { View, div, svg } from "gpui-kit";
@@ -11,6 +11,7 @@ import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 import { ink, watchMotion } from "./ui.js";
 import { spacePipeline, pipelineRow, openPipeline } from "./pipeline-row.js";
+import { spaceTerminals, terminalRow } from "./terminal-row.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -210,9 +211,9 @@ export default class Spaces extends View {
   checkNew(cx) {
     const now = Date.now();
     expireSpaces(now);
-    const sp = spaces();
+    const sp = spaces(), ps = panes();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
-    const due = this.due(now, sp, panes());
+    const due = this.due(now, sp, ps);
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
   }
@@ -658,11 +659,16 @@ export default class Spaces extends View {
     return spacePipeline(w, [w.folder, place(w, this.panes)], this.panes);
   }
 
+  terminals(w) {
+    return shared("features")?.terminals === false ? [] : spaceTerminals(w, this.panes, this.agents.list);
+  }
+
   spaceTree(r, t, parent = null) {
     const members = this.agents.members(r.w.id, this.attention);
     const kids = r.kids.filter(k => !this.attention || k.summary.blocked > 0);
     const pipe = this.attention ? null : this.pipeline(r.w);
-    const hasChildren = members.length + kids.length + (pipe ? 1 : 0) > 0;
+    const terms = this.attention ? [] : this.terminals(r.w);
+    const hasChildren = members.length + kids.length + terms.length + (pipe ? 1 : 0) > 0;
     const open = this.attention || (this.expanded[r.w.id] ?? !r.tree);
     const key = `space:${r.w.id}`;
     const cursor = this.navigable(key, { kind: "space", w: r.w, parent, open, hasChildren, toggle: (cx) => this.toggleSpace(r, cx) });
@@ -672,6 +678,7 @@ export default class Spaces extends View {
       ...(pipe ? [{ id: `pipeline-branch-${r.w.id}`, view: () => pipelineRow(r.w, pipe, t, this.agents.indicator, { hovered: this.pipeHovered === r.w.id, hover: (over, cx) => this.hoverPipeline(r.w.id, over, cx), ring: this.navigable(`pipeline:${r.w.id}`, { kind: "pipeline", w: r.w, pipe, parent: key }) }) }] : []),
       ...direct.map(a => ({ id: `agent-branch-${a.address}`, view: () => agent(a) })),
       ...trees.map((wt, n) => ({ id: `worktree-branch-${r.w.id}-${n}`, view: () => this.worktree(r.w, wt, n, t, agent) })),
+      ...terms.map(term => ({ id: `term-branch-${term.p.pane}`, view: () => terminalRow(r.w, term, t, { ring: this.navigable(`term:${term.p.pane}`, { kind: "terminal", a: term.p, parent: key }) }) })),
       ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t, key) })),
     ];
     return v_flex().id(`space-tree-${r.w.id}`).flex_none().min_w(0)
@@ -855,6 +862,7 @@ export default class Spaces extends View {
   focusedSpace(s, sp, t, collapsed) {
     const members = this.agents.members(s.id, false);
     const pipe = this.pipeline(s);
+    const terms = this.terminals(s);
     const home = this.home(s, this.panes), name = home.name;
     const { direct, trees } = this.worktrees(s, members, home.key);
     const agent = a => this.agents.agent(a, t, false, false, new Set(), { prefix: "focus-", compact: collapsed, ring: this.navigable(`agent:${a.address}`, { kind: "agent", a, parent: null }) });
@@ -883,7 +891,8 @@ export default class Spaces extends View {
         .when(Boolean(pipe), el => el.child(pipelineRow(s, pipe, t, this.agents.indicator, { prefix: "focus-", compact: collapsed, hovered: this.pipeHovered === s.id, hover: (over, cx) => this.hoverPipeline(s.id, over, cx), ring: this.navigable(`pipeline:${s.id}`, { kind: "pipeline", w: s, pipe, parent: null }) })))
         .children(direct.map(agent))
         .children(trees.map((wt, n) => this.worktree(s, wt, n, t, agent, { prefix: "focus-", compact: collapsed })))
-        .when(!members.length && !pipe, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
+        .children(terms.map(term => terminalRow(s, term, t, { prefix: "focus-", compact: collapsed, ring: this.navigable(`term:${term.p.pane}`, { kind: "terminal", a: term.p, parent: null }) })))
+        .when(!members.length && !pipe && !terms.length, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
           .tooltip("No agents in this space.").child(collapsed ? "0" : "No agents in this space."))))
       .when(collapsed, el => el.child(div().id("spaces-focus-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
         .text_color(t.muted).hover(el => el.bg(t.hover).text_color(t.foreground)).cursor_pointer().tooltip("Expand sidebar")

@@ -17,6 +17,7 @@ export const FEATURES = [
   ["loops", "Loops", "Loops button and side panel"],
   ["skills", "Skills", "Skills button and side panel"],
   ["needsYou", "Needs you", "Filter button at the top of the Spaces sidebar"],
+  ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["companion", "Companion", "Companion at the bottom of the sidebar", {
     get: () => { const block = find(layout(), "companion"); return Boolean(block) && !block.hidden; },
     set: on => run(on ? "layout.show" : "layout.hide", { id: "companion" }),
