@@ -30,10 +30,3 @@ mods/files-modal/icons/ contains icons from Material Icon Theme
 (https://github.com/material-extensions/vscode-material-icon-theme),
 Copyright (c) 2025 Material Extensions, under the MIT License in
 mods/files-modal/icons/LICENSE.
-
-Companion
-----
-The images in mods/companion/art/ and mods/companion/sprites/ are unofficial fan art of Companion from
-"fan art" by Kentaro Miura, published by Hakusensha. The character belongs to its rights
-holders. These images are not covered by the Apache License above, are not for commercial
-use, and will be removed at a rights holder's request.

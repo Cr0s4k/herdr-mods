@@ -23,7 +23,6 @@ thing, or copy the mods you like.
 | **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
 | **Skills** | A searchable inventory of the agent skills available in a folder and on the machine. | [skills.md](docs/features/skills.md) |
 | **Tab bar** | A GitHub button for the current project, and on/off switches for most of the above. | [tab-bar.md](docs/features/tab-bar.md) |
-| **Companion** | A pixel-art companion in the sidebar who cuts down a zombie whenever an agent finishes a turn. | [companion.md](docs/features/companion.md) |
 
 ## Install
 
@@ -34,7 +33,6 @@ more:
 - Show: the Swift toolchain (Xcode command line tools)
 - highlighted diffs: [`bat`](https://github.com/sharkdp/bat)
 - the GitHub button: Firefox
-- rebuilding Companion's sprites: `ffmpeg`
 
 ```sh
 git clone https://github.com/Cr0s4k/herdr-mods.git
@@ -79,10 +77,6 @@ demo first: Pipeline's Settings, General, **Try a demo**.
 folders in `~/Projects`. Both are easy to change in `mods/tabs-show/github.js` and
 `mods/space-new/`.
 
-**Companion** is fan art of the character from Kentaro Miura's *fan art*, generated from a
-reference image. It is not official and not covered by this repository's licence; see
-[NOTICE](NOTICE). Switch him off under Features in the tab bar.
-
 ## Working on it
 
 Herdr runs a copy, so edit the files here and let `./install.sh --watch` copy them over.
@@ -119,7 +113,6 @@ the working notes agents follow in this repository; they are useful to people to
 | `skills/herdr-watch/` | tells agents how to set a watcher with `herdr-watch` instead of polling |
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
-| `mods/companion/` | Pixel Companion companion reacting to live agent starts, turns and requests for input |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
 | `mods/toggles/` | Feature toggles popup, opened from the tab bar; it sizes itself to its rows (`mods/tabs-show/toggles.js` is a symlink) |
@@ -157,5 +150,5 @@ Conflicts are left for you, or run `/herdr-mods-upgrade` in Claude to resolve an
 
 ## Licence
 
-Apache 2.0, the licence Herdr's own mods carry; see [LICENSE](LICENSE). [NOTICE](NOTICE) lists
-what comes from Herdr and from Material Icon Theme, and the status of the Companion artwork.
+Apache 2.0, the licence Herdr's own mods carry; see [LICENSE](LICENSE). [NOTICE](NOTICE) lists what
+comes from Herdr and from Material Icon Theme.
