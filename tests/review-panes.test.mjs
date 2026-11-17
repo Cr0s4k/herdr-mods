@@ -116,6 +116,7 @@ Object.assign(globalThis.__reviewNative, {
   theme: () => new Proxy({}, { get: (_, key) => key }),
   BriefTracker: class { start() {} observe() {} },
   LaunchTracker: class { start() {} },
+  WatchersTracker: class { start() {} }, WATCHERS: "watchers.items", watching: () => [],
   PipelineTracker: class { start() {} }, PIPELINES: "pipeline.prototype.v1", ...await import("../mods/pipeline/pipeline-model.js").then(({ pipelineId, spaceKey }) => ({ pipelineId, spaceKey })),
   ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
 });
@@ -124,7 +125,7 @@ source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "u
 source = "const { exec } = globalThis.__reviewNative;\n" + source;
 Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -138,9 +139,9 @@ function find(el, id) {
 }
 function text(el) { return typeof el === "string" ? el : (el?.nodes ?? []).map(text).join(" "); }
 
-test("Files, Changes, Show, Loops, Brief, Skills and Tasks toggle side panels without creating panes", () => {
+test("Files, Changes, Show, Loops, Brief, Skills, Watchers and Tasks toggle side panels without creating panes", () => {
   const tabs = setupTabs(), root = tabs.render();
-  for (const id of ["files", "changes", "show", "loops", "brief", "skills", "plane"]) {
+  for (const id of ["files", "changes", "show", "loops", "brief", "skills", "watchers", "plane"]) {
     world.calls = [];
     find(root, `panel-${id}`).handlers.click({}, cx);
     assert.deepEqual(world.calls, [

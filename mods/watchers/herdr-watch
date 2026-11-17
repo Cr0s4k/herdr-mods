@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Watch a pull request or a command and tell Herdr when it reaches what you wait for."""
+import argparse
+import fcntl
+import json
+import os
+import secrets
+import shlex
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+UNTIL = ("review", "checks", "ready", "merged", "comment")
+PR_FIELDS = "number,title,url,state,isDraft,mergeable,reviewDecision,latestReviews,statusCheckRollup,comments,reviews"
+FAILED = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+
+
+def store():
+    return Path(os.environ.get("HERDR_APP_HOME", Path.home() / ".config/herdr-app")) / "watchers"
+
+
+def now():
+    return int(time.time() * 1000)
+
+
+def save(item):
+    root = store()
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / f"{item['id']}.json"
+    temporary = root / f"{item['id']}.{secrets.token_hex(4)}.tmp"
+    try:
+        temporary.write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def load():
+    items = []
+    for path in sorted(store().glob("*.json")):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(item, dict) and item.get("id") == path.stem and item.get("kind") in ("pr", "command"):
+                items.append(item)
+        except (OSError, ValueError):
+            continue
+    return sorted(items, key=lambda item: item.get("created", 0), reverse=True)
+
+
+def checks(rollup):
+    passed, failed, pending = 0, [], 0
+    for check in rollup or []:
+        done = check.get("status", "COMPLETED") == "COMPLETED" and check.get("state") not in ("PENDING", "EXPECTED")
+        result = check.get("conclusion") or check.get("state") or ""
+        if not done:
+            pending += 1
+        elif result in FAILED:
+            failed.append(check.get("name") or check.get("context") or "check")
+        else:
+            passed += 1
+    return {"passed": passed, "failed": failed, "pending": pending}
+
+
+def review(pr):
+    latest = [entry for entry in pr.get("latestReviews") or [] if entry.get("state") in ("APPROVED", "CHANGES_REQUESTED")]
+    decision = pr.get("reviewDecision") or ""
+    states = {entry["state"] for entry in latest}
+    if decision == "CHANGES_REQUESTED" or (not decision and "CHANGES_REQUESTED" in states):
+        state = "changes_requested"
+    elif decision == "APPROVED" or (not decision and "APPROVED" in states):
+        state = "approved"
+    else:
+        state = "required" if decision == "REVIEW_REQUIRED" else "none"
+    by = sorted({(entry.get("author") or {}).get("login") or "someone" for entry in latest
+                 if entry["state"] == state.upper()})
+    return {"state": state, "by": by, "at": max((entry.get("submittedAt") or "" for entry in latest), default="")}
+
+
+def read_pr(cwd, ref):
+    argv = ["gh", "pr", "view", *([ref] if ref else []), "--json", PR_FIELDS]
+    try:
+        viewed = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        raise ValueError("GitHub's gh command isn't installed. Install it (brew install gh), then try again.")
+    if viewed.returncode:
+        problem = (viewed.stderr.strip().splitlines() or ["GitHub didn't answer about the pull request."])[-1]
+        if "Could not resolve" in problem or "no pull requests found" in problem:
+            problem = (f"No pull request {ref or 'for this branch'} in {Path(cwd).name}. "
+                       "Open a terminal in its project first, or paste the pull request's link.")
+        raise ValueError(problem)
+    pr = json.loads(viewed.stdout)
+    return {"number": pr["number"], "title": pr.get("title") or "", "url": pr["url"], "state": pr.get("state") or "OPEN",
+            "draft": bool(pr.get("isDraft")), "mergeable": pr.get("mergeable") or "UNKNOWN", "review": review(pr),
+            "checks": checks(pr.get("statusCheckRollup")),
+            "activity": len(pr.get("comments") or []) + len(pr.get("reviews") or [])}
+
+
+def judge_pr(item, reading):
+    """What to announce, or None while the wait goes on."""
+    name, until = f"PR #{reading['number']}", item["until"]
+    title = reading["title"]
+    if reading["state"] == "MERGED":
+        return {"title": f"{name} merged", "body": title, "level": "success"}
+    if reading["state"] == "CLOSED":
+        return {"title": f"{name} was closed without merging", "body": title, "level": "warning"}
+    seen, base = reading["review"], item.get("baseline") or {}
+    fresh = (seen["state"], seen["at"]) != (base.get("review"), base.get("reviewAt"))
+    counts = reading["checks"]
+    who = f"By {', '.join(seen['by'])}. {title}" if seen["by"] else title
+    approved = {"title": f"{name} approved", "body": who, "level": "success"}
+    changes = {"title": f"{name}: changes requested", "body": who, "level": "warning"}
+    failing = {"title": f"{name}: checks failed", "body": ", ".join(counts["failed"][:4]), "level": "error"}
+    finished = not counts["pending"] and (counts["passed"] or counts["failed"])
+    if until == "review" and fresh and seen["state"] in ("approved", "changes_requested"):
+        return approved if seen["state"] == "approved" else changes
+    if until == "checks" and finished:
+        return failing if counts["failed"] else {"title": f"{name}: checks passed", "body": title, "level": "success"}
+    if until == "comment" and reading["activity"] > base.get("activity", 0):
+        return {"title": f"{name}: new comment or review", "body": title, "level": "info"}
+    if until == "ready":
+        if seen["state"] == "changes_requested" and fresh:
+            return changes
+        if finished and counts["failed"]:
+            return failing
+        if reading["mergeable"] == "CONFLICTING":
+            return {"title": f"{name} has conflicts", "body": title, "level": "warning"}
+        clear = not counts["pending"] and not counts["failed"]
+        if not reading["draft"] and seen["state"] in ("approved", "none") and clear and reading["mergeable"] == "MERGEABLE":
+            return {"title": f"{name} is ready to merge", "body": title, "level": "success"}
+    return None
+
+
+def read_command(cwd, command):
+    try:
+        ran = subprocess.run(["sh", "-c", command], cwd=cwd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise ValueError("The command ran longer than a minute and was stopped.")
+    return {"code": ran.returncode, "output": ran.stdout.strip()[-2000:], "errors": ran.stderr.strip()[-500:]}
+
+
+def judge_command(item, reading):
+    last = (reading["output"].splitlines() or [""])[-1][:200]
+    if item["until"] == "changes":
+        if reading["code"] == 0 and reading["output"] != (item.get("baseline") or {}).get("output"):
+            return {"title": f"{item['name']} changed", "body": last, "level": "info"}
+        return None
+    if reading["code"] == 0:
+        return {"title": f"{item['name']} succeeded", "body": last or item["command"], "level": "success"}
+    return None
+
+
+def check(item):
+    """One reading of a watcher. Returns the item to save; a failed reading keeps the last good state."""
+    item = {**item, "checked": now()}
+    try:
+        if item["kind"] == "pr":
+            reading = read_pr(item["cwd"], item.get("ref"))
+            item.update(ref=reading["url"], number=reading["number"], title=reading["title"])
+            fired = judge_pr(item, reading)
+        else:
+            reading = read_command(item["cwd"], item["command"])
+            fired = judge_command(item, reading)
+    except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
+        return {**item, "error": str(error)}
+    item.update(state=reading, error=None)
+    if fired:
+        item["fired"] = {**fired, "at": now()}
+        tell(item)
+    return item
+
+
+def tell(item):
+    if not item.get("then") or not item.get("terminal"):
+        return
+    fired = item["fired"]
+    text = f"[herdr-watch] {fired['title']}. {fired['body']}".strip() + f"\n{item['then']}"
+    try:
+        sent = subprocess.run(["hc", "send", item["terminal"], text], capture_output=True, text=True, timeout=30)
+        item["told"] = sent.returncode == 0 or (sent.stderr.strip().splitlines() or ["The terminal didn't take the message."])[-1]
+    except (OSError, subprocess.SubprocessError) as error:
+        item["told"] = str(error)
+
+
+def baseline(item, reading):
+    if item["kind"] == "command":
+        return {"output": reading["output"]}
+    return {"review": reading["review"]["state"], "reviewAt": reading["review"]["at"], "activity": reading["activity"]}
+
+
+def add(item, args):
+    if args.then and not item["terminal"]:
+        raise ValueError("--then needs a terminal to message: run this from a Herdr terminal or pass --terminal.")
+    if item["kind"] == "pr":
+        reading = read_pr(item["cwd"], item["ref"])
+        item.update(ref=reading["url"], number=reading["number"], title=reading["title"])
+        already = judge_pr({**item, "baseline": {}}, reading)
+    else:
+        reading = read_command(item["cwd"], item["command"])
+        already = judge_command(item, reading) if item["until"] == "succeeds" else None
+    if already and not (item["kind"] == "pr" and item["until"] == "review" and reading["review"]["state"] == "changes_requested"):
+        raise ValueError(f"{already['title']} already. Nothing to wait for.")
+    item.update(state=reading, baseline=baseline(item, reading), checked=now())
+    save(item)
+    return item
+
+
+def new(kind, args, **fields):
+    return {"id": "w" + secrets.token_hex(3), "kind": kind, "created": now(), "cwd": str(Path(args.cwd or os.getcwd()).resolve()),
+            "every": max(15, args.every), "then": args.then, "error": None, "fired": None,
+            "terminal": args.terminal or os.environ.get("HC_TERMINAL_ID"), **fields}
+
+
+def tick(force, only):
+    root = store()
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / ".lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
+        moment = now()
+        due = [item for item in load() if not item.get("fired") and (not only or item["id"] == only)
+               and (force or moment - item.get("checked", 0) >= item["every"] * 1000 - 2000)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for item in pool.map(check, due):
+                if (root / f"{item['id']}.json").exists():
+                    save(item)
+
+
+def remove(args):
+    gone = []
+    for item in load():
+        if item["id"] == args.id or (args.fired and item.get("fired")):
+            (store() / f"{item['id']}.json").unlink(missing_ok=True)
+            gone.append(item["id"])
+    if args.id and not gone:
+        raise ValueError(f"No watcher {args.id}.")
+    return gone
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    def adding(name, text):
+        sub = commands.add_parser(name, help=text)
+        sub.add_argument("--every", type=int, default=60, help="Seconds between checks (default 60, at least 15)")
+        sub.add_argument("--cwd", help="Folder to check from (default: here)")
+        sub.add_argument("--then", help="When it happens, send this message to the terminal that set the watch")
+        sub.add_argument("--terminal", help="Terminal for --then (default: this one)")
+        return sub
+
+    pr = adding("pr", "Wait on a pull request")
+    pr.add_argument("ref", nargs="?", help="Number, URL or branch (default: this branch's pull request)")
+    pr.add_argument("--until", choices=(*UNTIL, "approved"), default="review",
+                    help="review: approved or changes requested (default). checks: checks finish. ready: approved, "
+                         "checks passed and no conflicts. merged. comment: a new comment or review")
+    command = adding("command", "Wait until a shell command exits 0, or until its output changes")
+    command.add_argument("--name", required=True, help="What you are waiting for, a few words")
+    command.add_argument("--changes", action="store_true", help="Wait for different output instead of exit 0")
+    command.add_argument("argv", nargs=argparse.REMAINDER, help="-- then the command")
+    commands.add_parser("list", help="Every watcher as JSON")
+    ticking = commands.add_parser("tick", help="Check the watchers that are due, then list")
+    ticking.add_argument("--force", action="store_true", help="Check all of them now")
+    ticking.add_argument("--only", help="Check just this watcher")
+    removing = commands.add_parser("remove", help="Stop a watcher")
+    removing.add_argument("id", nargs="?")
+    removing.add_argument("--fired", action="store_true", help="Remove every watcher that is finished")
+    args = parser.parse_args()
+    try:
+        if args.command == "pr":
+            until = "review" if args.until == "approved" else args.until
+            result = {"added": add(new("pr", args, ref=args.ref, until=until), args)}
+        elif args.command == "command":
+            words = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            if not words:
+                raise ValueError("Give the command after --, for example: herdr-watch command --name Deploy -- curl -sf https://example.com")
+            line = words[0] if len(words) == 1 else shlex.join(words)
+            result = {"added": add(new("command", args, name=args.name.strip(), command=line,
+                                       until="changes" if args.changes else "succeeds"), args)}
+        elif args.command == "remove":
+            if not args.id and not args.fired:
+                raise ValueError("Give a watcher id, or --fired.")
+            result = {"removed": remove(args)}
+        else:
+            if args.command == "tick":
+                tick(args.force, args.only)
+            result = {}
+        print(json.dumps({**result, "items": load()}))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

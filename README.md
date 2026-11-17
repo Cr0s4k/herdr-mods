@@ -732,6 +732,55 @@ fails, its previous entries stay visible with an error while the other sources u
 Cloud/Desktop schedules, Monitor-based loops without scheduler records, and remote goals
 are not included.
 
+## Watchers
+
+The **Watchers** tab beside Show waits for things that happen outside Herdr and tells you when
+they do: a toast in Herdr with the alert sound, and a macOS notification when Herdr isn't the
+app in front. Clicking the toast opens the panel. The tab shows how many are still waiting
+(**Watchers (2)**).
+
+**New watcher** has two kinds:
+
+- **Pull request**: a number or link, or nothing for the pull request of the branch in the
+  focused terminal's folder. Pick what to wait for: **Review** (approved, or changes
+  requested), **Checks** (its checks finish, passing or failing), **Ready** (approved, checks
+  passed and no conflicts; it also ends on what blocks it: requested changes, a failed check or
+  conflicts), **Merged**, or **Comment** (a new comment or review). Every pull request watcher
+  also ends when the pull request merges or is closed. A review that was already there when
+  the watch began isn't news; only a newer one counts.
+- **Command**: a name and a shell command, run with `sh` in that folder. It ends when the
+  command **exits 0**, or when its **output changes** from the first run. Use it for anything
+  else: a deploy answering, a release appearing, a file showing up.
+
+Watchers are grouped by the space whose folders hold them. The shown space's group comes first
+and is open; the others are folded to one line with their counts (click to open). A watcher of
+a folder no space has open sits under that folder's name.
+
+A waiting watcher shows what it read last (review, checks, draft, conflicts, or the command's
+exit code and last line), when it was checked, **Check now** and **Stop**. Finished ones move
+to the end of their group with their outcome until you **Remove** them or **Clear finished**. A watcher that
+can't be read (no network, `gh` logged out) says why and keeps trying.
+
+From a terminal, and for agents through the `herdr-watch` skill:
+
+```sh
+herdr-watch pr                         # this branch's pull request, until it is reviewed
+herdr-watch pr 42 --until checks
+herdr-watch pr 42 --until ready --then "Merge it with gh pr merge --squash, then pull main."
+herdr-watch command --name "Staging is up" -- curl -sf https://staging.example.com/health
+herdr-watch list
+herdr-watch remove <id>
+```
+
+`--then` sends that message, after the outcome, to the terminal the watch was set from, so an
+agent can pick up where it left off (`--terminal` names another one). `--every` sets the
+seconds between checks (60 by default, at least 15).
+
+Watchers are checked every 15 seconds for the ones that are due, from this computer, while
+Herdr is open: a quit Herdr checks nothing and catches up on the next start. Pull requests are
+read with GitHub's `gh` (GitHub only), so a remote space's pull request needs its link.
+Watchers live in `~/.config/herdr-app/watchers/`, one file each. Needs Python 3.
+
 ## Since you left
 
 The **Brief** toolbar button opens a persistent handoff for the current space. Its
@@ -864,6 +913,8 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 - **Push and pull**: the branch bar with ahead/behind counts and Push/Pull in Changes.
 - **Loops**: the Loops button in the tab bar and its side panel.
 - **Skills**: the Skills button in the tab bar and its side panel.
+- **Watchers**: the Watchers button in the tab bar and its side panel. Off, watchers still
+  check and notify.
 - **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
   shows every space.
 - **Terminals in the sidebar**: the terminals listed under their space, after its agents.
@@ -894,6 +945,8 @@ the new row.
 | `mods/loops/` | Codex, Claude and OpenCode goals and scheduled loops panel, with Python readers |
 | `mods/skills/`, `mods/skills-pane/` | Skills inventory and reader, with shared-file deduplication, scope and agent filters, and a normal pane view |
 | `mods/brief/`, `mods/brief-pane/` | Since you left: per-space activity, persistent handoffs, unread history and pane view |
+| `mods/watchers/`, `mods/watchers-pane/` | Watchers: the panel, the checker running in the tab bar (`watchers-tracker.js`), the `herdr-watch` command (Python) and a pane view |
+| `skills/herdr-watch/` | tells agents how to set a watcher with `herdr-watch` instead of polling |
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
 | `mods/companion/` | Pixel Companion companion reacting to live agent starts, turns and requests for input |

@@ -16,6 +16,7 @@ export const FEATURES = [
   ["syncBar", "Push and pull", "Branch, commits ahead and behind, Push and Pull in Changes"],
   ["loops", "Loops", "Loops button and side panel"],
   ["skills", "Skills", "Skills button and side panel"],
+  ["watchers", "Watchers", "Watchers button and side panel; watchers keep checking"],
   ["needsYou", "Needs you", "Filter button at the top of the Spaces sidebar"],
   ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["companion", "Companion", "Companion at the bottom of the sidebar", {
@@ -39,7 +40,7 @@ export default class Toggles extends View {
   set(key, on) {
     setShared("features", { ...(shared("features") ?? {}), [key]: on });
     const body = find(layout(), "panel-body");
-    if ((key === "loops" || key === "skills") && !on && body?.active === key) run("layout.hide", { id: "panel" });
+    if ((key === "loops" || key === "skills" || key === "watchers") && !on && body?.active === key) run("layout.hide", { id: "panel" });
   }
 
   render() {

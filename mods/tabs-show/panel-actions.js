@@ -8,6 +8,7 @@ const PANELS = {
   loops: { mod: "loops-pane", name: "Loops" },
   brief: { mod: "brief-pane", name: "Brief" },
   skills: { mod: "skills-pane", name: "Skills" },
+  watchers: { mod: "watchers-pane", name: "Watchers" },
   linear: { mod: "linear-pane", name: "Linear" },
   plane: { mod: "plane-pane", name: "Tasks" },
 };

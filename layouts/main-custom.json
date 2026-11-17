@@ -158,6 +158,13 @@
                     },
                     {
                       "content": {
+                        "mod": "watchers"
+                      },
+                      "id": "watchers",
+                      "type": "block"
+                    },
+                    {
+                      "content": {
                         "mod": "linear"
                       },
                       "id": "linear",

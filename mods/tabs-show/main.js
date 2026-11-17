@@ -6,6 +6,8 @@ import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
 import { LaunchTracker } from "./linear-launches.js";
 import { PipelineTracker } from "./pipeline-tracker.js";
+import { WatchersTracker } from "./watchers-tracker.js";
+import { ITEMS as WATCHERS, active as watching } from "./watchers-model.js";
 import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 import { brighter, spin, watchMotion } from "./ui.js";
@@ -52,14 +54,16 @@ export default class Tabs extends View {
     this.launches.start(cx);
     this.pipeline = new PipelineTracker();
     this.pipeline.start(cx);
+    this.watchers = new WatchersTracker();
+    this.watchers.start(cx);
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
         if (command === "review") this.review.open(cx);
         else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
         else if (command === "pipeline") this.openPipeline();
-        else if ((command === "loops" || command === "skills") && shared("features")?.[command] === false) continue;
-        else if (["files", "changes", "show", "loops", "brief", "skills", "linear", "plane"].includes(command)) this.togglePanel(command);
+        else if ((command === "loops" || command === "skills" || command === "watchers") && shared("features")?.[command] === false) continue;
+        else if (["files", "changes", "show", "loops", "brief", "skills", "watchers", "linear", "plane"].includes(command)) this.togglePanel(command);
       }
     });
   }
@@ -180,7 +184,8 @@ export default class Tabs extends View {
     const panel = find(root, "panel"), body = find(root, "panel-body");
     const loopsOn = shared("features")?.loops !== false;
     const skillsOn = shared("features")?.skills !== false;
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", ...(loopsOn ? ["loops"] : []), "brief", ...(skillsOn ? ["skills"] : []), "linear", "plane"];
+    const watchersOn = shared("features")?.watchers !== false;
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "show", ...(loopsOn ? ["loops"] : []), "brief", ...(skillsOn ? ["skills"] : []), ...(watchersOn ? ["watchers"] : []), "linear", "plane"];
     this.syncPanel(space, panel, body, enabled);
     const tab = shown.find(tab => tab.active)?.id;
     const review = panes().find(pane => pane.tab === tab && pane.mod === "review-pane");
@@ -249,6 +254,10 @@ export default class Tabs extends View {
       .child(panelButton("show", "Show", "mods/show/show.svg"))
       .when(loopsOn, el => el.child(panelButton("loops", "Loops", "mods/loops/loops.svg")))
       .when(skillsOn, el => el.child(panelButton("skills", "Skills", "mods/skills/skills.svg")))
+      .when(watchersOn, el => el.child(panelButton("watchers", (() => {
+        const count = watching(shared(WATCHERS)).length;
+        return count ? `Watchers (${count})` : "Watchers";
+      })(), "mods/watchers/watchers.svg")))
       .child(panelButton("plane", "Tasks", "mods/plane/plane.svg"))
       .child(panelButton("brief", (() => {
         const count = unreadFor(entriesFor(space?.id, shared(ACTIVITY) ?? [], shared(REPORTS) ?? []), shared(receipt(space?.id))).length;
