@@ -216,6 +216,17 @@ nothing to finish.
    down, such as `crm/.env`), and the install command of
    its lockfile.
 
+   **Implementer** (Settings) splits a task between two models: with **Hand the implementation
+   to another agent** on, the task's agent plans the work, hands the code to a second agent
+   (OpenCode, Codex or Claude Code, with the model and effort picked there), then reviews the
+   diff and commits. The task's agent runs the implementer from its worktree once per step,
+   with a brief it writes to `herdr-brief.md` in Git's own folder; the implementer edits
+   files there without asking. Use it to plan with a strong model and write with a cheaper
+   one, such as Claude Code on Opus with OpenCode on DeepSeek. A queued task's inspector has
+   a switch to keep the code with its own agent, and a started task shows who writes its
+   code. Such a task may show a quiet terminal for 30 minutes, not 10, before it is marked
+   as possibly stuck.
+
    **Agent instructions** (Settings, Agent) is free text added to every task's first message.
    **Show the change** there asks each agent for screenshots of the screens it changes, before
    it changes anything and again when done, saved in Git's own folder (never committed) in

@@ -2161,3 +2161,33 @@ test("a conversion that hasn't moved anything is cancelled without touching the 
   assert.equal(world.state().tasks.length, 0);
   assert.equal(world.calls.length, 0);
 });
+
+test("an implementer takes the code from the task's agent: its command, the first message, and a task that opts out", async () => {
+  let state = typed("Rework billing", "Fix a typo");
+  assert.equal(model.implementerFor(state, row(state, "T-1")), null, "off until it is turned on");
+  state = reduce(state, { type: "implementerSetup", on: true, model: "deepseek/deepseek-chat", effort: "high" }, 0);
+  assert.deepEqual(state.implementer, { on: true, agent: null, model: "deepseek/deepseek-chat", effort: "high" });
+  assert.match(state.events[0].message, /hand the implementation to OpenCode · deepseek\/deepseek-chat · high effort/);
+  const brief = '"$(cat "$(git rev-parse --git-path herdr-brief.md)")"';
+  assert.equal(model.implementerFor(state, row(state, "T-1")).command, `opencode run --auto -m 'deepseek/deepseek-chat#high' ${brief}`);
+  assert.equal(reduce(state, { type: "implementerSetup", agent: "opencode" }, 0), state, "the same agent keeps its model");
+  const codex = reduce(reduce(state, { type: "implementerSetup", agent: "codex" }, 0), { type: "implementerSetup", model: "gpt-5", effort: "low" }, 0);
+  assert.equal(model.implementerFor(codex, null).command, `codex exec --sandbox workspace-write -m gpt-5 -c 'model_reasoning_effort="low"' ${brief}`);
+  assert.equal(model.implementerFor(reduce(codex, { type: "implementerSetup", agent: "claude" }, 0), null).command, `claude -p --permission-mode acceptEdits ${brief}`, "another agent starts without the old model");
+  assert.equal(model.implementerFor(reduce(state, { type: "implementerSetup", model: "it's; rm -rf" }, 0), null).command, `opencode run --auto -m 'it'\\''s; rm -rf#high' ${brief}`);
+  state = reduce(state, { type: "solo", id: "T-2" }, 0);
+  assert.equal(model.implementerFor(state, row(state, "T-2")), null);
+
+  const extras = {}, world = host(reduce(state, { type: "run" }, 0), { start: (_c, task, _w, _a, _s, _d, given) => { extras[task.id] = given; return "space"; } });
+  const runner = new live.LiveRunner(world.host);
+  const tick = async () => { const jobs = []; runner.step({ spawn: fn => jobs.push(fn({ sleep: async () => {} })) }); await Promise.all(jobs); };
+  await tick(); await tick();
+  assert.equal(extras["T-1"].implementer.label, "OpenCode · deepseek/deepseek-chat · high effort");
+  assert.equal(extras["T-2"].implementer, null);
+  assert.deepEqual([row(world.state(), "T-1").implementer, row(world.state(), "T-2").implementer], ["OpenCode · deepseek/deepseek-chat · high effort", null]);
+  assert.deepEqual([model.stallFor(row(world.state(), "T-1")), model.stallFor(row(world.state(), "T-2"))], [3 * model.STALL, model.STALL], "waiting on the implementer is not being stuck");
+
+  const ws = { cwd: "/wt", branch: "t-1", target: "main", base: "a".repeat(40) }, text = live.prompt(row(state, "T-1"), ws, "merge", extras["T-1"]);
+  assert.match(text, /Plan this task yourself, then hand the implementation to OpenCode · deepseek\/deepseek-chat · high effort instead of writing the code:[\s\S]*\n {2}opencode run --auto -m 'deepseek\/deepseek-chat#high' "\$\(cat [\s\S]*you commit[\s\S]*Before you stop, write a short summary/);
+  assert.doesNotMatch(live.prompt(row(state, "T-2"), ws, "merge", extras["T-2"]), /implementation/);
+});

@@ -181,6 +181,24 @@ export const PLANNERS = { claude: "Claude Code", codex: "Codex", opencode: "Open
 const ran = action => ({ trace: (Array.isArray(action.trace) ? action.trace : []).map(line => String(line).slice(0, 200)).slice(-80),
   ms: Number(action.ms) || null, cost: typeof action.cost === "number" ? action.cost : null, tokens: Number(action.tokens) || null });
 export const plannerAgent = state => PLANNERS[state.planner?.agent] ? state.planner.agent : state.agent?.key === "codex" ? "codex" : "claude";
+// The implementer writes the code a task's agent planned: a second agent, run headless from the worktree, which may edit files there without asking.
+export const IMPLEMENTERS = {
+  opencode: { name: "OpenCode", run: ({ model, effort }) => ["opencode", "run", "--auto", ...(model ? ["-m", effort ? `${model}#${effort}` : model] : [])] },
+  codex: { name: "Codex", run: tune => ["codex", "exec", "--sandbox", "workspace-write", ...AGENT_OPTIONS.codex.flags(tune)] },
+  claude: { name: "Claude Code", run: tune => ["claude", "-p", "--permission-mode", "acceptEdits", ...AGENT_OPTIONS.claude.flags(tune)] },
+};
+export const implementerAgent = state => IMPLEMENTERS[state.implementer?.agent] ? state.implementer.agent : "opencode";
+export const implementerTuning = state => ({ model: state.implementer?.model ?? null, effort: state.implementer?.effort ?? null });
+const shellWord = word => /^[\w./:@=+-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+// What a task's agent is told to hand the implementation to, or null when it implements itself. The brief is read from a file, so no quoting can break it.
+export function implementerFor(state, task) {
+  if (!state.implementer?.on || task?.solo) return null;
+  const key = implementerAgent(state), tune = implementerTuning(state);
+  return { key, label: [IMPLEMENTERS[key].name, tuningLabel(tune)].filter(Boolean).join(" · "),
+    command: `${IMPLEMENTERS[key].run(tune).map(shellWord).join(" ")} "$(cat "$(git rev-parse --git-path herdr-brief.md)")"` };
+}
+// A task that hands its implementation over waits on a quiet screen for longer.
+export const stallFor = task => task?.implementer ? 3 * STALL : STALL;
 export const plannerTuning = state => ({ model: state.planner?.model ?? null, effort: state.planner?.effort ?? null });
 export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
 export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
@@ -282,7 +300,7 @@ export function liveNotices(before, after) {
     const old = was.get(task.id);
     if (!old || task.discard) continue;
     const say = (title, body, level) => notices.push({ title: `${task.id} ${title}`, body: body || task.title, level, task: task.id });
-    if (task.stalled && !old.stalled) say("may be stuck", `Its terminal has shown nothing new for ${elapsed(STALL)} · ${task.title}`, "warning");
+    if (task.stalled && !old.stalled) say("may be stuck", `Its terminal has shown nothing new for ${elapsed(stallFor(task))} · ${task.title}`, "warning");
     else if (task.status === "failed" && old.status !== "failed") say(task.reason === "checks" ? "checks failed" : "stopped", task.reason === "checks" ? task.title : task.error, "error");
     else if (task.status === "input" && task.reason === "trust" && old.reason !== "trust") say("asks to trust its worktree", task.title, "warning");
     else if (task.status === "review" && old.status === "merging") say(after.delivery === "pr" ? "pull request not opened" : "not merged", task.error, "error");
@@ -527,7 +545,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "autoTrust", "quiet", "planner"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "autoTrust", "quiet", "planner", "implementer"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -882,7 +900,25 @@ export function reduce(state, action, now = Date.now()) {
       const task = row(action.id), since = action.since ?? null;
       if (!next.live || task?.status !== "working" || (task.stalled ?? null) === since) return state;
       task.stalled = since;
-      if (since) event(next, `${task.id} · its terminal has shown nothing new for ${elapsed(STALL)}. Its agent may be stuck.`, task.id);
+      if (since) event(next, `${task.id} · its terminal has shown nothing new for ${elapsed(stallFor(task))}. Its agent may be stuck.`, task.id);
+      break;
+    }
+    case "implementerSetup": {
+      if (!next.live) return state;
+      const before = { on: false, agent: null, model: null, effort: null, ...next.implementer }, value = { ...before };
+      if ("on" in action) value.on = Boolean(action.on);
+      if ("agent" in action && IMPLEMENTERS[action.agent] && action.agent !== implementerAgent(next)) Object.assign(value, { agent: action.agent, model: null, effort: null });
+      if ("model" in action) value.model = String(action.model ?? "").trim().slice(0, 100) || null;
+      if ("effort" in action) value.effort = /^[a-z]{1,20}$/.test(action.effort ?? "") ? action.effort : null;
+      if (JSON.stringify(value) === JSON.stringify(before)) return state;
+      next.implementer = value;
+      if (value.on !== before.on) event(next, value.on ? `New tasks plan the work and hand the implementation to ${implementerFor(next).label}.` : "New tasks implement their own work again.");
+      break;
+    }
+    case "solo": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "queued") return state;
+      task.solo = !task.solo;
       break;
     }
     case "plannerSetup": {
@@ -1034,7 +1070,7 @@ export function reduce(state, action, now = Date.now()) {
     case "launched": {
       const task = row(action.id);
       if (!next.live || task?.status !== "routing") return state;
-      Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, tuning: action.tuning || null, error: null });
+      Object.assign(task, { status: "working", launch: null, worked: false, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? null, tuning: action.tuning || null, implementer: action.implementer || null, error: null });
       event(next, `${task.id} · ${action.agent ?? "agent"} started on ${workspacesOf(task)[0]?.branch ?? "its branch"}${repoNames(task)}.`, task.id);
       ticketUpdate(next, task, "start");
       break;

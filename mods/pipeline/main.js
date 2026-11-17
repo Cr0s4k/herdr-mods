@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -68,7 +68,7 @@ const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "
 const MODEL_CHIPS = 12, MODEL_LIST = 300;
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner", "outside"];
 const SECTIONS = {
-  live: { agent: "Agent", limits: "Usage limits", planner: "AI helper", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
+  live: { agent: "Agent", implementer: "Implementer", limits: "Usage limits", planner: "AI helper", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
   simulation: { pipeline: "Pipeline", simulation: "Simulation", general: "General" },
 };
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
@@ -170,6 +170,9 @@ export default class Pipeline extends View {
     this.plannerModelInput = InputState.new({ placeholder: "Find a model, or type its name" });
     this.plannerModelInput.on("submit", (_e, cx) => this.savePlannerModel(cx));
     this.plannerModelInput.on("change", (_e, cx) => cx.notify());
+    this.implementerModelInput = InputState.new({ placeholder: "Find a model, or type its name" });
+    this.implementerModelInput.on("submit", (_e, cx) => this.saveImplementerModel(cx));
+    this.implementerModelInput.on("change", (_e, cx) => cx.notify());
     this.taskModelInput = InputState.new({ placeholder: "Find a model, or type its name" });
     this.taskModelInput.on("submit", (_e, cx) => this.saveTaskModel(cx));
     this.taskModelInput.on("change", (_e, cx) => cx.notify());
@@ -224,7 +227,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -522,6 +525,10 @@ export default class Pipeline extends View {
     const state = this.state();
     if (state?.live) this.saveTyped(plannerAgent(state), plannerTuning(state), this.plannerModelInput, (change, cx) => this.act({ type: "plannerSetup", ...change }, cx), cx);
   }
+  saveImplementerModel(cx) {
+    const state = this.state();
+    if (state?.live) this.saveTyped(implementerAgent(state), implementerTuning(state), this.implementerModelInput, (change, cx) => this.act({ type: "implementerSetup", ...change }, cx), cx);
+  }
   saveTaskModel(cx) {
     const state = this.state(), key = this.agentKey(state ?? {}), task = state?.tasks.find(task => task.id === this.detailsFor);
     if (state?.live && AGENT_OPTIONS[key] && task) this.saveTyped(key, { model: task.tune?.model ?? null, effort: task.tune?.effort ?? null }, this.taskModelInput,
@@ -558,6 +565,7 @@ export default class Pipeline extends View {
       this.instructions.set_value(this.state().instructions ?? "");
       this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
       this.plannerModelInput.set_value(this.state().planner?.model ?? "");
+      this.implementerModelInput.set_value(this.state().implementer?.model ?? "");
       if (drawer !== this.drawer) this.loadUpdateStates(cx);
     }
     if (SOURCES[drawer] && !this.state()?.live) return;
@@ -1746,6 +1754,7 @@ export default class Pipeline extends View {
       body.child(this.switchRow("evidence", "Show the change", "Asks each agent for before and after screenshots of what it changes, presented on a private page it publishes. The task's inspector opens it.",
         Boolean(state.evidence), cx => this.act({ type: "evidence" }, cx), t));
     } else if (section === "limits") this.limits(body, state, t);
+    else if (section === "implementer") this.implementerSettings(body, state, t);
     else if (section === "planner") this.plannerSettings(body, state, t);
     else if (section === "repositories") this.repositories(body, state, t);
     else if (section === "checks") {
@@ -2010,7 +2019,7 @@ export default class Pipeline extends View {
     const branch = (trees[0] ?? Object.values(task.planned ?? {})[0])?.branch;
     body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
     body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : adoptStep(task) ?? labelFor(state, task.status)))
-      .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}`)))
+      .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
     if (adoptStep(task) && !task.discard) {
@@ -2047,6 +2056,8 @@ export default class Pipeline extends View {
         .child(this.button(`up-${task.id}`, "Move up", cx => this.act({ type: "move", id: task.id, delta: -1 }, cx), t, { disabled: at <= 0, hint: "Start it before the task above it" }))
         .child(this.button(`down-${task.id}`, "Move down", cx => this.act({ type: "move", id: task.id, delta: 1 }, cx), t, { disabled: at < 0 || at >= queue.length - 1, hint: "Start it after the task below it" })));
       this.taskTune(body, state, task, t);
+      if (state.implementer?.on) body.child(this.switchRow(`solo-${task.id}`, "Hand the implementation over", task.solo ? `${this.agentName(state)} writes this task's code itself` : `Code by ${implementerFor(state, task).label}`,
+        !task.solo, cx => this.act({ type: "solo", id: task.id }, cx), t));
       this.repoChips(body, state, task, t);
       this.waitsDetail(body, state, task, t);
     } else {
@@ -2245,6 +2256,20 @@ export default class Pipeline extends View {
     if (!setup.on) return;
     body.child(this.button("planner-open", state.planning ? "See what the planner did" : "Open the planner", cx => this.open("planner", cx), t, { icon: "eye" }));
     body.child(this.label("It runs whenever the queue changes, and new agents wait for its plan. Pipeline still keeps the rules: limits, waits you set, no circles. Start first and Start anyway still win.", t));
+  }
+  implementerSettings(body, state, t) {
+    const setup = { on: false, ...state.implementer }, agent = implementerAgent(state), name = IMPLEMENTERS[agent].name, lead = this.agentLabel(state);
+    const installed = Object.keys(IMPLEMENTERS).filter(key => this.agentChoices.some(choice => choice.key === key)), set = (change, cx) => this.act({ type: "implementerSetup", ...change }, cx);
+    body.child(this.label(`With this on, a task's agent (${lead}) plans the work, hands the code to a second agent with its own model, then reviews the result and commits. For planning with a strong model and writing with a cheaper one.`, t));
+    body.child(this.switchRow("implementer", "Hand the implementation to another agent", `${lead} runs ${name} from the task's worktree, once per step, with a written brief`,
+      setup.on, cx => set({ on: !setup.on }, cx), t));
+    body.child(h_flex().gap(6).flex_wrap().children(Object.keys(IMPLEMENTERS).map(key => this.button(`implementer-agent-${key}`, IMPLEMENTERS[key].name,
+      cx => { set({ agent: key }, cx); this.implementerModelInput.set_value(this.state().implementer?.model ?? ""); }, t, { small: true, selected: agent === key, hint: `Implement with ${IMPLEMENTERS[key].name}` }))));
+    if (this.repo && !installed.includes(agent)) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`${name} wasn't found on the project's machine. Tasks would do the work themselves.`));
+    this.modelAndEffort(body, t, { prefix: "implementer-", key: agent, name, tune: implementerTuning(state), input: this.implementerModelInput, set });
+    body.child(this.label(setup.on ? `New tasks hand their code to ${implementerFor({ ...state, implementer: setup }).label}. Running agents keep what they started with, and a queued task can opt out in its inspector.`
+      : "Off: each task's agent writes its own code.", t));
+    body.child(this.label(`${name} runs without asking before it edits files in the worktree. Its tokens count towards the task where Pipeline can read them.`, t));
   }
   firstButton(task, t) {
     return this.button(`first-${task.id}`, task.rank ? "Starts first" : "Start first", cx => this.act({ type: "first", id: task.id }, cx), t,

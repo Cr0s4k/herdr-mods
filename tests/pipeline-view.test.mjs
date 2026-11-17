@@ -1858,3 +1858,22 @@ test("agents outside the pipeline are counted in the toolbar, listed, and conver
   assert.equal(view.state().tasks.length, 0);
   world.panes = []; world.spaces = [];
 });
+
+test("the Implementer setting picks who writes the code, and a queued task can keep it", () => {
+  const view = setupLive();
+  view.open("settings", cx, "implementer");
+  assert.match(text(view.render(cx)), /Off: each task's agent writes its own code\./);
+  flip(view, "implementer");
+  assert.equal(view.state().implementer.on, true);
+  assert.match(text(view.render(cx)), /New tasks hand their code to OpenCode\./);
+  click(view, "implementer-agent-codex");
+  view.implementerModelInput.set_value("gpt-5"); view.implementerModelInput.emit("submit", cx);
+  assert.deepEqual(view.state().implementer, { on: true, agent: "codex", model: "gpt-5", effort: null });
+  assert.match(text(view.render(cx)), /New tasks hand their code to Codex · gpt-5\./);
+  view.act({ type: "create", title: "Fix a typo" }, cx);
+  view.inspect("T-1", cx);
+  assert.match(text(view.render(cx)), /Code by Codex · gpt-5/);
+  flip(view, "solo-T-1");
+  assert.equal(row(view, "T-1").solo, true);
+  assert.match(text(view.render(cx)), /writes this task's code itself/);
+});
