@@ -831,6 +831,14 @@ until then; terminals keep running. **Hidden spaces** at the bottom lets you
 show one early. Deadlines, pins and positions survive restarts. Hiding a checkout
 leaves its other worktree spaces visible.
 
+The **Tidy** button beside the sidebar's **+** sorts the spaces by when you last used them,
+most recent first, and folds every space unused for an hour. A space is in use while it is the
+one shown (with Herdr in front) or an agent is working in it; a program left running in a
+terminal doesn't count. Pinned spaces are sorted among themselves and stay above the line, and
+a worktree space moves with its checkout. Nothing moves until you click it again. For a space
+it hasn't watched yet, the last use is its folder's last commit or checkout, or its newest
+Claude session, whichever is later.
+
 ### Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
@@ -844,7 +852,7 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
 spaces, their agents and terminals; **→ ←** unfold and fold a space, and **←** on an agent or
 terminal goes back to its space. **Enter** shows the space or focuses the agent or terminal. On a space, **P** pins it, **F**
-focuses it, **H** hides it and **M** opens its menu; **N** adds a space. **Esc** leaves focus
+focuses it, **H** hides it and **M** opens its menu; **N** adds a space and **T** tidies. **Esc** leaves focus
 mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.
 
 ## Feature toggles

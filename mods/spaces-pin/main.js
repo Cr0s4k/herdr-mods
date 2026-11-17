@@ -12,6 +12,7 @@ import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 import { ink, watchMotion } from "./ui.js";
 import { spacePipeline, pipelineRow, openPipeline } from "./pipeline-row.js";
 import { spaceTerminals, terminalRow } from "./terminal-row.js";
+import { touch, quietSpaces, TRACES, sessions } from "./tidy.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -84,6 +85,10 @@ export default class Spaces extends View {
     this.agents = new AgentTree();
     this.expanded = JSON.parse(localStorage.getItem("spaces.expanded") ?? "{}");
     this.attention = localStorage.getItem("spaces.attention") === "true";
+    try { this.used = JSON.parse(localStorage.getItem("spaces.lastUsed") ?? "{}"); } catch { this.used = {}; }
+    this.seeding = new Set();
+    if (!this.used || typeof this.used !== "object" || Array.isArray(this.used)) this.used = {};
+    this.tidying = null; // { last, at }: the order Tidy asked for, until Herdr's order has it
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, top, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -198,6 +203,7 @@ export default class Spaces extends View {
         this.cursor = null;
         break;
       case "n": openOverlay({ mod: "space-new", kind: "popup", width: 300, height: 114 }); break;
+      case "t": this.tidy(); break;
       case "escape":
         if (shared("spaces.focus")) { setShared("spaces.focus", null); this.cursor = null; }
         else { this.keyboard = false; run("pane.go", { direction: "right" }); }
@@ -213,6 +219,8 @@ export default class Spaces extends View {
     expireSpaces(now);
     const sp = spaces(), ps = panes();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
+    this.use(now, sp, ps);
+    this.seed(sp, ps, cx);
     const due = this.due(now, sp, ps);
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
@@ -482,6 +490,50 @@ export default class Spaces extends View {
     openOverlay({ mod: "space-hide", kind: "popup", width: 330, height: 350, props: { id: w.id } });
   }
 
+  use(now, sp, ps) {
+    const used = touch(this.used, sp, ps, now, window().active);
+    if (used === this.used) return;
+    this.used = used;
+    localStorage.setItem("spaces.lastUsed", JSON.stringify(used));
+  }
+
+  // A space first seen: when its folder was last worked in, as far as the folder shows. One made now is in use.
+  seed(sp, ps, cx) {
+    const keep = (id, at) => {
+      this.used = { [id]: at, ...this.used };
+      localStorage.setItem("spaces.lastUsed", JSON.stringify(this.used));
+    };
+    for (const s of sp) {
+      if (s.id in this.used || this.seeding.has(s.id)) continue;
+      const h = this.home(s, ps);
+      if (!(h.key in this.git) || this.unsure.has(h.key)) continue;
+      this.seeding.add(s.id);
+      if (this.born[s.id]) { keep(s.id, Date.now()); continue; }
+      const [on, cwd] = JSON.parse(h.key), folder = h.g?.top || cwd;
+      cx.spawn(async (cx) => {
+        let at = NaN;
+        try { at = Number((await exec("sh", ["-c", TRACES, "sh", folder, sessions(folder)], { on })).stdout.trim()) * 1000; } catch {}
+        keep(s.id, at > 0 ? at : Date.now());
+        cx.notify();
+      });
+    }
+  }
+
+  // Most recently used first, pinned ones among the pinned; spaces unused for an hour fold.
+  tidy() {
+    const now = Date.now(), sp = spaces();
+    this.use(now, sp, panes());
+    const quiet = quietSpaces(this.used, sp, now);
+    this.tidying = { last: Object.fromEntries(sp.map((s) => [s.id, s.active ? now : this.used[s.id] ?? now])), at: now };
+    const rows = this.ordered();
+    rows.forEach((r, n) => {
+      let end = n + 1;
+      if (!r.tree) while (rows[end]?.tree) end++;
+      if (rows.slice(n, end).every((k) => quiet.has(k.w.id))) this.expanded[r.w.id] = false;
+    });
+    localStorage.setItem("spaces.expanded", JSON.stringify(this.expanded));
+  }
+
   orderingDue(now) {
     return this.ordering && now - this.ordering.at >= 1000
       && this.ordering.machines.every(name => machines().some(m => m.name === name && m.layout === "ready"));
@@ -509,9 +561,13 @@ export default class Spaces extends View {
     const clusters = [];
     for (const r of listed) r.tree && clusters.length ? clusters.at(-1).push(r) : clusters.push([r]);
     const isPinned = (c) => c.some((r) => pins.has(r.w.id));
+    if (this.tidying && Date.now() - this.tidying.at > 10000) this.tidying = null;
+    const last = this.tidying?.last;
+    const recent = (c) => Math.max(...c.map((r) => last[r.w.id] ?? 0));
     const out = [...new Set(clusters.map((c) => c[0].w.machine ?? null))].flatMap((m) => {
       const mine = clusters.filter((c) => (c[0].w.machine ?? null) === m);
-      const top = mine.filter(isPinned), rest = mine.filter((c) => !isPinned(c));
+      const sort = (list) => last ? list.sort((a, b) => recent(b) - recent(a)) : list;
+      const top = sort(mine.filter(isPinned)), rest = sort(mine.filter((c) => !isPinned(c)));
       top.flat().forEach((r) => (r.pinned = true));
       if (top.length && rest.length) top.at(-1).at(-1).lastPinned = true;
       return [...top, ...rest].flat();
@@ -523,6 +579,7 @@ export default class Spaces extends View {
     const key = JSON.stringify([order, target, machines()]);
     if (order.every((id, i) => id === target[i])) {
       this.ordering = null;
+      this.tidying = null;
     } else if (this.ordering?.key !== key || this.orderingDue(Date.now())) {
       const moved = new Set();
       this.ordering = { key, at: Date.now(), machines: [] };
@@ -953,6 +1010,11 @@ export default class Spaces extends View {
           .tooltip(this.attention ? "Show all spaces" : "Show only agents that need you")
           .on_click((_e, cx) => { this.attention = !this.attention; localStorage.setItem("spaces.attention", String(this.attention)); cx.notify(); })
           .child("Needs you").when(attentionCount > 0, el => el.child(div().text_color(t.blocked).child(String(attentionCount))))))
+        .when(!collapsed, el => el.child(div().id("spaces-tidy").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
+          .hover(s => s.bg(t.hover).text_color(t.foreground))
+          .role("button").accessibility_label("Tidy spaces").tooltip("Tidy · Most recently used spaces first; fold those unused for an hour")
+          .on_click((_e, cx) => { this.tidy(); cx.notify(); })
+          .child(svg("mods/spaces-pin/tidy.svg").size(14))))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .role("button").accessibility_label("Add a space").tooltip("Add a space")
           .on_click(() => openOverlay({ mod: "space-new", kind: "popup", width: 300, height: 114 }))

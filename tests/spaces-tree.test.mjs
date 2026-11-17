@@ -29,6 +29,7 @@ globalThis.__spacesNative = {
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   spaces: () => world.spaces, panes: () => world.panes, agents: () => world.agents,
   terminals: () => world.terminals, focused: () => ({ agent: world.agents.find(a => a.focused)?.address }),
+  exec: (...args) => world.exec(...args),
   machines: () => [], run: (...args) => world.calls.push(args),
   setAgentOrder: order => { world.order = order; },
   theme: () => new Proxy({}, { get: (_, key) => key }),
@@ -56,9 +57,10 @@ Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + 
 source = (await readFile(new URL("../mods/spaces-pin/terminal-row.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { div, svg, h_flex, run } = globalThis.__spacesNative;\n" + source;
 Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
+Object.assign(globalThis.__spacesNative, await import("../mods/spaces-pin/tidy.js"));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, spaceTerminals, terminalRow } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -692,4 +694,64 @@ test("terminals that aren't agents are listed under their space and focus their 
   click(view.render(), "spaces-needs-you");
   sharedState.set("features", { terminals: false });
   assert.equal(find(view.render(), "term-sh"), undefined);
+});
+
+test("use is recorded for the shown space and working agents, not for a space left alone", () => {
+  const view = setup();
+  world.spaces = [space("app", true), space("other"), space("busy")];
+  world.panes = [{ pane: "b", tab: "busy-tab", terminal: "t1", status: "working" }];
+  const start = Date.now();
+  view.used = { app: start - 7200000, other: start - 7200000, busy: start - 7200000 };
+  view.checkNew(cx);
+  assert.ok(view.used.app >= start);
+  assert.ok(view.used.busy >= start);
+  assert.equal(view.used.other, start - 7200000);
+  assert.deepEqual(JSON.parse(preferences.get("spaces.lastUsed")), view.used);
+  const restored = new Spaces(); restored.init({}, cx);
+  assert.deepEqual(restored.used, view.used);
+});
+
+test("tidy puts the most recently used spaces first, pinned ones within the pins, and folds those unused for an hour", () => {
+  const view = setup();
+  world.spaces = [space("old"), space("pinned"), space("kept"), space("app", true), space("stale"), space("recent")];
+  world.agents = [agent("one", "old"), agent("two", "recent"), agent("three", "pinned")];
+  sharedState.set("space.pinned", ["pinned", "kept"]);
+  for (const w of world.spaces) view.shown.add(w.id);
+  view.render();
+  world.calls = [];
+  world.spaces = [space("pinned"), space("kept"), space("old"), space("app", true), space("stale"), space("recent")];
+  const now = Date.now(), long = now - 2 * 3600000;
+  view.used = { old: long, pinned: long, kept: now, app: long, stale: long - 1000, recent: now - 600000 };
+  click(view.render(), "spaces-tidy");
+  assert.deepEqual(world.calls, [["space.move", { id: "kept", index: 1 }], ["space.move", { id: "app", index: 3 }], ["space.move", { id: "recent", index: 4 }]]);
+  assert.deepEqual(view.ordered().map(r => r.w.id), ["kept", "pinned", "app", "recent", "old", "stale"]);
+  let root = view.render();
+  assert.equal(find(root, "ag-one"), undefined);
+  assert.equal(find(root, "ag-three"), undefined);
+  assert.ok(find(root, "ag-two"));
+  assert.equal(world.calls.length, 3);
+  world.spaces = [space("kept"), space("pinned"), space("app", true), space("recent"), space("old"), space("stale")];
+  view.render();
+  assert.equal(view.tidying, null);
+  world.calls = [];
+  click(view.render(), "spaces-tidy");
+  assert.deepEqual(world.calls, []);
+});
+
+test("a space first seen takes its last use from its folder, and one made while running counts as in use", async () => {
+  const view = setup(), jobs = [], asked = [];
+  const running = { ...cx, spawn: fn => jobs.push(fn(cx)) };
+  world.exec = async (cmd, args) => { asked.push([cmd, args.slice(3)]); return { code: 0, stdout: "1700000000\n" }; };
+  view.git = { [JSON.stringify([null, "/work/app"])]: null, [JSON.stringify([null, "/work/other"])]: null };
+  view.used = { app: 5 };
+  view.seed(world.spaces, [], running);
+  await Promise.all(jobs);
+  assert.deepEqual(asked, [["sh", ["/work/other", "-work-other"]]]);
+  assert.deepEqual(view.used, { app: 5, other: 1700000000000 });
+  world.spaces = [...world.spaces, space("made")];
+  view.git[JSON.stringify([null, "/work/made"])] = null;
+  view.born.made = Date.now();
+  view.seed(world.spaces, [], running);
+  assert.equal(asked.length, 1);
+  assert.ok(view.used.made >= view.born.made);
 });
