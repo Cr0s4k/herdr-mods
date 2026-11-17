@@ -335,7 +335,8 @@ export class LiveRunner {
           this.apply(id, { type: "prMerged", id: task.id, repo, url: pr.url });
           const after = this.task(id, task.id);
           if (after?.status !== "done") return;
-          try { await this.clean(state.context, after, true); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
+          // A pull request followed from another branch never held this worktree's work, so nothing there is thrown away.
+          try { await this.clean(state.context, after, !Object.values(after.prs ?? {}).some(pr => pr.from)); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
           this.apply(id, { type: "cleaned", id: task.id });
         } else if (github === "CLOSED") this.apply(id, { type: "prClosed", id: task.id, repo, url: pr.url });
       } catch { /* Try again next minute. */ } finally { this.polling.delete(key); }
@@ -351,7 +352,7 @@ export class LiveRunner {
       try {
         const prs = {};
         for (const ws of workspaces) {
-          const { found } = await this.host.delivery({ cwd: ws.source, on: state.context.on }, { op: "pr_find", root: ws.source, worktree: ws.root, branch: ws.branch, base: ws.base });
+          const { found } = await this.host.delivery({ cwd: ws.source, on: state.context.on }, { op: "pr_find", root: ws.source, worktree: ws.root, branch: ws.branch, base: ws.base, ...(task.adopt && ws.target ? { target: ws.target } : {}) });
           if (!found) return;
           prs[ws.name] = found;
         }

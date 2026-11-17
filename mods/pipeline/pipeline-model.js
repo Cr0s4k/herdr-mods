@@ -1293,9 +1293,10 @@ export function reduce(state, action, now = Date.now()) {
       const waits = task?.status === "review" || (["input", "failed"].includes(task?.status) && found.every(([, pr]) => pr.merged));
       if (!next.live || !task || task.discard || !waits || task.approvals?.length || !found.length) return state;
       const prs = { ...task.prs };
-      for (const [name, pr] of found) prs[name] = { url: pr.url, number: pr.number };
+      for (const [name, pr] of found) prs[name] = { url: pr.url, number: pr.number, ...(pr.from ? { from: String(pr.from) } : {}) };
       Object.assign(task, { status: "pr", merge: false, commit: false, error: null, prs });
-      event(next, `${task.id} · found ${found.length > 1 ? `pull requests ${prList(action.prs)}` : `pull request #${found[0][1].number}`} on its branch. It finishes when ${found.length > 1 ? "every one is" : "it's"} merged on GitHub.`, task.id);
+      const where = found.length === 1 && found[0][1].from ? `on ${found[0][1].from}, the branch its work was already on` : "on its branch";
+      event(next, `${task.id} · found ${found.length > 1 ? `pull requests ${prList(action.prs)}` : `pull request #${found[0][1].number}`} ${where}. It finishes when ${found.length > 1 ? "every one is" : "it's"} merged on GitHub.`, task.id);
       ticketUpdate(next, task, "link");
       ticketUpdate(next, task, "review");
       break;

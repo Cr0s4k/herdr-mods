@@ -348,12 +348,11 @@ def pr_find(payload):
     if not worktree.is_dir():
         return {"found": None}
     branch = branch_of(worktree, payload["branch"])
-    pushed = git(worktree, "config", "branch." + branch + ".remote", optional=True) or git(worktree, "for-each-ref", "refs/remotes/*/" + branch)
-    if not pushed:
-        return {"found": None}
+    if not pushed(worktree, branch):
+        return {"found": source_pr(worktree, payload)}
     viewed = gh(worktree, "pr", "view", branch, "--json", "url,number,state,headRefOid")
     if viewed.returncode:
-        return {"found": None}
+        return {"found": source_pr(worktree, payload)}
     pr, base = json.loads(viewed.stdout), payload.get("base")
     head = pr.get("headRefOid") or ""
     ours = bool(head) and git(worktree, "merge-base", "--is-ancestor", head, "HEAD", optional=True) is not None
@@ -361,6 +360,25 @@ def pr_find(payload):
     if pr.get("state") not in ("OPEN", "MERGED") or not ours or old:
         return {"found": None}
     return {"found": {"url": pr["url"], "number": pr["number"], "merged": pr["state"] == "MERGED"}}
+
+
+def pushed(worktree, branch):
+    return git(worktree, "config", "branch." + branch + ".remote", optional=True) or git(worktree, "for-each-ref", "refs/remotes/*/" + branch)
+
+
+# A converted conversation that added nothing in its worktree follows the open pull request of the branch its work was already on.
+def source_pr(worktree, payload):
+    target, base = payload.get("target"), payload.get("base")
+    if not target or not base or git(worktree, "rev-parse", "HEAD") != base or git(worktree, "status", "--porcelain") or not pushed(worktree, target):
+        return None
+    viewed = gh(worktree, "pr", "view", target, "--json", "url,number,state,headRefOid")
+    if viewed.returncode:
+        return None
+    pr = json.loads(viewed.stdout)
+    head = pr.get("headRefOid") or ""
+    if pr.get("state") != "OPEN" or not head or git(worktree, "merge-base", "--is-ancestor", base, head, optional=True) is None:
+        return None
+    return {"url": pr["url"], "number": pr["number"], "merged": False, "from": target}
 
 
 SPANS = "\n\nThis change spans "

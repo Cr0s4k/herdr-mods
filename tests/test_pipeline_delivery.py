@@ -468,6 +468,27 @@ class DeliveryTest(unittest.TestCase):
         self.assertIsNone(self.found("MERGED", self.base), "its head was already in the branch the task started from")
         self.assertIsNone(self.found("MERGED", "f" * 40), "its head isn't in this branch at all")
 
+    def test_a_converted_conversation_that_added_nothing_follows_the_pull_request_of_the_branch_it_came_from(self):
+        self.with_origin()
+        log = self.home / "gh.log"
+
+        def found(state="OPEN", head=self.base, **extra):
+            self.stub_gh("cat <<'EOF'\n" + json.dumps({"url": "https://github.com/me/project/pull/7", "number": 7, "state": state, "headRefOid": head}) + "\nEOF\n")
+            return delivery.pr_find(self.payload("pr_find", **extra))["found"]
+
+        self.assertIsNone(found(), "only a converted conversation passes the branch it came from")
+        self.assertFalse(log.exists())
+        self.assertEqual(found(target="main"), {"url": "https://github.com/me/project/pull/7", "number": 7, "merged": False, "from": "main"})
+        self.assertIn("pr view main", log.read_text())
+        self.assertIsNone(found("MERGED", target="main"), "an older merged one of that branch isn't this work")
+        self.assertIsNone(found(head="f" * 40, target="main"), "its head doesn't hold the commit the task started from")
+        self.assertIsNone(found(target="never-pushed"))
+        (self.tree / "draft.txt").write_text("draft\n")
+        self.assertIsNone(found(target="main"), "uncommitted work is the task's own")
+        (self.tree / "draft.txt").unlink()
+        self.agent_commits()
+        self.assertIsNone(found(target="main"), "its own commits need their own pull request")
+
     def second_repository(self):
         repo = self.home / "web"
         repo.mkdir()

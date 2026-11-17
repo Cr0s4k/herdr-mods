@@ -699,6 +699,14 @@ test("a pull request opened by hand on a task's branch is followed like one Pipe
   assert.deepEqual([row(world.state(), "T-1").status, row(world.state(), "T-1").workspaces], ["done", null]);
 });
 
+test("a converted conversation follows the pull request of the branch it came from", () => {
+  let state = reduce(reduce(typed("A"), { type: "run" }, 0), { type: "launch", id: "T-1", phase: "creating", repo: "shop", workspace: { root: "/wt/a", cwd: "/wt/a", branch: "a", base: "b", target: "feature" } }, 0);
+  state = reduce(reduce(state, { type: "launched", id: "T-1", space: "s", tab: "t", terminal: "t9" }, 0), { type: "observe", id: "T-1", status: "working" }, 0);
+  state = reduce(reduce(state, { type: "observe", id: "T-1", status: "review" }, 0), { type: "prFound", id: "T-1", prs: { shop: { url: "https://github.com/me/shop/pull/7", number: 7, merged: false, from: "feature" } } }, 0);
+  assert.deepEqual([row(state, "T-1").status, row(state, "T-1").prs], ["pr", { shop: { url: "https://github.com/me/shop/pull/7", number: 7, from: "feature" } }]);
+  assert.match(state.events[0].message, /found pull request #7 on feature, the branch its work was already on/);
+});
+
 test("a found pull request moves a task that still needs someone only once it has merged", () => {
   const pr = { url: "https://github.com/me/shop/pull/7", number: 7 };
   let state = reduce(reduce(typed("A"), { type: "run" }, 0), { type: "launch", id: "T-1", phase: "creating", repo: "shop", workspace: { root: "/wt/a", cwd: "/wt/a", branch: "a", base: "b" } }, 0);
