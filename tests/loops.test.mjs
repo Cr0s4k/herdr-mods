@@ -139,6 +139,7 @@ test("each source refreshes independently and failures preserve only its previou
     ["python3", "/tmp/herdr/mods/loops/codex-goals.py"],
     ["python3", "/tmp/herdr/mods/loops/claude-goals.py"],
     ["python3", "/tmp/herdr/mods/loops/claude-loops.py"],
+    ["python3", "/tmp/herdr/mods/loops/opencode-goals.py"],
   ]);
   world.result = (_command, args) => !args[0].endsWith("codex-goals.py")
     ? { code: 0, stdout: JSON.stringify({ goals: [] }) }
@@ -254,6 +255,15 @@ test("source toggles include Claude goals and schedules, update counts, and pers
   assert.match(textOf(root), /History \(1\)/);
   assert.equal(find(root, "loops-source-claude").selectedArgs[0], false);
   find(root, "loops-source-codex").handlers.click({}, cx);
+  loops.items.push({ ...goal("ses_1", "/work/app", "paused"), source: "opencode", iterations: 2, tokens_used: null, time_used_seconds: null, reason: "Paused by the user" });
+  root = loops.render();
+  assert.match(textOf(find(root, "goal-opencode-ses_1")), /OpenCode · \/goal[\s\S]*Continued 2 times by its reviewer/);
+  assert.doesNotMatch(textOf(find(root, "goal-opencode-ses_1")), /tokens|working time/);
+  world.calls = [];
+  loops.open(loops.items.at(-1));
+  assert.deepEqual(world.calls[0][1].argv, ["opencode", "--session", "ses_1"]);
+  find(root, "loops-source-opencode").handlers.click({}, cx);
+  assert.equal(find(loops.render(), "goal-opencode-ses_1"), undefined);
   assert.match(textOf(loops.render()), /No sources selected/);
   const restored = new Loops();
   restored.init({}, { spawn() {}, timer: { every() {} } });

@@ -26,6 +26,10 @@ export const AGENT_OPTIONS = {
     flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`) },
   codex: { models: [], efforts: ["low", "medium", "high", "xhigh", "max"], open: true,
     flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`) },
+  // OpenCode's interface takes no model flag, and its shared background server ignores a session's environment: a private server reads the model from it.
+  // It also reads a last argument as its folder, so the first message goes in a flag.
+  opencode: { models: [], efforts: [], open: true, exact: true, prompt: "--prompt=", flags: () => [], dirs: () => [],
+    wrap: (run, { model, effort }) => model ? ["env", `OPENCODE_CONFIG_CONTENT=${JSON.stringify({ model: effort ? `${model}#${effort}` : model })}`, ...run, "--standalone"] : run },
 };
 const effortFits = (options, effort) => options.efforts.includes(effort) || Boolean(options.open && /^[a-z]{1,20}$/.test(effort ?? ""));
 export const tuningFor = (state, key) => {
@@ -40,14 +44,30 @@ export function codexModels(text) {
     .map(model => ({ slug: String(model.slug), name: String(model.display_name ?? model.slug),
       efforts: (model.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => /^[a-z]{1,20}$/.test(effort ?? "")) }));
 }
+// Grouped and ordered as OpenCode's own model dialog: by provider, the free ones first, then the newest.
+export function opencodeModels(text, providersText = "") {
+  let models, providers;
+  try { models = JSON.parse(text)?.data; } catch { return []; }
+  try { providers = JSON.parse(providersText)?.data; } catch { providers = []; }
+  const names = (Array.isArray(providers) ? providers : []).filter(provider => provider?.id).map(provider => [String(provider.id), String(provider.name ?? provider.id)]);
+  const at = id => { const index = names.findIndex(([known]) => known === id); return index < 0 ? names.length : index; };
+  return (Array.isArray(models) ? models : []).filter(model => model?.id && model.providerID && model.enabled !== false)
+    .map(model => ({ slug: `${model.providerID}/${model.id}`, name: String(model.name ?? model.id), group: names[at(model.providerID)]?.[1] ?? String(model.providerID),
+      free: Array.isArray(model.cost) && model.cost.length > 0 && model.cost.every(cost => !cost?.input && !cost?.output), released: Number(model.time?.released) || 0,
+      efforts: (model.variants ?? []).map(variant => variant?.id).filter(id => /^[a-z]{1,20}$/.test(id ?? "")) }))
+    .sort((a, b) => at(a.slug.split("/")[0]) - at(b.slug.split("/")[0]) || a.group.localeCompare(b.group) || b.free - a.free || b.released - a.released || a.slug.localeCompare(b.slug));
+}
 // A task's own model or effort wins over the agent's setting; what it leaves unset follows the setting.
 export const taskTuning = (state, task, key) => {
   const tune = tuningFor(state, key), own = task?.tune ?? {}, options = AGENT_OPTIONS[key];
   return options ? { model: own.model ?? tune.model, effort: effortFits(options, own.effort) ? own.effort : tune.effort } : tune;
 };
 // Agents without a way to open more folders find the other worktrees in their first message.
-export const agentRun = (state, agent, extra = [], task = null) => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.flags(taskTuning(state, task, agent.key)) ?? []),
-  ...(extra.length ? AGENT_OPTIONS[agent.key]?.dirs(extra) ?? [] : [])];
+export const agentRun = (state, agent, extra = [], task = null) => {
+  const options = AGENT_OPTIONS[agent.key], tune = taskTuning(state, task, agent.key);
+  return [...(options?.wrap ? options.wrap(agent.run, tune) : agent.run), ...(options?.flags(tune) ?? []), ...(extra.length ? options?.dirs(extra) ?? [] : [])];
+};
+export const agentOpening = (agent, text) => AGENT_OPTIONS[agent.key]?.prompt ? { argv: [...agent.run, AGENT_OPTIONS[agent.key].prompt + text] } : { argv: agent.run, task: text };
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
@@ -155,15 +175,13 @@ const planOrder = task => task.plan?.sig === planSig(task) ? task.plan.n : Infin
 export const queueOrder = state => state.tasks.filter(task => task.status === "queued").sort(startOrder(state));
 // A queued task needs a new plan when it is new or what the planner read about it changed; a task leaving the queue doesn't.
 export const planSig = task => JSON.stringify([task.title, task.description ?? "", task.repos, task.priority, task.depends, (task.blockers ?? []).map(blocker => [blocker.key, blocker.closed])]);
-// The planner runs as Claude Code or Codex: the one you pick, else the one tasks start with when it is one of them.
-export const PLANNERS = { claude: "Claude Code", codex: "Codex" };
+// The AI helper plans the queue and picks a new pipeline's setup. It runs as the agent you pick, else Codex when tasks start with it, else Claude Code.
+export const PLANNERS = { claude: "Claude Code", codex: "Codex", opencode: "OpenCode" };
 // How a planner run went, kept beside its plan: what it read, how long it took, what it cost.
 const ran = action => ({ trace: (Array.isArray(action.trace) ? action.trace : []).map(line => String(line).slice(0, 200)).slice(-80),
   ms: Number(action.ms) || null, cost: typeof action.cost === "number" ? action.cost : null, tokens: Number(action.tokens) || null });
 export const plannerAgent = state => PLANNERS[state.planner?.agent] ? state.planner.agent : state.agent?.key === "codex" ? "codex" : "claude";
-// The AI helper is separate from the planner: a small read-only job, so Claude Code starts it on Haiku unless you pick another model.
-export const helperAgent = state => PLANNERS[state.helper?.agent] ? state.helper.agent : state.agent?.key === "codex" ? "codex" : "claude";
-export const helperTuning = state => ({ model: state.helper?.model ?? (helperAgent(state) === "claude" ? "haiku" : null), effort: state.helper?.effort ?? null });
+export const plannerTuning = state => ({ model: state.planner?.model ?? null, effort: state.planner?.effort ?? null });
 export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
 export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
 // A failed plan lets the tasks it was asked about start by priority; only a new or changed task asks again.
@@ -509,7 +527,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "autoTrust", "quiet", "planner", "helper"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "autoTrust", "quiet", "planner"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -877,16 +895,6 @@ export function reduce(state, action, now = Date.now()) {
       if (JSON.stringify(value) === JSON.stringify(before)) return state;
       next.planner = value;
       if (value.on !== before.on) event(next, value.on ? "An agent plans the queue before work starts." : "Tasks start by priority again, without the planner agent.");
-      break;
-    }
-    case "helperSetup": {
-      if (!next.live) return state;
-      const before = { agent: null, model: null, effort: null, ...next.helper }, value = { ...before };
-      if ("agent" in action && PLANNERS[action.agent] && action.agent !== helperAgent(next)) Object.assign(value, { agent: action.agent, model: null, effort: null });
-      if ("model" in action) value.model = String(action.model ?? "").trim().slice(0, 100) || null;
-      if ("effort" in action) value.effort = /^[a-z]{1,20}$/.test(action.effort ?? "") ? action.effort : null;
-      if (JSON.stringify(value) === JSON.stringify(before)) return state;
-      next.helper = value;
       break;
     }
     case "planning": {

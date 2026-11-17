@@ -2,7 +2,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Input, InputState, TextView, Editor, EditorState } from "gpui-base";
 import { appHome, spaces, panes, focused, props, exec, readTextFile, theme, settings, openOverlay, closeOverlay } from "herdr";
 import { moveToPaneButton } from "./panel-actions.js";
-import { GROUPS, contextFor, visibleSkills, expandedSkills, agentsFor, agentLabel, originLabel, statusLabel, shortPath } from "./model.js";
+import { GROUPS, AGENTS, contextFor, visibleSkills, expandedSkills, agentsFor, agentLabel, originLabel, statusLabel, shortPath } from "./model.js";
 
 const ICON = "mods/skills/skills.svg";
 const basename = path => path?.replace(/[\\/]$/, "").split(/[\\/]/).pop() || path || "No working folder";
@@ -148,7 +148,7 @@ export default class Skills extends View {
           .child(this.button("skills-here", "Available here", cx => this.choose("scope", "here", cx), this.scope === "here"))
           .child(this.button("skills-library", "Personal library", cx => this.choose("scope", "library", cx), this.scope === "library")))
         .child(h_flex().gap(5)
-          .children([["all", "All agents"], ["codex", "Codex"], ["claude", "Claude"]].map(([id, label]) =>
+          .children([["all", "All agents"], ...Object.entries(AGENTS)].map(([id, label]) =>
             this.button(`skills-agent-${id}`, label, cx => this.choose("agent", id, cx), this.agent === id))))
         .child(Input.new(this.search).w_full().text_size(12)))
       .child(v_flex().id("skills-list").flex_1().min_h(0).overflow_y_scrollbar().px(4)
@@ -172,7 +172,7 @@ export default class Skills extends View {
     cx.timer.after(200, () => this.handle.focus());
     cx.spawn(async cx => {
       try {
-        const text = await readTextFile(p.skill.path, { on: p.on });
+        const text = p.skill.body ?? await readTextFile(p.skill.path, { on: p.on });
         if (text === null) throw new Error("This skill is no longer available. Close this reader and refresh the list.");
         if (text.includes("\0")) throw new Error("This skill is not a text file.");
         this.text = text.length > 260000 ? text.slice(0, 260000) + "\n\n… Preview truncated." : text;

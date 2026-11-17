@@ -35,8 +35,9 @@ export function expandedSkills(visible, { query = "", folded = new Set() } = {})
   return GROUPS.flatMap(([id]) => query || !folded.has(id) ? visible.filter(item => item.group === id) : []);
 }
 
-export const agentsFor = skill => ["codex", "claude"].filter(agent => skill.installations.some(item => item.agent === agent));
-export const agentLabel = agent => agent === "codex" ? "Codex" : "Claude";
+export const AGENTS = { codex: "Codex", claude: "Claude", opencode: "OpenCode" };
+export const agentsFor = skill => Object.keys(AGENTS).filter(agent => skill.installations.some(item => item.agent === agent));
+export const agentLabel = agent => AGENTS[agent] ?? agent;
 export const originLabel = item => item.sync_source ? item.origin === "builtin" ? "Anthropic · Built-in skills"
   : item.origin === "plugin" ? "claude.ai · Plugin skills" : "claude.ai sync"
   : item.plugin ? `${item.plugin} · ${item.project ? "Project plugin" : "Plugin"}`

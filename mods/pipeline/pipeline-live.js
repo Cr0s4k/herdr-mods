@@ -1,4 +1,4 @@
-import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, helperAgent, helperTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
+import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, STALL, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
 
@@ -229,13 +229,20 @@ export function planPrompt(state) {
     ...(started.length ? ["", "Already started (they hold their files until they merge):", ...started.map(task => `- ${task.id}: ${task.title} (${task.status}, ${task.repos.join(", ")})`)] : []),
   ].join("\n");
 }
-// The job planner.py runs: both agents read-only and headless; it adds the output flags, the schema and the prompt.
+// How planner.py starts each agent read-only and headless; it adds the output flags, the schema and the prompt.
+// OpenCode's plan agent can't edit, and its private server is told to refuse the shell and questions too.
+const OPENCODE_READ_ONLY = { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { edit: "deny", shell: "deny", question: "deny" } }) };
+function readOnly(agent, tune, dirs = []) {
+  const options = AGENT_OPTIONS[agent];
+  if (agent === "codex") return { args: ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune), ...options.dirs(dirs)] };
+  if (agent === "opencode") return { env: OPENCODE_READ_ONLY,
+    args: ["--standalone", "--archived", "--agent", "plan", ...(tune.model ? ["--model", tune.effort ? `${tune.model}#${tune.effort}` : tune.model] : [])] };
+  return { args: ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", ...options.dirs(dirs), "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"] };
+}
 export function planArgs(state) {
-  const agent = plannerAgent(state), options = AGENT_OPTIONS[agent], tune = { model: state.planner?.model ?? null, effort: state.planner?.effort ?? null };
-  const dirs = options.dirs((state.repositories ?? []).slice(1).map(repo => repo.path));
-  const args = agent === "codex" ? ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune), ...dirs]
-    : ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", ...dirs, "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"];
-  return { agent, args, schema: PLAN_SCHEMA, prompt: planPrompt(state), tuning: [tune.model, tune.effort && `${tune.effort} effort`].filter(Boolean) };
+  const agent = plannerAgent(state), tune = plannerTuning(state);
+  return { agent, ...readOnly(agent, tune, (state.repositories ?? []).slice(1).map(repo => repo.path)), schema: PLAN_SCHEMA, prompt: planPrompt(state),
+    tuning: [tune.model, tune.effort && `${tune.effort} effort`].filter(Boolean) };
 }
 // What planner.py hands back, as the reducer takes it; a run without a plan throws, carrying what it did see.
 export function readPlan(result) {
@@ -269,12 +276,10 @@ export function setupPrompt(state, facts) {
     `- set now: check ${state.check?.command ?? "none"}, try it ${state.tryout ?? "none"}, delivery ${state.delivery}, after merge ${state.afterMerge ?? "none"}`,
   ].join("\n");
 }
-// The AI helper reads the repository read-only, with its own agent and model.
+// Choose for me reads the repository read-only, as the agent and model the planner uses.
 export function setupArgs(state, facts) {
-  const agent = helperAgent(state), options = AGENT_OPTIONS[agent], tune = helperTuning(state);
-  const args = agent === "codex" ? ["--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", ...options.flags(tune)]
-    : ["-p", ...options.flags(tune), "--tools", "Read,Grep,Glob", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"];
-  return { agent, args, schema: SETUP_SCHEMA, prompt: setupPrompt(state, facts), by: [PLANNERS[agent], tune.model].filter(Boolean).join(" · ") };
+  const agent = plannerAgent(state), tune = plannerTuning(state);
+  return { agent, ...readOnly(agent, tune), schema: SETUP_SCHEMA, prompt: setupPrompt(state, facts), by: [PLANNERS[agent], tune.model].filter(Boolean).join(" · ") };
 }
 export function readSetup(result, github) {
   const picked = result?.plan, part = key => ({ value: String(picked?.[key]?.value ?? "").trim().slice(0, 500), reason: String(picked?.[key]?.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 300) });

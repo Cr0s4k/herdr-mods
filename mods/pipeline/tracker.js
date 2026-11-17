@@ -1,5 +1,5 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
-import { STORE, MOVING, reduce, migrate } from "./pipeline-model.js";
+import { STORE, MOVING, reduce, migrate, agentOpening } from "./pipeline-model.js";
 import { LiveRunner, prompt, openTry } from "./pipeline-live.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
@@ -52,7 +52,7 @@ export const liveHost = {
   keys: async (terminal, keys) => { const result = await hc(["keys", terminal, ...keys]); if (result.code !== 0) throw new Error(result.stderr); },
   start(context, task, workspaces, agent, space, delivery, extras) {
     const before = focused(), inSpace = space && spaces().some(row => row.id === space);
-    const opening = { folder: workspaces[0].cwd, argv: agent.run, task: prompt(task, workspaces, delivery, extras) };
+    const opening = { folder: workspaces[0].cwd, ...agentOpening(agent, prompt(task, workspaces, delivery, extras)) };
     if (inSpace) run("tab.new", { ...opening, space, name: task.id });
     else run("space.new", { ...opening, machine: context.on || "", tab: task.id });
     const own = inSpace ? "tab" : "space";

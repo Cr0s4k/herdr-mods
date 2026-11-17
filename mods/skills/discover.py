@@ -8,6 +8,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import time
+from urllib.parse import quote
 
 try:
     import tomllib
@@ -73,8 +77,25 @@ def simple_toml(text):
     return result
 
 
+def opencode_rows(cwd):
+    """What OpenCode's own server says a session in this folder loads, or None without OpenCode."""
+    if not shutil.which('opencode'):
+        return None
+    query = '/api/skill' + ('?location%5Bdirectory%5D=' + quote(cwd, safe='') if cwd else '')
+    rows = None
+    for _ in range(3):
+        result = subprocess.run(['opencode', 'api', 'GET', query], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+        rows = json.loads(result.stdout).get('data')
+        if rows:
+            break
+        # A folder's skills load after the first request for it; its built-in ones mean it is never truly empty.
+        time.sleep(0.4)
+    return rows
+
+
 class Inventory:
-    def __init__(self, home=None, codex_home=None, claude_home=None):
+    def __init__(self, home=None, codex_home=None, claude_home=None, opencode=opencode_rows):
+        self.opencode = opencode
         self.home = Path(home or Path.home())
         self.codex = Path(codex_home or os.environ.get('CODEX_HOME') or self.home / '.codex')
         self.claude = Path(claude_home or os.environ.get('CLAUDE_CONFIG_DIR') or self.home / '.claude')
@@ -285,6 +306,34 @@ class Inventory:
         if agent == 'claude':
             self.commands(root / 'commands', project, name, enabled)
 
+    def opencode_skills(self, cwd, dirs):
+        try:
+            rows = self.opencode(cwd)
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as error:
+            self.warn('Cannot ask OpenCode for its skills: {}'.format(error))
+            return
+        for row in rows if isinstance(rows, list) else []:
+            path, name = row.get('path'), row.get('name') or row.get('id')
+            if not isinstance(path, str) or not isinstance(name, str) or self.count >= MAX_SKILLS:
+                continue
+            shipped = path.startswith('skill://')
+            real = path if shipped else str(Path(path).resolve())
+            item = self.items.setdefault(real, {'id': real, 'path': real, 'name': name, 'description': str(row.get('description') or '')[:2400], 'installations': []})
+            if shipped:
+                item['body'] = str(row.get('content') or '')[:MAX_BYTES]
+            known = next((found for found in item['installations'] if found['agent'] != 'opencode'), None)
+            project = known['project'] if known else any(real.startswith(str(root) + os.sep) for d in dirs for root in (d, Path(d).resolve()))
+            installation = {
+                'agent': 'opencode', 'origin': 'builtin' if shipped else known['origin'] if known else 'project' if project else 'personal',
+                'project': project, 'plugin': known['plugin'] if known else None, 'path': path, 'command': None, 'enabled': True,
+                'note': 'OpenCode loads it only when asked for by name.' if row.get('autoinvoke') is False else None,
+            }
+            if known and 'sync_source' in known:
+                installation['sync_source'] = known['sync_source']
+            if installation not in item['installations']:
+                item['installations'].append(installation)
+                self.count += 1
+
     def scan(self, cwd=None):
         dirs = self.project_dirs(cwd)
         codex_config = self.config(self.codex / 'config.toml', 'toml')
@@ -345,6 +394,7 @@ class Inventory:
                     self.warn('Multiple cached versions of {}; session selection is unverified.'.format(package.name))
                 for version in versions:
                     self.plugin(version, 'codex', package.name, enabled)
+        self.opencode_skills(cwd, dirs)
         return {'skills': sorted(self.items.values(), key=lambda item: (item['name'].casefold(), item['path'])),
                 'warnings': self.warnings, 'home': str(self.home), 'cwd': cwd}
 

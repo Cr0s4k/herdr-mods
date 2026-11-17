@@ -12,7 +12,7 @@ globalThis.__launchNative = {
 };
 let source = (await readFile(new URL("../mods/linear/launches.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = `const { ${Object.keys(globalThis.__launchNative).join(", ")} } = globalThis.__launchNative;\n` + source;
-const { executeLaunch, queueLaunch, updateLaunch, retryLaunch, LaunchTracker, LAUNCHES } = await import("data:text/javascript," + encodeURIComponent(source));
+const { executeLaunch, queueLaunch, updateLaunch, retryLaunch, LaunchTracker, LAUNCHES, agentOpening } = await import("data:text/javascript," + encodeURIComponent(source));
 const batch = () => ({ id: "batch", context: { space: "source", cwd: "/project", on: null }, agent: { name: "Codex", run: ["codex"] },
   plan: { base: "commit", common: "/project/.git", root: "/project" },
   rows: ["one", "two", "three"].map(id => ({ id, key: `PRO-${id}`, task: `Full task ${id}`, status: "queued" })) });
@@ -118,5 +118,6 @@ test("background launch uses the captured machine and restores the user's curren
   assert.equal(world.calls[0][1].machine, "remote");
   assert.equal(world.calls[0][1].argv[0], "codex");
   assert.ok(world.calls[0][1].task.includes("Full task one"));
+  assert.deepEqual(agentOpening({ key: "opencode", run: ["opencode"] }, "Do it"), { argv: ["opencode", "--prompt=Do it"] }, "OpenCode would read a last argument as its folder");
   assert.deepEqual(world.calls.slice(1).map(([command]) => command), ["space.select", "tab.select", "pane.focus"]);
 });

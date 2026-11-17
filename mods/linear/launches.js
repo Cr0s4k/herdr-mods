@@ -2,6 +2,8 @@ import { appHome, readTextFile, exec, shared, setShared, spaces, panes, terminal
 
 export const LAUNCHES = "linear.launches";
 export const PENDING = ["queued", "creating", "starting"];
+// OpenCode reads a last argument as its folder, so its first message goes in a flag instead of Herdr's task.
+export const agentOpening = (agent, text) => agent.key === "opencode" ? { argv: [...agent.run, `--prompt=${text}`] } : { argv: agent.run, task: text };
 let script;
 
 export async function worktrees(context, payload) {
@@ -118,7 +120,7 @@ export class LaunchTracker {
           start: (batch, row) => {
             const before = focused();
             run("space.new", { folder: row.workspace.cwd, machine: batch.context.on || "", tab: row.key,
-              argv: batch.agent.run, task: row.task + `\n\nWorking folder: ${row.workspace.cwd}\nBranch: ${row.workspace.branch}\nThis is an isolated worktree starting at ${batch.plan.base}.` });
+              ...agentOpening(batch.agent, row.task + `\n\nWorking folder: ${row.workspace.cwd}\nBranch: ${row.workspace.branch}\nThis is an isolated worktree starting at ${batch.plan.base}.`) });
             // Keep the user's place while new worktree spaces open in the background.
             try {
               if (before?.space && spaces().some(space => space.id === before.space)) {

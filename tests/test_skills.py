@@ -29,12 +29,36 @@ class SkillsTest(unittest.TestCase):
     def skill(self, relative, name='review', description='Review changes.'):
         return self.write(relative + '/SKILL.md', f'---\nname: {name}\ndescription: {description}\n---\nInstructions.\n')
 
-    def scan(self, cwd=None):
-        inventory = reader.Inventory(self.home, self.home / '.codex', self.home / '.claude')
+    def scan(self, cwd=None, opencode=lambda cwd: None):
+        inventory = reader.Inventory(self.home, self.home / '.codex', self.home / '.claude', opencode)
         # Fixture scans never read the host's managed skills.
         original = inventory.folder
         inventory.folder = lambda root, *a, **kw: None if str(root) == '/etc/codex/skills' else original(root, *a, **kw)
         return inventory.scan(str(cwd or self.project))
+
+    def test_opencode_skills_are_the_ones_its_server_lists_for_the_folder(self):
+        shared = self.skill('.claude/skills/review')
+        local = self.skill("project with ' spaces/.opencode/skills/ship", 'ship', 'Ship it.')
+        asked = []
+
+        def rows(cwd):
+            asked.append(cwd)
+            return [{'id': 'opencode', 'name': 'OpenCode', 'description': 'About OpenCode.', 'path': 'skill://opencode/SKILL.md', 'content': '# OpenCode'},
+                    {'id': 'review', 'name': 'review', 'description': 'Review changes.', 'path': str(shared)},
+                    {'id': 'ship', 'name': 'ship', 'description': 'Ship it.', 'path': str(local), 'autoinvoke': False},
+                    {'id': 'broken'}]
+
+        skills = {skill['name']: skill for skill in self.scan(opencode=rows)['skills']}
+        self.assertEqual(asked, [str(self.project)])
+        self.assertEqual([(item['agent'], item['origin']) for item in skills['review']['installations']], [('claude', 'personal'), ('opencode', 'personal')])
+        ship = skills['ship']['installations']
+        self.assertEqual([(item['agent'], item['origin'], item['project'], item['command']) for item in ship], [('opencode', 'project', True, None)])
+        self.assertEqual(ship[0]['note'], 'OpenCode loads it only when asked for by name.')
+        self.assertEqual([skills['OpenCode']['path'], skills['OpenCode']['body'], skills['OpenCode']['installations'][0]['origin']], ['skill://opencode/SKILL.md', '# OpenCode', 'builtin'])
+
+        def fails(cwd):
+            raise ValueError('no server')
+        self.assertEqual(self.scan(opencode=fails)['warnings'], ['Cannot ask OpenCode for its skills: no server'])
 
     def test_missing_folders_create_nothing(self):
         before = list(self.home.rglob('*'))

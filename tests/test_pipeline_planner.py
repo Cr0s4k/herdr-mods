@@ -50,6 +50,23 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual((result["cost"], result["tokens"], result["error"]), (0.003, 1000, None))
         self.assertTrue(args.startswith("-p --output-format stream-json --verbose --json-schema {\"type\": \"object\"}") and args.endswith("Plan the queue."))
 
+    def test_opencode_reads_are_noted_and_the_json_in_its_last_reply_is_the_plan(self):
+        result, args = self.run_with("opencode", [
+            {"type": "tool_use", "part": {"tool": "read", "state": {"input": {"path": "%CWD%/src/app.js"}}}},
+            {"type": "tool_use", "part": {"tool": "grep", "state": {"input": {"pattern": "checkout"}}}},
+            {"type": "step_finish", "part": {"cost": 0.01, "tokens": {"input": 100, "output": 20, "reasoning": 5, "cache": {"read": 50, "write": 0}}}},
+            {"type": "text", "part": {"text": "I'll order them now."}},
+            {"type": "text", "part": {"text": "```json\n{\"order\": [\"T-2\", \"T-1\"]}\n```"}},
+            {"type": "step_finish", "part": {"cost": 0.02, "tokens": {"input": 10, "output": 5}}}])
+        self.assertEqual(result["plan"], {"order": ["T-2", "T-1"]})
+        self.assertEqual(result["trace"], ["Reads src/app.js", "Searches for “checkout”", "Says: I'll order them now."])
+        self.assertEqual([result["tokens"], round(result["cost"], 2)], [190, 0.03])
+        self.assertNotIn("said", result)
+        self.assertTrue(args.startswith("run --format json --sandbox read-only Plan the queue."))
+        self.assertIn('matching this JSON Schema:\n{"type": "object"}', args)
+        result, _ = self.run_with("opencode", [{"type": "text", "part": {"text": "I can't tell."}}])
+        self.assertEqual([result["plan"], result["error"]], [None, "OpenCode answered without the JSON it was asked for: I can't tell."])
+
     def test_codex_commands_are_noted_and_its_last_message_is_the_plan(self):
         result, args = self.run_with("codex", [
             {"type": "item.completed", "item": {"type": "reasoning", "text": "Looking at the files."}},

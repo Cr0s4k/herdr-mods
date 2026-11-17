@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 
-NAMES = {"claude": "Claude Code", "codex": "Codex"}
+NAMES = {"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}
 LIMIT = 300
 
 
@@ -70,6 +70,43 @@ def codex_step(event, result):
     return None
 
 
+def opencode_step(event, result, cwd):
+    part = event.get("part") or {}
+    if event.get("type") == "tool_use":
+        tool, given = part.get("tool"), (part.get("state") or {}).get("input") or {}
+        if tool == "read":
+            return "Reads " + relative(given.get("path") or given.get("filePath"), cwd)
+        if tool in ("grep", "glob"):
+            where = given.get("path")
+            return "%s “%s”%s" % ("Searches for" if tool == "grep" else "Lists", given.get("pattern", ""), " in " + relative(where, cwd) if where else "")
+        return "%s %s" % (tool, short(json.dumps(given), 160))
+    if event.get("type") == "text":
+        result["said"] = part.get("text", "")
+        if not result["said"].lstrip().startswith(("{", "```")):
+            return "Says: " + short(result["said"])
+    elif event.get("type") == "step_finish":
+        tokens = part.get("tokens") or {}
+        cache = tokens.get("cache") or {}
+        used = sum(tokens.get(key) or 0 for key in ("input", "output", "reasoning")) + (cache.get("read") or 0) + (cache.get("write") or 0)
+        result["tokens"] = (result["tokens"] or 0) + used or None
+        if isinstance(part.get("cost"), (int, float)):
+            result["cost"] = (result["cost"] or 0) + part["cost"]
+    elif event.get("type") == "error":
+        error = event.get("error") or {}
+        result["error"] = short((error.get("data") or {}).get("message") or error.get("message") or error.get("name") or "OpenCode stopped with an error.", 300)
+    return None
+
+
+def answer(text):
+    """The JSON object in a reply that may wrap it in a code fence or a sentence."""
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        found = json.loads(text[start:end + 1]) if 0 <= start < end else None
+    except ValueError:
+        return None
+    return found if isinstance(found, dict) else None
+
+
 def claude_result(event, result):
     result["plan"] = event.get("structured_output")
     result["cost"] = event.get("total_cost_usd")
@@ -82,7 +119,7 @@ def claude_result(event, result):
 def run(payload):
     agent, cwd, watch = payload["agent"], payload.get("cwd") or os.getcwd(), payload.get("watch")
     started = time.time()
-    result = {"plan": None, "error": None, "trace": [], "cost": None, "tokens": None}
+    result = {"plan": None, "error": None, "trace": [], "cost": None, "tokens": None, "said": ""}
 
     def note(text):
         if text:
@@ -96,6 +133,9 @@ def run(payload):
             schema = Path(folder) / "schema.json"
             schema.write_text(json.dumps(payload["schema"]))
             command = ["codex", "exec", "--json", "--output-schema", str(schema), "-o", str(last), *payload["args"], payload["prompt"]]
+        elif agent == "opencode":
+            asked = "%s\n\nAnswer with one JSON object and nothing else, matching this JSON Schema:\n%s" % (payload["prompt"], json.dumps(payload["schema"]))
+            command = ["opencode", "run", "--format", "json", *payload["args"], asked]
         else:
             command = ["claude", *payload["args"], "--output-format", "stream-json", "--verbose", "--json-schema", json.dumps(payload["schema"]), payload["prompt"]]
         if not shutil.which(command[0]):
@@ -103,7 +143,8 @@ def run(payload):
             return finish(result, started)
         with open(Path(folder) / "stderr", "w+") as errors:
             try:
-                process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors, text=True)
+                process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                           env={**os.environ, **(payload.get("env") or {})})
             except OSError as error:
                 result["error"] = short("The planner couldn't start: %s" % error, 300)
                 return finish(result, started)
@@ -116,6 +157,8 @@ def run(payload):
                     continue
                 if agent == "codex":
                     note(codex_step(event, result))
+                elif agent == "opencode":
+                    note(opencode_step(event, result, cwd))
                 elif event.get("type") == "assistant":
                     for content in event.get("message", {}).get("content", []):
                         note(claude_step(content, cwd))
@@ -129,6 +172,10 @@ def run(payload):
                     result["plan"] = json.loads(last.read_text())
                 except (OSError, ValueError):
                     pass
+            if agent == "opencode":
+                result["plan"] = answer(result["said"])
+                if result["plan"] is None and result["said"] and not result["error"]:
+                    result["error"] = "OpenCode answered without the JSON it was asked for: " + short(result["said"], 200)
             if process.returncode == -9 and result["plan"] is None:
                 result["error"] = "The planner took longer than 5 minutes."
             if result["plan"] is None and not result["error"]:
@@ -138,6 +185,7 @@ def run(payload):
 
 
 def finish(result, started):
+    result.pop("said", None)
     result["ms"] = int((time.time() - started) * 1000)
     result["trace"] = result["trace"][-80:]
     return result

@@ -122,6 +122,36 @@ test("Codex models are read from its own cache, hidden ones left out, in its ord
   assert.deepEqual(model.codexModels("not json"), []);
 });
 
+test("OpenCode gets its model and effort from a private server's environment, and starts plainly without a model", () => {
+  const agent = { key: "opencode", run: ["opencode"] };
+  let state = reduce(typed("A"), { type: "tune", key: "opencode", effort: "high" }, 0);
+  assert.deepEqual(model.agentRun(state, agent, ["/wt/x"]), ["opencode"], "an effort alone has no model to apply to");
+  state = reduce(state, { type: "tune", key: "opencode", model: "opencode/gpt-5.5" }, 0);
+  assert.deepEqual(model.agentRun(state, agent), ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/gpt-5.5#high"}', "opencode", "--standalone"]);
+  state = reduce(state, { type: "tune", key: "opencode", effort: null }, 0);
+  assert.deepEqual(model.agentRun(state, agent), ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/gpt-5.5"}', "opencode", "--standalone"]);
+  assert.deepEqual(model.agentOpening({ ...agent, run: model.agentRun(state, agent) }, "Do A"), { argv: ["env", 'OPENCODE_CONFIG_CONTENT={"model":"opencode/gpt-5.5"}', "opencode", "--standalone", "--prompt=Do A"] },
+    "OpenCode would read a last argument as its folder");
+  assert.deepEqual(model.agentOpening({ key: "claude", run: ["claude"] }, "Do A"), { argv: ["claude"], task: "Do A" });
+});
+
+test("OpenCode models are read from its server's list, grouped by provider as its own dialog orders them", () => {
+  const list = JSON.stringify({ data: [
+    { id: "paid-old", providerID: "opencode", name: "Paid Old", cost: [{ input: 1, output: 2 }], time: { released: 1 }, variants: [{ id: "low" }, { id: "high" }, { id: "bad level" }] },
+    { id: "off", providerID: "opencode", enabled: false },
+    { id: "chat", providerID: "deepseek", variants: [] },
+    { id: "paid-new", providerID: "opencode", cost: [{ input: 1, output: 2 }], time: { released: 5 } },
+    { id: "gratis", providerID: "opencode", name: "Gratis", cost: [{ input: 0, output: 0 }], time: { released: 2 } }] });
+  const providers = JSON.stringify({ data: [{ id: "opencode", name: "Personal / OpenCode" }, { id: "deepseek", name: "DeepSeek" }] });
+  assert.deepEqual(model.opencodeModels(list, providers), [
+    { slug: "opencode/gratis", name: "Gratis", group: "Personal / OpenCode", free: true, released: 2, efforts: [] },
+    { slug: "opencode/paid-new", name: "paid-new", group: "Personal / OpenCode", free: false, released: 5, efforts: [] },
+    { slug: "opencode/paid-old", name: "Paid Old", group: "Personal / OpenCode", free: false, released: 1, efforts: ["low", "high"] },
+    { slug: "deepseek/chat", name: "chat", group: "DeepSeek", free: false, released: 0, efforts: [] }]);
+  assert.deepEqual(model.opencodeModels(list).map(row => row.group), ["deepseek", "opencode", "opencode", "opencode"], "without provider names the ids head the groups");
+  assert.deepEqual(model.opencodeModels("<!doctype html>"), []);
+});
+
 test("an unconfirmed start is never replayed after a restart", async () => {
   const state = reduce(typed("A", "B"), { type: "run" }, 0);
   Object.assign(row(state, "T-1"), { launch: "starting" });
@@ -1696,21 +1726,26 @@ test("the planner can be Codex: read-only, schema first, with its own model and 
   assert.equal(state.planning.agent, "codex");
 });
 
-test("Choose for me reads the repository read-only with the AI helper: Haiku unless set, apart from the planner", () => {
+test("Choose for me reads the repository read-only as the agent, model and effort the planner uses", () => {
   const facts = { branch: "main", github: false, found: ["npm test"] };
   let state = createLive(context, 0);
   const job = live.setupArgs(state, facts);
-  assert.deepEqual([job.agent, job.by], ["claude", "Claude Code · haiku"]);
-  assert.deepEqual(job.args.slice(0, 5), ["-p", "--model", "haiku", "--tools", "Read,Grep,Glob"]);
+  assert.deepEqual([job.agent, job.by], ["claude", "Claude Code"]);
+  assert.deepEqual(job.args.slice(0, 3), ["-p", "--tools", "Read,Grep,Glob"]);
   assert.match(job.prompt, /found by file names alone: npm test/);
   assert.match(job.prompt, /lacks, so choose merge/);
-  state = reduce(state, { type: "plannerSetup", on: true, model: "opus" }, 0);
-  assert.equal(live.setupArgs(state, facts).by, "Claude Code · haiku", "the planner's model is the planner's alone");
-  state = reduce(state, { type: "helperSetup", model: "sonnet", effort: "low" }, 0);
+  state = reduce(state, { type: "plannerSetup", model: "sonnet", effort: "low" }, 0);
+  assert.equal(state.planner.on, false, "the model is set without turning planning on");
   assert.deepEqual(live.setupArgs(state, facts).args.slice(0, 5), ["-p", "--model", "sonnet", "--effort", "low"]);
-  assert.equal(state.planner.model, "opus");
-  state = reduce(state, { type: "helperSetup", agent: "codex" }, 0);
-  assert.deepEqual([state.helper.model, state.helper.effort], [null, null], "another agent drops the old model and effort");
+  assert.deepEqual(live.planArgs(state).args.slice(0, 5), ["-p", "--model", "sonnet", "--effort", "low"], "the planner runs as the same one");
+  assert.equal(reduce({ ...state, helper: { agent: "codex" } }, { type: "run" }, 0).planner.agent, null, "a helper saved before the two were one is ignored");
+  state = reduce(state, { type: "plannerSetup", agent: "codex" }, 0);
+  assert.deepEqual([state.planner.model, state.planner.effort], [null, null], "another agent drops the old model and effort");
+  const open = live.planArgs(reduce(reduce(state, { type: "plannerSetup", agent: "opencode" }, 0), { type: "plannerSetup", model: "opencode/gpt-5.5", effort: "high" }, 0));
+  assert.deepEqual([open.agent, open.args], ["opencode", ["--standalone", "--archived", "--agent", "plan", "--model", "opencode/gpt-5.5#high"]]);
+  assert.deepEqual(JSON.parse(open.env.OPENCODE_CONFIG_CONTENT), { permission: { edit: "deny", shell: "deny", question: "deny" } }, "OpenCode's private server refuses edits and the shell");
+  assert.equal(live.planArgs(reduce(reduce(state, { type: "agent", value: { key: "opencode", name: "OpenCode", run: ["opencode"] } }, 0), { type: "plannerSetup", agent: "claude" }, 0)).env, undefined);
+  assert.equal(model.plannerAgent(reduce(createLive(context, 0), { type: "agent", value: { key: "opencode", name: "OpenCode", run: ["opencode"] } }, 0)), "claude", "tasks on OpenCode don't move the helper to it unasked");
   const codex = live.setupArgs(state, facts);
   assert.deepEqual([codex.agent, codex.by, codex.args.slice(0, 2)], ["codex", "Codex", ["--sandbox", "read-only"]]);
   const answer = { check: { value: " make check ", reason: "Makefile" }, tryout: { value: "", reason: "Nothing runs" }, delivery: { value: "pr", reason: "CONTRIBUTING asks for PRs" },

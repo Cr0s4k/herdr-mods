@@ -22,7 +22,9 @@ const STATUS = {
 };
 const SOURCES = [{ id: "codex", label: "Codex", script: "codex-goals.py" },
   { id: "claude", label: "Claude", script: "claude-goals.py" },
-  { id: "claude-loops", label: "Claude schedules", script: "claude-loops.py" }];
+  { id: "claude-loops", label: "Claude schedules", script: "claude-loops.py" },
+  { id: "opencode", label: "OpenCode", script: "opencode-goals.py" }];
+const TOGGLES = { codex: ["Codex", "showCodex"], claude: ["Claude", "showClaude"], opencode: ["OpenCode", "showOpenCode"] };
 const ended = (goal) => ["complete", "cleared", "failed", "cancelled", "ended", "expired", "inactive"].includes(goal.status);
 const sourceOf = (goal) => goal.source || "codex";
 const keyOf = (goal) => `${sourceOf(goal)}-${goal.record_id || goal.thread_id}`;
@@ -46,6 +48,7 @@ export default class Loops extends View {
     this.completed = state?.completed ?? (localStorage.getItem("completed") === "true");
     this.showCodex = state?.showCodex ?? (localStorage.getItem("source-codex") !== "false");
     this.showClaude = state?.showClaude ?? (localStorage.getItem("source-claude") !== "false");
+    this.showOpenCode = state?.showOpenCode ?? (localStorage.getItem("source-opencode") !== "false");
     cx.spawn(async (cx) => this.reload(cx));
     cx.timer.every(10000, (cx) => { cx.spawn(async (cx) => this.reload(cx)); });
   }
@@ -89,11 +92,11 @@ export default class Loops extends View {
   }
 
   sourceEnabled(source) {
-    return source.startsWith("claude") ? this.showClaude !== false : this.showCodex !== false;
+    return this[TOGGLES[source.startsWith("claude") ? "claude" : source]?.[1] ?? "showCodex"] !== false;
   }
 
   toggleSource(source, cx) {
-    const field = source === "claude" ? "showClaude" : "showCodex";
+    const field = TOGGLES[source][1];
     this[field] = this[field] === false;
     localStorage.setItem(`source-${source}`, String(this[field]));
     cx.notify();
@@ -111,12 +114,13 @@ export default class Loops extends View {
   }
 
   open(goal) {
-    if (sourceOf(goal) !== "codex") return;
+    const opencode = sourceOf(goal) === "opencode";
+    if (sourceOf(goal) !== "codex" && !opencode) return;
     // Resume the exact thread. Matching agents by folder alone can select the wrong session.
-    const space = spaces().find((s) => s.active && !s.machine);
-    const args = { name: "Codex goal", folder: goal.cwd, argv: ["codex", "resume", goal.thread_id] };
+    const space = spaces().find((s) => s.active && !s.machine), name = opencode ? "OpenCode goal" : "Codex goal";
+    const args = { name, folder: goal.cwd, argv: opencode ? ["opencode", "--session", goal.thread_id] : ["codex", "resume", goal.thread_id] };
     if (space) run("tab.new", { ...args, space: space.id });
-    else run("space.new", { ...args, name: goal.cwd.split("/").pop() || "Codex goal", tab: "Codex goal" });
+    else run("space.new", { ...args, name: goal.cwd.split("/").pop() || name, tab: name });
   }
 
   render() {
@@ -135,7 +139,7 @@ export default class Loops extends View {
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => action(cx)).child(label);
     const goalRow = (goal) => {
       const [label, color] = STATUS[goal.status] ?? [goal.status, "muted"];
-      const claude = sourceOf(goal).startsWith("claude");
+      const claude = sourceOf(goal).startsWith("claude"), opencode = sourceOf(goal) === "opencode";
       const scheduled = goal.kind === "schedule";
       const key = keyOf(goal);
       const project = goal.cwd?.split("/").pop() || "Unknown project";
@@ -154,7 +158,7 @@ export default class Loops extends View {
           .tooltip("Token budget used; this does not measure task completion")
           .child(div().h_full().w(`${percent}%`).bg(t[color]))))
         .child(v_flex().gap(3).text_size(11).text_color(t.muted)
-          .child(div().child(scheduled ? "Claude · scheduled task" : claude ? "Claude · /goal" : "Codex · /goal"))
+          .child(div().child(scheduled ? "Claude · scheduled task" : claude ? "Claude · /goal" : opencode ? "OpenCode · /goal" : "Codex · /goal"))
           .when(scheduled, (el) => el.child(div().whitespace_normal().child(goal.schedule_kind === "dynamic"
             ? "Self-paced loop" : `${goal.recurring ? "Recurring" : "One-shot"} · ${goal.cron}`)))
           .when(scheduled && goal.recorded_next_run_ms != null, (el) => el.child(div().whitespace_normal()
@@ -166,24 +170,25 @@ export default class Loops extends View {
           .when(goal.time_used_seconds != null, (el) => el.child(div().child(`${duration(goal.time_used_seconds)} ${claude ? "elapsed" : "working time"}`)))
           .when(claude && !scheduled && goal.tokens_used == null && goal.time_used_seconds == null,
             (el) => el.child(div().child("Metrics not recorded yet")))
-          .when(claude && goal.iterations != null, (el) => el.child(div().child(`${number(goal.iterations)} evaluated turns`))))
+          .when(claude && goal.iterations != null, (el) => el.child(div().child(`${number(goal.iterations)} evaluated turns`)))
+          .when(opencode && goal.iterations > 0, (el) => el.child(div().child(`Continued ${number(goal.iterations)} ${goal.iterations === 1 ? "time" : "times"} by its reviewer`))))
         .child(h_flex().items_center().gap(6)
           .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted)
             .child(goal.updated_at_ms ? `Updated ${new Date(goal.updated_at_ms).toLocaleString()}` : "Saved entry"))
           .when(!claude && Boolean(goal.cwd), (el) => el.child(button(`open-${key}`, "Open session", () => this.open(goal))
-            .tooltip("Open this exact thread in a new Codex tab")))
+            .tooltip(`Open this exact ${opencode ? "session in a new OpenCode" : "thread in a new Codex"} tab`)))
           .when(claude, (el) => el.child(button(`copy-${key}`, this.copied === key ? "Copied" : goal.thread_id ? "Copy session ID" : "Copy task ID", (cx) => {
             cx.write_to_clipboard(goal.thread_id || goal.task_id);
             this.copied = key;
             cx.notify();
           }).tooltip(goal.thread_id ? "Copy the Claude session ID" : "Copy the Claude task ID"))));
     };
-    const empty = this.showCodex === false && this.showClaude === false
-      ? ["No sources selected.", "Enable Codex or Claude above to show loops."]
+    const empty = Object.values(TOGGLES).every(([, field]) => this[field] === false)
+      ? ["No sources selected.", "Enable Codex, Claude or OpenCode above to show loops."]
       : !this.all && space?.machine
       ? ["Loops are local for now.", "Switch to a local space or choose All projects."]
       : [this.completed ? "No loops here yet." : "No current loops.",
-         history.length ? "Show history to see previous work." : "Use /goal in Codex or Claude, or /loop in Claude."];
+         history.length ? "Show history to see previous work." : "Use /goal in Codex, Claude or OpenCode, or /loop in Claude."];
 
     return v_flex().id("loops").size_full().min_h(0).overflow_hidden().bg(t.background)
       .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
@@ -191,8 +196,8 @@ export default class Loops extends View {
       .text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(!this.embedded, el => el.child(div().flex_none().font_semibold().child("Loops")))
-        .child(h_flex().gap(4).flex_none().children(["codex", "claude"].map((source) => {
-          const name = source === "codex" ? "Codex" : "Claude";
+        .child(h_flex().gap(4).flex_none().children(Object.keys(TOGGLES).map((source) => {
+          const name = TOGGLES[source][0];
           const selected = this.sourceEnabled(source);
           return button(`loops-source-${source}`, name, (cx) => this.toggleSource(source, cx), selected)
             .selected(selected).accessibility_label(`Show ${name} loops`)
@@ -215,7 +220,7 @@ export default class Loops extends View {
           cx.spawn(async (cx) => this.reload(cx));
         }).accessibility_label("Refresh loops").tooltip("Refresh loops"))
         .when(!this.embedded, el => el.child(moveToPaneButton("loops", {
-          all: this.all, completed: this.completed, showCodex: this.showCodex, showClaude: this.showClaude,
+          all: this.all, completed: this.completed, showCodex: this.showCodex, showClaude: this.showClaude, showOpenCode: this.showOpenCode,
         }, t))))
       .child(v_flex().id("loops-list").flex_1().min_h(0).overflow_y_scrollbar().px(14)
         .when(Boolean(error), (el) => el.child(v_flex().py(12).gap(5).text_size(11.5).text_color(t.blocked)

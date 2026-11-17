@@ -1,8 +1,9 @@
-"""Add up the tokens Claude Code and Codex used in a task's worktree, from the transcripts they keep."""
+"""Add up the tokens Claude Code, Codex and OpenCode used in a task's worktree, from the transcripts they keep."""
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import sys
 
 FIELDS = {"input_tokens": "read", "cache_creation_input_tokens": "read", "cache_read_input_tokens": "cached", "output_tokens": "written"}
@@ -54,7 +55,29 @@ def codex_usage(cwd, total, codex=None):
             total["written"] += number("output_tokens")
 
 
-def usage(cwd, home=None, codex=None):
+def opencode_usage(cwd, total, database=None):
+    """OpenCode keeps a running total per session in its database, its helpers' sessions included."""
+    path = Path(database or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "opencode/opencode.db")
+    if not path.is_file():
+        return
+    folders = {cwd.rstrip("/"), os.path.realpath(cwd)}
+    try:
+        with sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=2) as connection:
+            rows = connection.execute(
+                "select directory, tokens_input, tokens_cache_write, tokens_cache_read, tokens_output, tokens_reasoning, "
+                "(select count(*) from session_message where session_id = session_v2.id and type = 'assistant') from session_v2").fetchall()
+    except sqlite3.Error:
+        return
+    for directory, fresh, stored, cached, written, thought, turns in rows:
+        if not turns or not any(directory == folder or str(directory).startswith(folder + "/") for folder in folders):
+            continue
+        total["read"] += (fresh or 0) + (stored or 0)
+        total["cached"] += cached or 0
+        total["written"] += (written or 0) + (thought or 0)
+        total["turns"] += turns
+
+
+def usage(cwd, home=None, codex=None, opencode=None):
     total, seen = {"read": 0, "cached": 0, "written": 0, "turns": 0}, set()
     files = sorted(folder(cwd, home).glob("*.jsonl"))
     for file in files:
@@ -77,13 +100,14 @@ def usage(cwd, home=None, codex=None):
                     value = message["usage"].get(field)
                     total[key] += value if isinstance(value, int) else 0
     codex_usage(str(cwd), total, codex)
+    opencode_usage(str(cwd), total, opencode)
     return total if total["turns"] else None
 
 
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        print(json.dumps({"data": {cwd: usage(cwd, payload.get("home"), payload.get("codex")) for cwd in payload.get("cwds", [])[:20]}}))
+        print(json.dumps({"data": {cwd: usage(cwd, payload.get("home"), payload.get("codex"), payload.get("opencode")) for cwd in payload.get("cwds", [])[:20]}}))
         return 0
     except (ValueError, OSError, KeyError) as error:
         print(json.dumps({"error": str(error)}))

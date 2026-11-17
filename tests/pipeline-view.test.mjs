@@ -643,14 +643,16 @@ test("Choose for me applies what the planner's agent picks and says why under ea
     return { code: 0, stdout: JSON.stringify({ data: { plan: { check: { value: "make check", reason: "The Makefile's check target" }, tryout: { value: "", reason: "It has nothing to run" },
       delivery: { value: "pr", reason: "CONTRIBUTING asks for pull requests" } }, ms: 9000 } }) };
   };
-  assert.match(find(view.render(cx), "setup-decide").styles.tooltip[0], /^The AI helper, Claude Code · haiku, reads this repository/);
-  assert.match(text(find(view.render(cx), "setup-helper")), /AI helper .*Claude Code · haiku/);
+  assert.match(find(view.render(cx), "setup-decide").styles.tooltip[0], /^The AI helper, Claude Code, reads this repository/);
+  assert.match(text(find(view.render(cx), "setup-helper")), /AI helper .*Claude Code/);
   click(view, "setup-helper-change");
-  assert.deepEqual([view.drawer, view.section], ["settings", "helper"]);
-  click(view, "helper-model-sonnet");
+  assert.deepEqual([view.drawer, view.section], ["settings", "planner"]);
+  assert.equal(find(view.render(cx), "settings-helper"), undefined, "the helper and the planner are one section");
+  click(view, "planner-model-sonnet");
   view.open(null, cx);
   assert.match(text(find(view.render(cx), "setup-helper")), /Claude Code · sonnet/);
-  click(view, "setup-helper-change"); click(view, "helper-model-haiku"); view.open(null, cx);
+  assert.equal(view.state().planner.on, false);
+  click(view, "setup-helper-change"); click(view, "planner-model-haiku"); view.open(null, cx);
   await settle(view, "setup-decide");
   world.exec = null;
   assert.deepEqual([asked.args.cwd, asked.args.args[2], asked.options.cwd], ["/work/shop", "haiku", "/work/shop"]);
@@ -706,6 +708,60 @@ test("Live settings choose a model and effort per agent, and the agent button sh
   assert.equal(view.modelInput.value(), "opus");
   click(view, "model-default");
   assert.equal(text(find(view.render(cx), "agent")).trim(), "Claude Code · high effort · 2 parallel");
+});
+
+test("OpenCode's settings list its own models, and offer an effort only once a model with variants is picked", () => {
+  const view = setupLive();
+  view.agentChoices = [{ key: "opencode", name: "OpenCode", run: ["opencode"], installed: true }];
+  view.opencodeModels = [{ slug: "opencode/gpt-sol", name: "GPT Sol", efforts: ["low", "high"] }, { slug: "opencode/big-pickle", name: "Big Pickle", efforts: [] }];
+  click(view, "agent"); click(view, "agent-opencode");
+  assert.ok(find(view.render(cx), "model-opencode/big-pickle") && !find(view.render(cx), "effort-default"), "no effort without a model");
+  click(view, "model-opencode/gpt-sol"); click(view, "effort-high");
+  assert.equal(text(find(view.render(cx), "agent")).trim(), "OpenCode · opencode/gpt-sol · high effort · 2 parallel");
+  click(view, "model-opencode/big-pickle");
+  assert.deepEqual(view.state().tuning.opencode, { model: "opencode/big-pickle", effort: null }, "a model without variants drops the effort");
+  assert.ok(find(view.render(cx), "effort-default") && !find(view.render(cx), "effort-high"));
+});
+
+test("models are a scrolling list grouped by provider, narrowed as you type, and Enter picks the first", () => {
+  const view = setupLive(), listedIn = node => findAll(node, "model-").filter(row => row.styles.id[0].includes("/"));
+  view.agentChoices = [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }];
+  click(view, "agent");
+  assert.deepEqual(findAll(find(view.render(cx), "model-list"), "model-").map(row => row.styles.id[0].slice(15)).filter(id => id !== "list"), ["default", "fable", "opus", "sonnet", "haiku"],
+    "Claude Code's few models are the same list");
+  view.modelInput.set_value("son");
+  view.modelInput.emit("submit", cx);
+  assert.equal(view.state().tuning.claude.model, "sonnet");
+  view.agentChoices = [{ key: "opencode", name: "OpenCode", run: ["opencode"], installed: true }];
+  view.opencodeModels = [...Array.from({ length: 13 }, (_, i) => ({ slug: `opencode/filler-${i}`, name: `Filler ${i}`, group: "Personal / OpenCode", free: i < 2, efforts: [] })),
+    { slug: "opencode/gpt-sol", name: "GPT Sol", group: "Personal / OpenCode", efforts: ["low", "high"] }, { slug: "deepseek/pro", name: "DeepSeek Pro", group: "DeepSeek", efforts: ["high"] }];
+  click(view, "agent"); click(view, "agent-opencode");
+  let list = find(view.render(cx), "model-list");
+  assert.equal(listedIn(list).length, 15);
+  assert.ok(find(list, "model-default"), "Default heads the list");
+  assert.match(text(list), /Personal \/ OpenCode[\s\S]*Filler 0\s+Free[\s\S]*DeepSeek\s+DeepSeek Pro/);
+  view.modelInput.set_value("free");
+  assert.equal(listedIn(find(view.render(cx), "model-list")).length, 2, "free finds the free ones");
+  assert.equal(find(view.render(cx), "model-default"), undefined);
+  view.modelInput.set_value("deep pro");
+  view.modelInput.emit("blur", cx);
+  assert.equal(view.state().tuning?.opencode, undefined, "leaving the field mid-search saves nothing");
+  find(view.render(cx), "model-deepseek/pro").handlers.on_click({}, cx);
+  assert.deepEqual(view.state().tuning.opencode, { model: "deepseek/pro", effort: null });
+  list = find(view.render(cx), "model-list");
+  assert.equal(listedIn(list).length, 15, "the whole list is back once one is picked");
+  assert.match(text(find(list, "model-deepseek/pro")), /●/);
+  click(view, "effort-high");
+  view.modelInput.set_value("SOL");
+  view.modelInput.emit("submit", cx);
+  assert.deepEqual(view.state().tuning.opencode, { model: "opencode/gpt-sol", effort: "high" }, "Enter picks the first match and keeps an effort it has");
+  view.modelInput.set_value("my/own-model");
+  assert.match(text(find(view.render(cx), "model-list")), /No listed model matches/);
+  view.modelInput.emit("submit", cx);
+  assert.equal(view.state().tuning.opencode.model, "my/own-model", "a name that matches nothing is used as typed");
+  view.modelInput.set_value("");
+  view.modelInput.emit("submit", cx);
+  assert.equal(view.state().tuning.opencode.model, null, "an emptied field is the default again");
 });
 
 test("failed checks offer Fix on the card and the full choice in the inspector", async () => {
@@ -1111,6 +1167,28 @@ test("a queued task can start with its own model and effort", () => {
   assert.deepEqual(row(view, "T-1").tune, { model: null, effort: "low" });
 });
 
+test("a queued task picks its own model from the searchable list when its agent lists many", () => {
+  const view = setupLive();
+  view.agentChoices = [{ key: "opencode", name: "OpenCode", run: ["opencode"], installed: true }];
+  view.opencodeModels = [...Array.from({ length: 13 }, (_, i) => ({ slug: `opencode/filler-${i}`, name: `Filler ${i}`, group: "Personal / OpenCode", efforts: [] })),
+    { slug: "opencode/gpt-sol", name: "GPT Sol", group: "Personal / OpenCode", efforts: ["low", "high"] }, { slug: "deepseek/pro", name: "DeepSeek Pro", group: "DeepSeek", efforts: ["max"] }];
+  view.act({ type: "agent", value: { key: "opencode", name: "OpenCode", run: ["opencode"] } }, cx);
+  view.act({ type: "tune", key: "opencode", model: "opencode/gpt-sol" }, cx);
+  view.act({ type: "create", title: "Docs" }, cx);
+  view.inspect("T-1", cx);
+  let inspector = find(view.render(cx), "inspector");
+  assert.match(text(find(inspector, "task-model-default")), /As set/);
+  assert.ok(find(inspector, "task-model-deepseek/pro") && find(inspector, "task-effort-high") && !find(inspector, "task-effort-max"), "its efforts follow the model in Settings until it has its own");
+  view.taskModelInput.set_value("deep");
+  view.taskModelInput.emit("submit", cx);
+  click(view, "task-effort-max");
+  assert.deepEqual(row(view, "T-1").tune, { model: "deepseek/pro", effort: "max" });
+  assert.match(text(find(view.render(cx), "inspector")), /Starts OpenCode with deepseek\/pro · max effort/);
+  click(view, "task-model-default");
+  assert.equal(row(view, "T-1").tune, null, "an effort the model in Settings lacks goes with the task's model");
+  assert.equal(view.taskModelInput.value(), "");
+});
+
 test("a merge refused for conflicts offers to send its agent to rebase", async () => {
   const view = setupLive();
   view.act({ type: "create", title: "A" }, cx);
@@ -1286,10 +1364,11 @@ test("the planner is switched on in Settings and shows its plan, its reasons and
   assert.equal(view.state().planning, null);
 });
 
-test("the planner's settings offer Claude Code or Codex when both are installed, with their own models and efforts", () => {
+test("the AI helper's settings offer Claude Code or Codex when both are installed, with their own models and efforts, planning or not", () => {
   const view = setupLive();
   view.codexModels = [{ slug: "gpt-5", name: "GPT-5", efforts: ["low", "high"] }];
   click(view, "settings"); click(view, "settings-planner");
+  assert.ok(find(view.render(cx), "planner-model-fable") && !find(view.render(cx), "planner-open"), "its model is chosen before planning is on");
   find(view.render(cx), "planner").handlers.on_change(true, cx);
   let inspector = find(view.render(cx), "settings-modal");
   assert.match(text(find(inspector, "planner")), /Claude Code reads the queue, ticket blockers and the repository/);
@@ -1301,6 +1380,15 @@ test("the planner's settings offer Claude Code or Codex when both are installed,
   click(view, "planner-model-gpt-5");
   click(view, "planner-effort-low");
   assert.deepEqual(view.state().planner, { on: true, agent: "codex", model: "gpt-5", effort: "low" });
+  view.agentChoices = [{ key: "opencode", name: "OpenCode", run: ["opencode"], installed: true }];
+  view.opencodeModels = [{ slug: "opencode/gpt-sol", name: "GPT Sol", group: "Personal / OpenCode", efforts: ["low", "high"] }];
+  click(view, "planner-agent-opencode");
+  assert.ok(!find(view.render(cx), "planner-effort-default"), "OpenCode's effort waits for a model");
+  view.plannerModelInput.set_value("sol");
+  view.plannerModelInput.emit("submit", cx);
+  click(view, "planner-effort-high");
+  assert.deepEqual(view.state().planner, { on: true, agent: "opencode", model: "opencode/gpt-sol", effort: "high" });
+  assert.match(text(find(view.render(cx), "planner-model-list")), /Personal \/ OpenCode/);
   view.agentChoices = [{ key: "aider", name: "Aider", run: ["aider"], installed: true }];
   view.act({ type: "plannerSetup", on: false }, cx);
   assert.equal(find(view.render(cx), "planner").styles.disabled[0], true, "without either, it can't be turned on");

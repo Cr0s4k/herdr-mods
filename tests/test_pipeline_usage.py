@@ -26,6 +26,23 @@ class UsageTest(unittest.TestCase):
             (folder / "two.jsonl").write_text(reply("b", input_tokens=5, output_tokens=7, service_tier="standard") + "\n")
             self.assertEqual(usage.usage("/Users/me/.herdr/worktrees/shop/T-1", home, home), {"read": 105, "cached": 1000, "written": 47, "turns": 2})
 
+    def test_opencode_sessions_in_the_worktree_are_summed_from_its_database(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as home:
+            database = Path(home) / "opencode.db"
+            with sqlite3.connect(database) as connection:
+                connection.execute("create table session_v2 (id text, directory text, tokens_input integer, tokens_output integer, tokens_reasoning integer, tokens_cache_read integer, tokens_cache_write integer)")
+                connection.execute("create table session_message (session_id text, type text)")
+                connection.executemany("insert into session_v2 values (?, ?, ?, ?, ?, ?, ?)", [
+                    ("main", "/wt/T-1", 100, 40, 10, 1000, 5), ("helper", "/wt/T-1/packages/web", 20, 4, 0, 0, 0),
+                    ("other", "/wt/T-10", 999, 999, 999, 999, 999), ("unused", "/wt/T-1", 7, 7, 7, 7, 7)])
+                connection.executemany("insert into session_message values (?, ?)", [("main", "assistant"), ("main", "user"), ("main", "assistant"), ("helper", "assistant"), ("other", "assistant")])
+            self.assertEqual(usage.usage("/wt/T-1", home, home, database), {"read": 125, "cached": 1000, "written": 54, "turns": 3})
+            self.assertIsNone(usage.usage("/wt/T-2", home, home, database))
+            self.assertIsNone(usage.usage("/wt/T-1", home, home, Path(home) / "missing.db"))
+            (Path(home) / "broken.db").write_text("not a database")
+            self.assertIsNone(usage.usage("/wt/T-1", home, home, Path(home) / "broken.db"))
+
     def test_a_folder_without_transcripts_has_no_usage(self):
         with tempfile.TemporaryDirectory() as home:
             self.assertIsNone(usage.usage("/nowhere", home, home))

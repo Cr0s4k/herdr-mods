@@ -121,7 +121,7 @@ Rebuild the playback assets with `python3 mods/companion/build_sprites.py` (Pyth
 machine. **Available here** combines discovered project and personal skills with skills
 from plugins enabled in local configuration. **Personal library** shows personal,
 managed, built-in and cached plugin skills, including disabled or unverified copies.
-Filter either view by **All agents**, **Codex** or **Claude**. Plugin and built-in groups
+Filter either view by **All agents**, **Codex**, **Claude** or **OpenCode**. Plugin and built-in groups
 start collapsed; searching also searches inside them.
 
 Claude's `skills/synced/` cache is classified from its sync manifest: Anthropic-provided
@@ -141,6 +141,10 @@ working folder and its repository ancestors, plus personal skills under `~/.agen
 `$CODEX_HOME` (default `~/.codex`) and `$CLAUDE_CONFIG_DIR` (default `~/.claude`). It also
 reads Claude's legacy commands and plugin registry, Codex's plugin cache and skill
 configuration, Codex's on-disk built-ins, and `/etc/codex/skills` when present.
+OpenCode's skills aren't read from folders: the reader asks OpenCode's own server
+(`opencode api GET /api/skill`) what a session in the working folder loads, so they include
+the Claude and `.agents` skills it picks up and its built-ins, which open from the text the
+server returns. OpenCode has no command to copy for a skill.
 The reader runs on the selected space's machine, using Python 3, and refreshes every
 15 seconds or manually. The folder follows terminal focus; a moved pane stays in its tab.
 
@@ -149,7 +153,7 @@ options, trust, managed policies, account state and agent versions can change wh
 Cached Codex plugins without confirmed enablement, or with multiple cached versions,
 appear only in Personal library as unverified. Claude's built-ins that have no local
 manifest are not indexed. A plain repository `skills/` folder contains source files and
-does not itself install those skills for either agent.
+does not itself install those skills for any agent.
 
 ## Pipeline
 
@@ -187,8 +191,9 @@ never applied: **Use npm test** for a check command it finds, **Use pull request
 repository is on GitHub and `gh` is installed. **Choose for me** (sparkles) asks the AI helper
 to read the repository, read-only, and set the check command, Try it, delivery and the After
 merge command; each choice
-it made shows its reason under the row. The AI helper is its own setting, apart from the planner:
-Claude Code on Haiku unless **AI helper** in Settings picks another agent, model or effort. A run
+it made shows its reason under the row. The AI helper is the agent that also plans the queue:
+**AI helper** in Settings picks its agent (Claude Code, Codex or OpenCode), model and effort once for both, from the same model list as the Agent section,
+whether or not **Plan with an agent** is on. On a small model a run
 takes about 20 seconds and costs about a cent. The card goes away with **Done** or the next
 **Start pipeline**; **Show setup** (Settings, General) brings it back, also on a pipeline made
 before the card existed.
@@ -274,10 +279,10 @@ nothing to finish.
    back. **Move up** and **Move down** beside it swap the task with its neighbour: the queue
    then keeps the order you gave it, Start first still goes ahead of it, and tasks added
    later join after the ones you ordered. **Model and effort for this task** there lets one task start with its own (a small
-   model for a docs change, say); what you leave **As set** follows Settings.
+   model for a docs change, say); what you leave **As set** follows Settings. An agent with many models (OpenCode) shows the same searchable list there as in Settings.
 
-   **Plan with an agent** (Settings) hands the ordering to Claude Code or Codex: the one you
-   pick there, else the one tasks start with. Whenever a task joins the queue, its details
+   **Plan with an agent** (Settings, AI helper) hands the ordering to Claude Code, Codex or OpenCode: the one you
+   pick there, else Codex when tasks start with it, else Claude Code. OpenCode has no output schema, so it is asked for JSON in its reply, and it reads through its plan agent on a private server that refuses edits and the shell. Whenever a task joins the queue, its details
    change or one of its ticket blockers changes, Pipeline asks it, read-only, to look at the
    queue, each ticket's Plane or Linear blockers, the work already started and the
    repositories, and to answer with the
@@ -301,11 +306,18 @@ nothing to finish.
    default), Pipeline makes a worktree from your current commit under `~/.herdr/worktrees`
    and opens the agent as a tab named after the task in the space you started from, so it
    appears under that space in the sidebar. The agent is the first installed one Herdr knows
-   (Claude Code, Codex…); pick another in Settings, which the toolbar's chip opens (**Claude Code · 2 parallel · 34% used**: the agent with its model and effort, how many run at once, and how full its usage limits are). For Claude Code and Codex,
+   (Claude Code, Codex…); pick another in Settings, which the toolbar's chip opens (**Claude Code · 2 parallel · 34% used**: the agent with its model and effort, how many run at once, and how full its usage limits are). For Claude Code, Codex and OpenCode,
    Settings also sets the **Model** (Claude's aliases such as opus, the models Codex lists in
-   its `models_cache.json`, or any model name typed in) and **Effort**, passed as launch
+   its `models_cache.json`, the models OpenCode's server lists, as `provider/model`, or any
+   model name typed in) and **Effort**, passed as launch
    flags; **Default** leaves the agent's own setting. The chip and each task's
-   inspector show what it started with.
+   inspector show what it started with. The models are a scrolling
+   list headed by **Default**; OpenCode's are grouped by provider with the free ones first,
+   as its own model dialog shows them. Typing in the field narrows the list by name,
+   provider or "free", and Enter picks the first match, or uses the name as typed when
+   nothing matches. OpenCode's effort is the model's variant, so it is
+   offered once a model is picked, and a task with a model runs on a private OpenCode
+   server (`--standalone`): the shared one can't be told a model per session.
 3. The card follows the agent: **Working** with how long its agent has had the task,
    **Needs you** when it waits for you, and **Ready for review** when it finishes. **Answer**
    (or Q) opens what it asks in the task's inspector, the way the simulation does: Pipeline
@@ -464,9 +476,9 @@ in the queue, where the details can be edited before it starts.
 
 A working agent redraws its terminal all the time. When one shows nothing new for ten
 minutes, its card turns to **No output for 12 min** and Pipeline notifies you that it may be
-stuck; the flag clears by itself when the screen moves again. For Claude Code and Codex, a
+stuck; the flag clears by itself when the screen moves again. For Claude Code, Codex and OpenCode, a
 task's inspector also says how many tokens its agent used (written, read and read from cache),
-counted from the agent's own session files for the worktree each time a turn ends, and
+counted from the agent's own session files for the worktree (OpenCode's session database) each time a turn ends, and
 **Completed** adds up agent time and tokens written. Each task keeps its own history, so it
 is still there after the activity log has moved on.
 
@@ -671,18 +683,18 @@ computer; a selected remote machine is only the destination for an agent handoff
 
 ## Loops
 
-The **Loops** tab beside Show lists local **Codex and Claude `/goal` goals** and **Claude
+The **Loops** tab beside Show lists local **Codex, Claude and OpenCode `/goal` goals** and **Claude
 scheduled `/loop` tasks**, labeled by source. It refreshes every ten seconds, with a manual refresh button. Codex goals show
 status, tokens used (and budget when set), and working time. Budget usage is not a measure
 of task completion.
 
 **This space** follows the space's live terminal folders; **All projects** includes saved
 goals and schedules from other local projects. **History** includes completed, failed,
-cleared, cancelled, ended, expired, and inactive entries. The **Codex** and **Claude**
-header buttons independently toggle each source; both start enabled. Claude includes
+cleared, cancelled, ended, expired, and inactive entries. The **Codex**, **Claude** and **OpenCode**
+header buttons independently toggle each source; all start enabled. Claude includes
 goals and scheduled tasks. Counts follow the selected sources. All filters are remembered.
 **Open session** opens the exact Codex thread with
-`codex resume` in a new tab. From a remote space it opens a local space instead.
+`codex resume` in a new tab, or the exact OpenCode session with `opencode --session`. From a remote space it opens a local space instead.
 
 Claude goals come from structured `goal_status` attachments in local session transcripts
 under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`). **Saved goal** means the
@@ -690,6 +702,12 @@ last recorded goal is unresolved; it does not prove that Claude is still running
 spend, elapsed time, and evaluated turns appear when recorded, usually when the goal ends.
 Clearing a goal is distinct from completing it. **Copy session ID** copies its exact session
 ID. The panel never runs the Claude CLI, including when refreshing or clicking a Claude row.
+
+OpenCode goals come from its session database (`~/.local/share/opencode/opencode.db`,
+`XDG_DATA_HOME` respected), read-only: one goal per session, **Active**, **Paused** or
+**Completed**, with the reviewer's reason in the status tooltip and how many times it sent
+the agent on. OpenCode records no tokens or time per goal, so none are shown, and a goal
+you clear is gone rather than kept in History.
 
 Claude schedules come from confirmed `CronCreate`, `CronDelete`, `CronList`, and
 `ScheduleWakeup` results and `session_cron_carry` snapshots in those same transcripts.
@@ -859,7 +877,7 @@ the new row.
 | `mods/tabs-show/panel-actions.js` | Shared Move to pane action and keyboard-focus handling |
 | `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Changes title for review panes |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
-| `mods/loops/` | Codex and Claude goals and scheduled loops panel, with Python readers |
+| `mods/loops/` | Codex, Claude and OpenCode goals and scheduled loops panel, with Python readers |
 | `mods/skills/`, `mods/skills-pane/` | Skills inventory and reader, with shared-file deduplication, scope and agent filters, and a normal pane view |
 | `mods/brief/`, `mods/brief-pane/` | Since you left: per-space activity, persistent handoffs, unread history and pane view |
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |

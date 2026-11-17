@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, helperAgent, helperTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
@@ -65,9 +65,10 @@ const conflicted = task => task.status === "review" && task.error && task.termin
 const uncommitted = task => task.status === "review" && !task.discard && /task's worktree has uncommitted changes/.test(task.error ?? "");
 const FORK = 'cd -- "$1" || exit 1; fork=$(git merge-base HEAD "$3" 2>/dev/null); if [ -n "$fork" ] && git merge-base --is-ancestor "$2" "$fork" 2>/dev/null; then echo "$fork"; else echo "$2"; fi';
 const plannerBusy = state => plannerHolds(state) && state.planning?.status !== "failed";
+const MODEL_CHIPS = 12, MODEL_LIST = 300;
 const DRAWERS = ["picker", "queue", "review", "prs", "done", "activity", "settings", "watch", "quota", "plane", "linear", "schedule", "planner", "outside"];
 const SECTIONS = {
-  live: { agent: "Agent", limits: "Usage limits", helper: "AI helper", planner: "Planner", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
+  live: { agent: "Agent", limits: "Usage limits", planner: "AI helper", repositories: "Repositories", checks: "Checks and Try it", delivery: "Delivery", tickets: "Ticket updates", general: "General" },
   simulation: { pipeline: "Pipeline", simulation: "Simulation", general: "General" },
 };
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
@@ -163,10 +164,15 @@ export default class Pipeline extends View {
       input.on("change", (_e, cx) => cx.notify());
     }
     this.timeError = null;
-    this.modelInput = InputState.new({ placeholder: "Or type a model name" });
+    this.modelInput = InputState.new({ placeholder: "Find a model, or type its name" });
     this.modelInput.on("submit", (_e, cx) => this.saveModel(cx));
-    this.modelInput.on("blur", (_e, cx) => this.saveModel(cx));
     this.modelInput.on("change", (_e, cx) => cx.notify());
+    this.plannerModelInput = InputState.new({ placeholder: "Find a model, or type its name" });
+    this.plannerModelInput.on("submit", (_e, cx) => this.savePlannerModel(cx));
+    this.plannerModelInput.on("change", (_e, cx) => cx.notify());
+    this.taskModelInput = InputState.new({ placeholder: "Find a model, or type its name" });
+    this.taskModelInput.on("submit", (_e, cx) => this.saveTaskModel(cx));
+    this.taskModelInput.on("change", (_e, cx) => cx.notify());
     this.repoInput = InputState.new({ placeholder: "Path to another repository, e.g. ~/code/api" });
     this.repoInput.on("submit", (_e, cx) => this.addRepository(cx));
     this.repoInput.on("change", (_e, cx) => { this.repoError = null; cx.notify(); });
@@ -181,7 +187,7 @@ export default class Pipeline extends View {
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
-    this.repo = null; this.agentChoices = []; this.codexModels = []; this.github = false; this.deciding = null;
+    this.repo = null; this.agentChoices = []; this.codexModels = []; this.opencodeModels = []; this.github = false; this.deciding = null;
     this.sources = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, issues: [], states: [], error: null, kind: null, needsProject: false }]));
     this.ticketPicked = new Set(); this.ticketRequests = {}; this.queueing = false;
     this.updateStates = Object.fromEntries(Object.keys(SOURCES).map(provider => [provider, { loading: false, states: [], error: null }]));
@@ -218,7 +224,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   act(action, cx) {
@@ -267,6 +273,10 @@ export default class Pipeline extends View {
         const cache = await exec("sh", ["-c", 'cat "${CODEX_HOME:-$HOME/.codex}/models_cache.json"'], { on }).catch(() => null);
         this.codexModels = cache?.code === 0 ? codexModels(cache.stdout) : [];
       }
+      if (this.agentChoices.some(agent => agent.key === "opencode")) {
+        const [list, providers] = await Promise.all(["model", "provider"].map(what => exec("sh", ["-c", `opencode api GET /api/${what}`], { on }).catch(() => null)));
+        this.opencodeModels = list?.code === 0 ? opencodeModels(list.stdout, providers?.code === 0 ? providers.stdout : "") : [];
+      }
       if (this.repo?.root) {
         const found = await exec("sh", ["-c", CHECK_HINTS], { cwd: this.repo.root, on }).catch(() => null);
         this.checkSuggestions = (found?.stdout ?? "").split("\n").map(line => line.trim()).filter(Boolean).slice(0, 3);
@@ -294,6 +304,10 @@ export default class Pipeline extends View {
   }
   agentName(state) { return state.agent?.name ?? this.agentChoices[0]?.name ?? "Agent"; }
   agentKey(state) { return state.agent ? state.agent.key : this.agentChoices[0]?.key ?? null; }
+  listedModels(key) {
+    return key === "codex" ? this.codexModels : key === "opencode" ? this.opencodeModels
+      : (AGENT_OPTIONS[key]?.models ?? []).map(slug => ({ slug, name: slug, hint: `The latest ${slug} model`, efforts: AGENT_OPTIONS[key].efforts }));
+  }
   agentLabel(state) {
     const tuning = tuningLabel(tuningFor(state, this.agentKey(state)));
     return tuning ? `${this.agentName(state)} · ${tuning}` : this.agentName(state);
@@ -502,8 +516,29 @@ export default class Pipeline extends View {
   }
   saveModel(cx) {
     const state = this.state(), key = this.agentKey(state ?? {});
-    if (!state?.live || !AGENT_OPTIONS[key] || this.modelInput.value().trim() === (tuningFor(state, key).model ?? "")) return;
-    this.act({ type: "tune", key, model: this.modelInput.value() }, cx);
+    if (state?.live && AGENT_OPTIONS[key]) this.saveTyped(key, tuningFor(state, key), this.modelInput, (change, cx) => this.act({ type: "tune", key, ...change }, cx), cx);
+  }
+  savePlannerModel(cx) {
+    const state = this.state();
+    if (state?.live) this.saveTyped(plannerAgent(state), plannerTuning(state), this.plannerModelInput, (change, cx) => this.act({ type: "plannerSetup", ...change }, cx), cx);
+  }
+  saveTaskModel(cx) {
+    const state = this.state(), key = this.agentKey(state ?? {}), task = state?.tasks.find(task => task.id === this.detailsFor);
+    if (state?.live && AGENT_OPTIONS[key] && task) this.saveTyped(key, { model: task.tune?.model ?? null, effort: task.tune?.effort ?? null }, this.taskModelInput,
+      (change, cx) => this.act({ type: "tuneTask", id: task.id, key, ...change }, cx), cx);
+  }
+  saveTyped(key, tune, input, set, cx) {
+    const typed = input.value().trim(), match = typed ? this.modelMatches(key, tune, input)[0] : null;
+    if (typed === (tune.model ?? "")) return;
+    set(match ? this.modelChange(key, tune, match) : { model: typed }, cx);
+    if (match) input.set_value(match.slug);
+  }
+  modelMatches(key, tune, input) {
+    const typed = input.value().trim().toLowerCase(), words = typed === (tune.model ?? "").toLowerCase() ? [] : typed.split(/\s+/).filter(Boolean);
+    return this.listedModels(key).filter(model => words.every(word => `${model.slug} ${model.name} ${model.group ?? ""} ${model.free ? "free" : ""}`.toLowerCase().includes(word)));
+  }
+  modelChange(key, tune, model) {
+    return { model: model.slug, ...(tune.effort && (model.efforts.length || AGENT_OPTIONS[key].exact) && !model.efforts.includes(tune.effort) ? { effort: null } : {}) };
   }
   fix(task, cx) {
     const state = this.state();
@@ -522,6 +557,7 @@ export default class Pipeline extends View {
       this.prepareInput.set_value(this.state().prepare ?? "");
       this.instructions.set_value(this.state().instructions ?? "");
       this.modelInput.set_value(tuningFor(this.state(), this.agentKey(this.state())).model ?? "");
+      this.plannerModelInput.set_value(this.state().planner?.model ?? "");
       if (drawer !== this.drawer) this.loadUpdateStates(cx);
     }
     if (SOURCES[drawer] && !this.state()?.live) return;
@@ -679,7 +715,7 @@ export default class Pipeline extends View {
     const task = this.state()?.tasks.find(task => task.id === id);
     this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null; this.imageNote = null;
     this.detailsFor = task?.status === "queued" && this.state()?.live ? id : null;
-    if (this.detailsFor) this.details.set_value(task.description ?? "");
+    if (this.detailsFor) { this.details.set_value(task.description ?? ""); this.taskModelInput.set_value(task.tune?.model ?? ""); }
     cx.notify();
   }
   nextQuestion(cx) {
@@ -1244,7 +1280,7 @@ export default class Pipeline extends View {
     const demoQueued = state.tasks.some(task => task.title === DEMO_TASK[0]), prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
-        canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "helper")]),
+        canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "planner")]),
       row("agent", "Agent", this.agentChoices.length ? ok : todo,
         this.agentChoices.length ? this.agentLabel(state) : this.repo ? "No coding agent found" : "Looking for agents…", [change("agent", "agent")]),
       row("checks", "Checks", state.check ? ok : todo, state.check?.command ?? "None, so unchecked work reaches review", [
@@ -1710,7 +1746,6 @@ export default class Pipeline extends View {
       body.child(this.switchRow("evidence", "Show the change", "Asks each agent for before and after screenshots of what it changes, presented on a private page it publishes. The task's inspector opens it.",
         Boolean(state.evidence), cx => this.act({ type: "evidence" }, cx), t));
     } else if (section === "limits") this.limits(body, state, t);
-    else if (section === "helper") this.helperSettings(body, state, t);
     else if (section === "planner") this.plannerSettings(body, state, t);
     else if (section === "repositories") this.repositories(body, state, t);
     else if (section === "checks") {
@@ -1891,25 +1926,52 @@ export default class Pipeline extends View {
     const key = this.agentKey(state), options = AGENT_OPTIONS[key];
     if (!this.agentChoices.length) return;
     if (!options) { body.child(this.label(`Pipeline starts ${this.agentName(state)} with its own default model and effort.`, t)); return; }
-    const tune = tuningFor(state, key), chip = (id, text, selected, action, hint) => this.button(id, text, cx => this.act({ type: "tune", key, ...action }, cx), t, { small: true, selected, hint });
-    const models = key === "codex" ? this.codexModels : options.models.map(slug => ({ slug, name: `The latest ${slug} model`, efforts: options.efforts }));
-    const known = models.find(model => model.slug === tune.model);
-    const efforts = known?.efforts.length ? known.efforts : key === "codex" && this.codexModels.length
-      ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : options.efforts;
-    const pick = model => ({ model: model.slug, ...(tune.effort && model.efforts.length && !model.efforts.includes(tune.effort) ? { effort: null } : {}) });
-    body.child(this.heading("Model"));
-    body.child(h_flex().gap(6).flex_wrap()
-      .child(chip("model-default", "Default", !tune.model, { model: null }, `Whatever ${this.agentName(state)} uses when started on its own`))
-      .children(models.map(model => chip(`model-${model.slug}`, model.slug, tune.model === model.slug, pick(model), model.name))));
-    body.child(h_flex().gap(6).items_center()
-      .child(Input.new(this.modelInput).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
-        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Model name"))
-      .child(this.button("model-save", "Save", cx => this.saveModel(cx), t, { small: true, disabled: this.modelInput.value().trim() === (tune.model ?? "") })));
-    body.child(this.heading("Effort"));
-    body.child(h_flex().gap(6).flex_wrap()
-      .child(chip("effort-default", "Default", !tune.effort, { effort: null }, `Whatever ${this.agentName(state)} uses when started on its own`))
-      .children(efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
+    const tune = tuningFor(state, key);
+    this.modelAndEffort(body, t, { prefix: "", key, name: this.agentName(state), tune, input: this.modelInput, set: (change, cx) => this.act({ type: "tune", key, ...change }, cx) });
     body.child(this.label(`New tasks start with ${tuningLabel(tune) || "the agent's own default model and effort"}. Running agents keep theirs.`, t));
+  }
+  // The model list and effort chips, for the agent tasks start with and for the AI helper.
+  modelAndEffort(body, t, { prefix, key, name, tune, input, set, same = null }) {
+    const options = AGENT_OPTIONS[key], listed = this.listedModels(key), known = listed.find(model => model.slug === (tune.model ?? same?.model));
+    const unset = same ? "As set" : "Default", unsetHint = same ? "Follows the model and effort in Settings" : `Whatever ${name} uses when started on its own`;
+    const efforts = known && (known.efforts.length || options.exact) ? known.efforts : listed.length ? [...new Set(listed.flatMap(model => model.efforts))] : options.efforts;
+    const matches = this.modelMatches(key, tune, input), typed = input.value().trim(), searching = Boolean(typed) && typed !== (tune.model ?? ""), first = searching ? matches[0] : null;
+    const groups = [...new Set(matches.map(model => model.group ?? ""))].map(group => [group, matches.filter(model => (model.group ?? "") === group)]);
+    const row = (id, label, picked, hint, pick, tag) => Button.new(`pipeline-${prefix}model-${id}`).w_full().px(8).py(5).rounded(4).text_color(t.foreground).text_size(12).tab_index(0)
+      .bg(t.background).accessibility_label(`Use ${label}`).selected(picked).tooltip(hint)
+      .hover(el => el.bg(t.hover)).focus(el => el.bg(t.hover)).on_click(pick)
+      .child(h_flex().w_full().gap(8).items_center()
+        .child(div().w(10).flex_none().text_color(t.accent).child(picked ? "●" : ""))
+        .child(div().flex_1().min_w(0).truncate().child(label))
+        .when(Boolean(tag), el => el.child(div().flex_none().text_size(11).text_color(t.muted).child(tag ?? ""))));
+    const rows = [
+      ...(searching ? [] : [row("default", unset, !tune.model, unsetHint, (_e, cx) => {
+        const base = listed.find(model => model.slug === same?.model);
+        set({ model: null, ...(options.exact && tune.effort && !base?.efforts.includes(tune.effort) ? { effort: null } : {}) }, cx); input.set_value("");
+      })]),
+      ...groups.flatMap(([group, models]) => [
+        ...(group ? [div().px(8).pt(8).pb(4).text_size(11).font_medium().text_color(t.muted).child(group)] : []),
+        ...models.map(model => row(model.slug, model.name, model.slug === tune.model, model.hint ?? model.slug,
+          (_e, cx) => { set(this.modelChange(key, tune, model), cx); input.set_value(model.slug); }, model.free ? "Free" : null).when(model === first, el => el.bg(t.selected)))]),
+      ...(matches.length ? [] : [div().px(8).py(5).text_size(12).text_color(t.muted).child(searching ? "No listed model matches." : `${name} lists no models here.`)])];
+    const headers = groups.filter(([group]) => group).length, height = Math.min(MODEL_LIST, (rows.length - headers) * 26 + headers * 30 + 10);
+    const chip = (id, text, selected, change, hint) => this.button(`${prefix}${id}`, text, cx => set(change, cx), t, { small: true, selected, hint });
+    body.child(this.heading(same ? "Model for this task" : "Model"));
+    body.child(h_flex().gap(6).items_center()
+      .child(Input.new(input).flex_1().min_w(0).h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12)
+        .font_family(settings().font_family ?? "JetBrains Mono").accessibility_label("Find a model, or type its name"))
+      .child(this.button(`${prefix}model-save`, "Save", cx => this.saveTyped(key, tune, input, set, cx), t, { small: true, disabled: typed === (tune.model ?? ""),
+        hint: first ? `Uses ${first.name}, the first match (Enter)` : "Uses the name as typed (Enter)" })));
+    // A list scrolls only at a set height: one that only has a maximum grows past it and clips.
+    body.child(div().w_full().h(height).flex_none().rounded(6).bg(t.background).border_1().border_color(t.border).overflow_hidden()
+      .child(v_flex().id(`pipeline-${prefix}model-list`).size_full().p(4).overflow_y_scrollbar().children(rows)));
+    body.child(this.label(first ? `Enter picks ${first.name}.` : searching ? `Enter or Save uses “${typed}” as typed.`
+      : "Type to narrow the list, or type a model that isn't listed.", t));
+    body.child(this.heading(same ? "Effort for this task" : "Effort"));
+    if (options.exact && !known && !(tune.model ?? same?.model)) body.child(this.label(`Pick a model to choose its effort: ${name} sets effort per model.`, t));
+    else body.child(h_flex().gap(6).flex_wrap()
+      .child(chip("effort-default", unset, !tune.effort, { effort: null }, unsetHint))
+      .children(efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
   }
   screen(lines, t, caption) {
     return v_flex().w_full().gap(4)
@@ -2126,7 +2188,7 @@ export default class Pipeline extends View {
     if (!state.live) return;
     body.child(div().h(1).bg(t.border));
     if (!state.planner?.on) {
-      body.child(this.label("The planner agent is off: tasks start by Start first, then priority, then arrival. With Plan with an agent on, Claude Code or Codex orders the queue and says which task waits for which.", t));
+      body.child(this.label("The planner agent is off: tasks start by Start first, then priority, then arrival. With Plan with an agent on, the AI helper orders the queue and says which task waits for which.", t));
       body.child(this.button("planner-settings", "Open Settings", cx => this.open("settings", cx, "planner"), t, { icon: "settings" }));
       if (!planning) return;
     }
@@ -2168,37 +2230,21 @@ export default class Pipeline extends View {
         .font_family(settings().font_family ?? "JetBrains Mono").children(planning.prompt.split("\n").map(line => div().whitespace_normal().min_h(15).child(line || " "))));
     }
   }
-  helperSettings(body, state, t) {
-    const installed = Object.keys(PLANNERS).filter(key => this.agentChoices.some(agent => agent.key === key));
-    const agent = helperAgent(state), name = PLANNERS[agent], tune = helperTuning(state);
-    body.child(this.label("Choose for me, on a new pipeline's setup card, asks it to read the repository and pick the check command, Try it and delivery. It can only read, and it is separate from the planner, so a small, quick model fits.", t));
-    if (!installed.length) { body.child(this.label("Needs Claude Code or Codex installed on the project's machine.", t)); return; }
-    const chip = (id, text, selected, change, hint) => this.button(`helper-${id}`, text, cx => this.act({ type: "helperSetup", ...change }, cx), t, { small: true, selected, hint });
-    if (installed.length > 1) body.child(h_flex().gap(6).flex_wrap().children(installed.map(key => chip(`agent-${key}`, PLANNERS[key], agent === key, { agent: key }, `Help with ${PLANNERS[key]}`))));
-    const models = agent === "codex" ? this.codexModels.map(model => model.slug) : AGENT_OPTIONS.claude.models;
-    const efforts = agent === "codex" && this.codexModels.length ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : AGENT_OPTIONS[agent].efforts;
-    body.child(h_flex().gap(6).flex_wrap()
-      .when(agent === "codex", el => el.child(chip("model-default", "Default", !tune.model, { model: null }, `${name}'s own default model`)))
-      .children(models.map(model => chip(`model-${model}`, model, tune.model === model, { model }))));
-    body.child(h_flex().gap(6).flex_wrap().child(chip("effort-default", "Default effort", !tune.effort, { effort: null }, `${name}'s own default effort`))
-      .children(efforts.map(effort => chip(`effort-${effort}`, effort, tune.effort === effort, { effort }))));
-  }
   plannerSettings(body, state, t) {
     const setup = { on: false, model: null, effort: null, ...state.planner }, installed = Object.keys(PLANNERS).filter(key => this.agentChoices.some(agent => agent.key === key));
     const agent = plannerAgent(state), name = PLANNERS[agent];
-    body.child(this.switchRow("planner", "Plan with an agent", installed.length ? `${name} reads the queue, ticket blockers and the repository, orders the tasks and says which must wait for which`
-      : "Needs Claude Code or Codex installed on the project's machine", setup.on, cx => this.act({ type: "plannerSetup", on: !setup.on }, cx), t, !installed.length && !setup.on));
+    body.child(this.label("One agent does Pipeline's own reading, and it can only read. Choose for me, on a new pipeline's setup card, asks it to pick the check command, Try it and delivery. With Plan with an agent on, it also orders the queue.", t));
+    const plan = () => body.child(this.switchRow("planner", "Plan with an agent", installed.length ? `${name} reads the queue, ticket blockers and the repository, orders the tasks and says which must wait for which`
+      : "Needs Claude Code, Codex or OpenCode installed on the project's machine", setup.on, cx => this.act({ type: "plannerSetup", on: !setup.on }, cx), t, !installed.length && !setup.on));
+    if (!installed.length) { body.child(this.label("Needs Claude Code, Codex or OpenCode installed on the project's machine.", t)); plan(); return; }
+    const set = (change, cx) => this.act({ type: "plannerSetup", ...change }, cx);
+    if (installed.length > 1 || !installed.includes(agent)) body.child(h_flex().gap(6).flex_wrap().children(installed.map(key => this.button(`planner-agent-${key}`, PLANNERS[key],
+      cx => { set({ agent: key }, cx); this.plannerModelInput.set_value(this.state().planner?.model ?? ""); }, t, { small: true, selected: agent === key, hint: `Use ${PLANNERS[key]}` }))));
+    this.modelAndEffort(body, t, { prefix: "planner-", key: agent, name, tune: plannerTuning(state), input: this.plannerModelInput, set });
+    plan();
     if (!setup.on) return;
-    const chip = (id, text, selected, change, hint) => this.button(`planner-${id}`, text, cx => this.act({ type: "plannerSetup", ...change }, cx), t, { small: true, selected, hint });
-    if (installed.length > 1) body.child(h_flex().gap(6).flex_wrap().children(installed.map(key => chip(`agent-${key}`, PLANNERS[key], agent === key, { agent: key }, `Plan with ${PLANNERS[key]}`))));
-    const models = agent === "codex" ? this.codexModels.map(model => model.slug) : AGENT_OPTIONS.claude.models;
-    const efforts = agent === "codex" && this.codexModels.length ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : AGENT_OPTIONS[agent].efforts;
-    body.child(h_flex().gap(6).flex_wrap().child(chip("model-default", "Default", !setup.model, { model: null }, `${name}'s own default model`))
-      .children(models.map(model => chip(`model-${model}`, model, setup.model === model, { model }))));
-    body.child(h_flex().gap(6).flex_wrap().child(chip("effort-default", "Default effort", !setup.effort, { effort: null }, `${name}'s own default effort`))
-      .children(efforts.map(effort => chip(`effort-${effort}`, effort, setup.effort === effort, { effort }))));
     body.child(this.button("planner-open", state.planning ? "See what the planner did" : "Open the planner", cx => this.open("planner", cx), t, { icon: "eye" }));
-    body.child(this.label("It runs whenever the queue changes, can only read, and new agents wait for its plan. Pipeline still keeps the rules: limits, waits you set, no circles. Start first and Start anyway still win.", t));
+    body.child(this.label("It runs whenever the queue changes, and new agents wait for its plan. Pipeline still keeps the rules: limits, waits you set, no circles. Start first and Start anyway still win.", t));
   }
   firstButton(task, t) {
     return this.button(`first-${task.id}`, task.rank ? "Starts first" : "Start first", cx => this.act({ type: "first", id: task.id }, cx), t,
@@ -2207,8 +2253,14 @@ export default class Pipeline extends View {
   taskTune(body, state, task, t) {
     const key = this.agentKey(state), options = AGENT_OPTIONS[key];
     if (!options) return;
-    const own = task.tune ?? {}, models = key === "codex" ? this.codexModels.map(model => model.slug) : options.models;
-    const efforts = key === "codex" && this.codexModels.length ? [...new Set(this.codexModels.flatMap(model => model.efforts))] : options.efforts;
+    const own = task.tune ?? {}, listed = this.listedModels(key), models = listed.map(model => model.slug);
+    if (listed.length > MODEL_CHIPS) {
+      this.modelAndEffort(body, t, { prefix: "task-", key, name: this.agentName(state), tune: { model: own.model ?? null, effort: own.effort ?? null }, input: this.taskModelInput,
+        same: tuningFor(state, key), set: (change, cx) => this.act({ type: "tuneTask", id: task.id, key, ...change }, cx) });
+      body.child(this.label(`Starts ${this.agentName(state)} with ${tuningLabel(taskTuning(state, task, key)) || "its own default model and effort"}.`, t));
+      return;
+    }
+    const efforts = listed.length ? [...new Set(listed.flatMap(model => model.efforts))] : options.efforts;
     const chip = (id, text, selected, change) => this.button(`${id}-${task.id}`, text, cx => this.act({ type: "tuneTask", id: task.id, key, ...change }, cx), t, { small: true, selected });
     body.child(this.heading("Model and effort for this task"));
     body.child(h_flex().gap(6).flex_wrap().child(chip("task-model-same", "As set", !own.model, { model: null }))
