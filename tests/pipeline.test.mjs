@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const source = await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8");
 const model = await import(`data:text/javascript,${encodeURIComponent(source)}`);
 globalThis.__pipelineLiveModel = model;
-const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+const liveSource = ((await readFile(new URL("../mods/pipeline/procedures.js", import.meta.url), "utf8")) + await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const live = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, SOURCES, newer, reduce, waitsFor, CHECK_FIXES, agentRun, tuningFor, tuningLabel } = globalThis.__pipelineLiveModel;\n${liveSource}`)}`);
 const { createPipeline, reduce, activeTasks, outstanding, waitingReason, migrate, progress, guessRepos, needsApproval, needsInput, VERSION } = model;
 const context = { id: "project", name: "Project", cwd: "/project", on: null };

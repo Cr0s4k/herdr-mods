@@ -1,6 +1,7 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
 import { STORE, MOVING, reduce, migrate, agentOpening } from "./pipeline-model.js";
-import { LiveRunner, prompt, openTry, loadProcedures } from "./pipeline-live.js";
+import { LiveRunner, prompt, openTry } from "./pipeline-live.js";
+import { loadProcedures } from "./procedures.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
 const watching = () => panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline";

@@ -4,6 +4,9 @@ import { appHome, spaces, panes, agents, focused, props, exec, hc, readTextFile,
 import { moveToPaneButton } from "./panel-actions.js";
 import { contextFor, issueKey, issueId, priorityName, statusName, assigneeName, projectName, statusColor, taskFor, targetsFor, startArgs, descriptionBlocks } from "./model.js";
 import { LAUNCHES, PENDING, worktrees, queueLaunch, updateLaunch, retryLaunch } from "./launches.js";
+import { loadProcedures } from "./procedures.js";
+
+loadProcedures(path => readTextFile(`${appHome()}/${path}`)).catch(() => null);
 
 const nameOf = path => path?.split(/[\\/]/).filter(Boolean).pop() || "Choose a working folder";
 

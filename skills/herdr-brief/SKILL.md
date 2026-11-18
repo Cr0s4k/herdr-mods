@@ -7,6 +7,8 @@ description: Leave a short, human-readable outcome in Herdr's Since you left pan
 
 Before the final reply for substantive work in Herdr, post a short note for the person returning to their project. Lead with what they can now do or what was fixed. If work is incomplete, say what remains and whether you need their answer.
 
+In a Herdr Pipeline task (your first message says Pipeline made the worktree), post no brief: the summary file Pipeline asked for is the report, and Pipeline tells the person when the task needs them.
+
 Write for the person, not the activity log:
 
 - Use a concrete title such as "Spaces can hide until tomorrow", rather than "Agent finished" or "Changes committed and pushed".

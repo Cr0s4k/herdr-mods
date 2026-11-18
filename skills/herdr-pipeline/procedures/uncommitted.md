@@ -1,0 +1,1 @@
+Pipeline is ready to deliver this task, but its worktree has uncommitted changes. If the task is done, commit everything that belongs to it and stop. If you're still working, finish first, then commit and stop.

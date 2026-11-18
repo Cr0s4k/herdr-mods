@@ -4,13 +4,14 @@ import test from "node:test";
 
 const contextSource = await readFile(new URL("../mods/skills/model.js", import.meta.url), "utf8");
 const context = await import("data:text/javascript," + encodeURIComponent(contextSource));
-const modelSource = (await readFile(new URL("../mods/linear/model.js", import.meta.url), "utf8")).replace(/^export \{ contextFor \}.*\n/, "");
+const modelSource = (await readFile(new URL("../mods/pipeline/procedures.js", import.meta.url), "utf8")) + (await readFile(new URL("../mods/linear/model.js", import.meta.url), "utf8")).replace(/^export \{ contextFor \}.*\n/, "").replace(/^import .*;\n/m, "");
 const model = await import("data:text/javascript," + encodeURIComponent(modelSource));
+await model.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
 const issue = { id: "PRO-31", uuid: "uuid", title: "Capture events", description: "Full **requirements**", url: "https://linear.app/work/issue/PRO-31", status: "Todo", project: "Office", relations: { blockedBy: [{ id: "PRO-30", title: "Setup" }] } };
 
 test("handoff includes full context, blockers and extra instructions", () => {
   const text = model.taskFor(issue, "  Use Python  ");
-  for (const value of ["PRO-31", issue.title, issue.url, issue.description, "PRO-30: Setup", "Use Python", "Do not change Linear status or assignee"]) assert.ok(text.includes(value));
+  for (const value of ["PRO-31", issue.title, issue.url, issue.description, "PRO-30: Setup", "Use Python", "Do not change its Linear status or assignee unless I ask"]) assert.ok(text.includes(value));
 });
 
 test("Linear disclosure blocks preserve surrounding Markdown and nested content", () => {
@@ -54,7 +55,7 @@ function native(id) {
 }
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.__linearNative = {
-  ...model, contextFor: context.contextFor, View: class {}, div: native, svg: native, h_flex: native, v_flex: native,
+  ...model, loadProcedures: async () => {}, contextFor: context.contextFor, View: class {}, div: native, svg: native, h_flex: native, v_flex: native,
   Button: { new: native }, Input: { new: native }, TextView: { markdown: native },
   v_virtual_list: (id, count, _height, key, render) => native(id).children(render({ start: 0, end: count })),
   VirtualListScrollHandle: { new: () => ({ scroll_to_item: (...args) => world.scrolls.push(args), release() {} }) },
@@ -128,7 +129,7 @@ test("Plane uses the shared task panel, local connection and project-specific ca
   assert.equal(creates[0].project, planeProject.id); assert.equal(creates[0].title, "Remote capture");
   assert.equal(creates[0].context.cwd, "/project"); assert.equal(view.capture, false);
   assert.match(model.taskFor(planeIssue), /Work on Plane ticket/);
-  assert.match(model.taskFor(planeIssue), /Do not change Plane status/);
+  assert.match(model.taskFor(planeIssue), /Do not change its Plane status or assignee unless I ask/);
 });
 
 test("unconfirmed Plane captures cannot be submitted again", async () => {

@@ -16,4 +16,6 @@ image, add a note, and send it back to you.
 - `herdr-show` writes to `~/.config/herdr-app/show/`, outside the workspace. In a sandbox (e.g.
   Codex) run it with escalated permissions from the start, or rerun it that way when it fails
   with "Operation not permitted". Don't fall back to showing the image inline.
+- In a Herdr Pipeline task, the before and after screenshots its first message asks for go in
+  the folder it names, not here: Pipeline lists them on the task and opens them in Show.
 - Only PNG/JPEG. Post the image file you made; don't paste images inline instead.

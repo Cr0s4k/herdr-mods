@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 
 const model = await import(`data:text/javascript,${encodeURIComponent(await readFile(new URL("../mods/pipeline/pipeline-model.js", import.meta.url), "utf8"))}`);
 globalThis.__pipelineLiveModel = model;
-const liveFile = await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8");
+const liveFile = (await readFile(new URL("../mods/pipeline/procedures.js", import.meta.url), "utf8")) + await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8");
 const liveImports = liveFile.match(/^import \{([^}]*)\} from "\.\/pipeline-model\.js";/m)[1];
 const live = await import(`data:text/javascript,${encodeURIComponent(`const {${liveImports}} = globalThis.__pipelineLiveModel;\n${liveFile.replace(/^import .*;\n/gm, "")}`)}`);
 await live.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
@@ -2195,16 +2195,26 @@ test("an implementer takes the code from the task's agent: its command, the firs
   assert.doesNotMatch(live.prompt(row(state, "T-2"), ws, "merge", extras["T-2"]), /implementation/);
 });
 
-test("every procedure is a file of the herdr-pipeline skill, and the first message fills each placeholder", async () => {
-  const names = (await readdir(new URL("../skills/herdr-pipeline/procedures/", import.meta.url))).map(name => name.replace(/\.md$/, "")).sort();
+test("every procedure is a file of the herdr-pipeline skill, listed in its table with its placeholders, and shown in examples.md", async () => {
+  const skill = new URL("../skills/herdr-pipeline/", import.meta.url);
+  const names = (await readdir(new URL("procedures/", skill))).map(name => name.replace(/\.md$/, "")).sort();
   assert.deepEqual(names, [...live.PROCEDURES].sort());
-  const task = { id: "T-1", title: "Restyle the login", ticket: { provider: "linear", key: "ENG-1", url: "https://linear.app/x/ENG-1" } };
-  const ws = [{ name: "shop", cwd: "/wt/shop", branch: "t-1", target: "main", base: "a".repeat(40) }, { name: "docs", cwd: "/wt/docs", branch: "t-1", target: "main", base: "b".repeat(40) }];
-  const extras = { evidence: true, tryout: "npm run dev", port: 4242, implementer: { label: "Codex", command: "codex exec \"$(cat brief)\"" } };
-  for (const text of [live.prompt(task, ws, "pr", extras), live.prompt(task, ws[0], "merge", {}), live.evidenceRequest(task, ws[0], extras), live.procedure("demo-task")]) assert.doesNotMatch(text, /\{\{|\}\}/);
-  assert.match(live.prompt(task, ws, "pr", extras), /\n {2}codex exec "\$\(cat brief\)"\n/, "the command arrives as written");
-  assert.doesNotMatch(live.evidenceRequest(task, ws[0], extras), /\n/, "a later request is one line");
+  const table = (await readFile(new URL("SKILL.md", skill), "utf8")).split("\n").filter(line => line.startsWith("| "));
+  for (const name of names) {
+    const row = table.find(line => line.startsWith(`| ${name}.md |`));
+    assert.ok(row, `${name}.md has a row in SKILL.md`);
+    const used = [...(await readFile(new URL(`procedures/${name}.md`, skill), "utf8")).matchAll(/\{\{([\w-]+)\}\}/g)].map(match => match[1]);
+    for (const key of used) assert.ok(row.includes(`\`${key}\``), `SKILL.md says what fills ${key} in ${name}.md`);
+  }
+  const { examples } = await import("../skills/herdr-pipeline/preview.mjs");
+  assert.equal(await readFile(new URL("examples.md", skill), "utf8"), examples(), "run: node skills/herdr-pipeline/preview.mjs --write");
+  assert.doesNotMatch(examples(), /\{\{|\}\}/, "every placeholder is filled");
+
+  const task = { id: "T-1", title: "Restyle the login" }, ws = { name: "shop", cwd: "/wt/shop", branch: "t-1", target: "main", base: "a".repeat(40) };
+  assert.match(live.prompt(task, ws, "merge", { implementer: { label: "Codex", command: "codex exec \"$(cat brief)\"" } }), /\n {2}codex exec "\$\(cat brief\)"\n/, "the command arrives as written");
+  assert.match(live.fixRequest("npm test", "saw {{file}} and $1"), /\nsaw \{\{file\}\} and \$1\n/, "output is pasted, never filled in");
+  assert.doesNotMatch(live.evidenceRequest(task, ws, {}), /\n/, "a later request is one line");
   await live.loadProcedures(async () => "");
-  assert.throws(() => live.prompt(task, ws[0], "merge", {}), /Reinstall the mods/);
+  assert.throws(() => live.prompt(task, ws, "merge", {}), /Reinstall the mods/);
   await live.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
 });

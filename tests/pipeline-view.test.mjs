@@ -7,7 +7,7 @@ const model = await import(`data:text/javascript,${encodeURIComponent(modelSourc
 const geometrySource = (await readFile(new URL("../mods/pipeline/geometry.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 globalThis.__pipelineGeometry = { ACTIVE: model.ACTIVE, queueOrder: model.queueOrder };
 const geometry = await import(`data:text/javascript,${encodeURIComponent(`const { ACTIVE, queueOrder } = globalThis.__pipelineGeometry;\n${geometrySource}`)}`);
-const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8"));
+const liveSource = (await readFile(new URL("../mods/pipeline/procedures.js", import.meta.url), "utf8")) + (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8"));
 globalThis.__pipelineViewModel = model;
 const live = await import(`data:text/javascript,${encodeURIComponent(`const {${liveSource.match(/^import \{([^}]*)\} from "\.\/pipeline-model\.js";/m)[1]}} = globalThis.__pipelineViewModel;\n${liveSource.replace(/^import .*;\n/gm, "")}`)}`);
 await live.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
@@ -1606,7 +1606,7 @@ test("a queued task takes dropped or pasted images, copies them into Herdr's fol
   assert.equal(calls.at(-1)[1][0], "/home/pipeline-images/abc", "later images join the first one's folder");
   assert.equal(find(view.render(cx), "image-note-T-1"), undefined);
   const live = await import("../mods/pipeline/pipeline-live.js");
-  await live.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
+  await (await import("../mods/pipeline/procedures.js")).loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
   assert.match(live.prompt(row(view, "T-1"), [{ name: "shop", cwd: "/wt", branch: "b", target: "main", base: "a".repeat(40) }], "merge"),
     /The person attached images to this task\. Open them before you start:\n- \/home\/pipeline-images\/abc\/mock\.png\n- \/home\/pipeline-images\/abc\/two\.jpg\n/);
   click(view, "image-remove-T-1-0");
