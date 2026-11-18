@@ -3,7 +3,7 @@ import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Swi
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
 import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest, loadProcedures, procedure } from "./pipeline-live.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
@@ -42,14 +42,8 @@ const ADDRESS = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::\d
 export const tryAddress = screen => String(screen ?? "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").match(ADDRESS)?.at(-1)?.replace("0.0.0.0", "localhost").replace(/[.,]$/, "") ?? null;
 // Whether the repository already tells agents how to run and show it.
 const DEMO_SKILL = 'ls .claude/skills/*/SKILL.md .agents/skills/*/SKILL.md 2>/dev/null | grep -qiE "/(demo|run|preview|screenshots?|try)[^/]*/SKILL.md" || grep -qiE "screenshot" AGENTS.md CLAUDE.md 2>/dev/null';
-const DEMO_TASK = ["Write a skill that tells agents how to run and show this project",
-  ["Agents here are asked for before and after screenshots of what they change, and each one works out by itself how to start the project. Write that down once.",
-    "Add a project skill at .claude/skills/demo/SKILL.md (and link it from AGENTS.md or CLAUDE.md if the repository has one) that says:",
-    "- how to start the project locally from a fresh Git worktree: env files, dependencies, database or other services, and the command. When PIPELINE_PORT is set, use it as the port so several branches can run at once; say how.",
-    "- how to sign in locally: a seeded user or the way to make one. No real credentials.",
-    "- which screens matter and how to reach them, and how to take a screenshot of one with the tools this repository already has.",
-    "- how to stop everything it started.",
-    "Follow the skill yourself once, from this worktree, and fix what doesn't work before you finish. Keep it short: steps and commands, no background."].join("\n")];
+const DEMO_TITLE = "Write a skill that tells agents how to run and show this project";
+loadProcedures(path => readTextFile(`${appHome()}/${path}`)).catch(() => null);
 const GITHUB = "git remote get-url origin 2>/dev/null | grep -q github.com && command -v gh >/dev/null";
 // Ctrl-C stops the command but not the tab, which drops into the person's shell in the worktree.
 const TICKET_NAMES = "git log -300 --format='%s %D' 2>/dev/null; git branch -a --format='%(refname:short)' 2>/dev/null";
@@ -486,18 +480,19 @@ export default class Pipeline extends View {
   askEvidence(task, cx) {
     const state = this.state(), ws = task && workspacesOf(task)[0];
     if (!task?.terminal || !ws) return;
+    const request = evidenceRequest(task, ws, { tryout: state.tryout ?? null, port: taskPort(task) });
     this.asked = { id: task.id, pending: true }; cx.notify();
     cx.spawn(async cx => {
-      const sent = await hc(["send", task.terminal, evidenceRequest(task, ws, { tryout: state.tryout ?? null, port: taskPort(task) })]).then(result => result.code === 0, () => false);
+      const sent = await hc(["send", task.terminal, request]).then(result => result.code === 0, () => false);
       this.asked = { id: task.id, sent };
       if (!sent) this.focusAgent(task);
       cx.notify();
     });
   }
   queueDemoSkill(cx) {
-    const id = `T-${(this.state().created ?? 0) + 1}`;
-    this.act({ type: "create", title: DEMO_TASK[0] }, cx);
-    this.act({ type: "describe", id, text: DEMO_TASK[1] }, cx);
+    const id = `T-${(this.state().created ?? 0) + 1}`, text = procedure("demo-task");
+    this.act({ type: "create", title: DEMO_TITLE }, cx);
+    this.act({ type: "describe", id, text }, cx);
   }
   showEvidence(task, file) {
     exec("herdr-show", [file, "--title", `${task.id} · ${file.split("/").pop().replace(/\.[a-z]+$/i, "")}`]).catch(() => null);
@@ -1285,7 +1280,7 @@ export default class Pipeline extends View {
       .when(Boolean(picked?.reason), el => el.child(div().pl(108).pb(4).text_size(11).line_height(1.4).text_color(t.muted).child(picked.reason)));
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
     const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], readonly = tracker === "linear" && this.linearWrite === false && Boolean(updatesLabel(moves)), guess = guessUpdates(this.updateStates[tracker].states), watchGuess = guessWatch(this.updateStates[tracker].states);
-    const demoQueued = state.tasks.some(task => task.title === DEMO_TASK[0]), prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const demoQueued = state.tasks.some(task => task.title === DEMO_TITLE), prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
     const rows = [
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
         canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "planner")]),

@@ -120,6 +120,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/changes-modal/sync.js` | Reads the branch's ahead/behind counts, shared with the status bar and review pane through symlinks |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
+| `skills/herdr-pipeline/` | the procedures Pipeline pastes into its agents' first message (summary, screenshots, pull request description, implementer), one Markdown file each; `mods/pipeline/procedures` is a symlink to them |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
 | `upgrade.sh` | merges a new Herdr version's originals into the clones (see Upgrading with Herdr) |
 | `video/` | The README's video: scripts that record a real Pipeline run and the other mods on a throwaway repository, and the Hyperframes composition that turns them into `docs/herdr-mods.mp4` |

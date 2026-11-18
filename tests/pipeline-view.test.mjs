@@ -10,6 +10,7 @@ const geometry = await import(`data:text/javascript,${encodeURIComponent(`const 
 const liveSource = (await readFile(new URL("../mods/pipeline/pipeline-live.js", import.meta.url), "utf8"));
 globalThis.__pipelineViewModel = model;
 const live = await import(`data:text/javascript,${encodeURIComponent(`const {${liveSource.match(/^import \{([^}]*)\} from "\.\/pipeline-model\.js";/m)[1]}} = globalThis.__pipelineViewModel;\n${liveSource.replace(/^import .*;\n/gm, "")}`)}`);
+await live.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
 const world = { data: {}, storage: new Map(), hc: [], runs: [], planeCalls: [], overlays: [] };
 function native() {
   const data = { nodes: [], styles: {}, handlers: {} };
@@ -36,7 +37,7 @@ globalThis.__pipelineView = {
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
-  setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry, evidenceRequest: live.evidenceRequest,
+  setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry, evidenceRequest: live.evidenceRequest, loadProcedures: async () => {}, procedure: live.procedure,
   rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
@@ -1605,6 +1606,7 @@ test("a queued task takes dropped or pasted images, copies them into Herdr's fol
   assert.equal(calls.at(-1)[1][0], "/home/pipeline-images/abc", "later images join the first one's folder");
   assert.equal(find(view.render(cx), "image-note-T-1"), undefined);
   const live = await import("../mods/pipeline/pipeline-live.js");
+  await live.loadProcedures(path => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
   assert.match(live.prompt(row(view, "T-1"), [{ name: "shop", cwd: "/wt", branch: "b", target: "main", base: "a".repeat(40) }], "merge"),
     /The person attached images to this task\. Open them before you start:\n- \/home\/pipeline-images\/abc\/mock\.png\n- \/home\/pipeline-images\/abc\/two\.jpg\n/);
   click(view, "image-remove-T-1-0");

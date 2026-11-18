@@ -1,0 +1,1 @@
+Then present them on one private page, published with Claude Code's Artifact tool: each before and after pair side by side with a line on what changed{{tryout}}. Embed the images in the page so it stands alone, and write only its link into `walkthrough.url` in that folder. Without an Artifact tool, leave the page out and say so on the summary's Checked line.
