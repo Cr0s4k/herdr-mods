@@ -6,7 +6,7 @@ each of the other mods, all on a throwaway repository.
 
 ## Output
 - Composition directory: `video/composition/`
-- Rendered video: `docs/herdr-mods.mp4`, and `docs/herdr-mods.gif` for the README
+- Rendered video: `docs/herdr-mods.mp4`, uploaded to GitHub and embedded in the README
 - Format: landscape, 1920x1080
 - Duration: 30.4 seconds
 

@@ -1,6 +1,6 @@
 ---
 name: herdr-mods-video
-description: Re-record and re-render the video at the top of the herdr-mods README (docs/herdr-mods.mp4 and docs/herdr-mods.gif): a real Pipeline run, then Show, Changes, Files, Since you left and Watchers, all on a throwaway repository.
+description: Re-record and re-render the video at the top of the herdr-mods README (docs/herdr-mods.mp4): a real Pipeline run, then Show, Changes, Files, Since you left and Watchers, all on a throwaway repository.
 disable-model-invocation: true
 ---
 
@@ -24,7 +24,7 @@ repository's root.
 | `video/capture/make-clip.py` | Retimes a Pipeline run into `video/composition/assets/footage.mp4` |
 | `video/capture/make-mods-clip.py` | Retimes a mods run into `video/composition/assets/mods.mp4` |
 | `video/composition/` | The Hyperframes project: `index.html` is the whole film |
-| `video/render.sh` | Checks, renders, and writes `docs/herdr-mods.mp4` and `docs/herdr-mods.gif` |
+| `video/render.sh` | Checks, renders, and writes `docs/herdr-mods.mp4` |
 | `video/brag-plan.md`, `video/composition-brief.md` | The storyboard and the brief the film follows |
 
 Decide first what you need. Only the words, timing, music or look of the film changed: skip to
@@ -189,7 +189,7 @@ UI text in the zoomed shots should be readable.
 
 It runs the check again, renders, puts the poster (the film at 9.6 seconds, the review column;
 `POSTER_AT=<seconds>` picks another settled moment) in as frame 0, and writes `docs/herdr-mods.mp4`
-(with sound) and `docs/herdr-mods.gif` (silent, 960 wide, for the README). Rendering takes a few
+(with sound). Frame 0 is what the README's player shows before it plays. Rendering takes a few
 minutes.
 
 ## 6. Verify and finish
@@ -197,12 +197,16 @@ minutes.
 - Extract a few frames from `docs/herdr-mods.mp4` with `ffmpeg -ss <t> -i docs/herdr-mods.mp4
   -frames:v 1 out.jpg` and read them: the opening words, a zoomed shot, the count and the name.
 - `ffprobe docs/herdr-mods.mp4` should show a video and an audio stream and a length near 30.4
-  seconds. Keep the GIF under about 10 MB; if it is larger, lower `fps` or the width in
-  `video/render.sh`.
-- The README shows `docs/herdr-mods.gif` and links to `docs/herdr-mods.mp4`; update its alt text if
-  what the film shows changed.
+  seconds.
+- GitHub plays videos only from its own attachments, never from files in the repository, so the
+  README embeds an uploaded copy: a bare `https://github.com/user-attachments/assets/…` line
+  under the introduction. After a new render, the user uploads `docs/herdr-mods.mp4` (drag it
+  into a new issue's description on github.com, copy the link that appears, close the page
+  without submitting) and you replace that line with the new link. The repository is private, so
+  this needs a browser signed in to GitHub; ask the user rather than signing in. Keep the caption
+  under it accurate if what the film shows changed.
 - The music is "Happy Beats / Business Moves Vol. 10" by Sascha Ende, ende.app, CC BY 4.0; the
   credit in `NOTICE` must stay. The sound effects are Kenney's, CC0.
 - Delete the run folders (`/tmp/herdr-mods-video`, `/tmp/herdr-mods-video-mods`): they hold a few
   hundred megabytes of frames.
-- Commit `video/`, `docs/herdr-mods.*` and the README only when the user asks.
+- Commit `video/`, `docs/herdr-mods.mp4` and the README only when the user asks.

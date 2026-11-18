@@ -11,7 +11,7 @@ the mods you like.
 
 https://github.com/user-attachments/assets/1c97a315-838d-42fa-90b8-b539f15e33da
 
-Real runs, sped up, on a throwaway repository: Pipeline first, then a few seconds of each panel. Click it for the version with sound.
+Real runs, sped up, on a throwaway repository: Pipeline first, then a few seconds of each panel.
 
 ## What you get
 
@@ -122,7 +122,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
 | `upgrade.sh` | merges a new Herdr version's originals into the clones (see Upgrading with Herdr) |
-| `video/` | The README's video: scripts that record a real Pipeline run and the other mods on a throwaway repository, and the Hyperframes composition that turns them into `docs/herdr-mods.mp4` and `docs/herdr-mods.gif` |
+| `video/` | The README's video: scripts that record a real Pipeline run and the other mods on a throwaway repository, and the Hyperframes composition that turns them into `docs/herdr-mods.mp4` |
 | `skills/herdr-mods-video/` | `/herdr-mods-video`: re-records and re-renders that video |
 | `skills/herdr-mods-upgrade/` | `/herdr-mods-upgrade`: runs `upgrade.sh`, resolves conflicts, checks the result in Herdr |
 | `upstream` branch | Herdr's originals of every clone, one commit per Herdr version |
