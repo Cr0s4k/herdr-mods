@@ -9,7 +9,7 @@ follows the newest Herdr release (0.1.16 at the time of writing) and is used dai
 only; read [Things to know](#things-to-know) before installing. Take the whole thing, or copy
 the mods you like.
 
-[![The mods at work on a throwaway repository: Pipeline queues four tasks, plans them, and merges them after checks and review; then Show, Changes, Files, Since you left and Watchers, one after the other](docs/herdr-mods.gif)](docs/herdr-mods.mp4)
+https://github.com/user-attachments/assets/1c97a315-838d-42fa-90b8-b539f15e33da
 
 Real runs, sped up, on a throwaway repository: Pipeline first, then a few seconds of each panel. Click it for the version with sound.
 
