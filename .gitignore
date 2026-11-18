@@ -3,3 +3,5 @@ jsconfig.json
 .DS_Store
 .impeccable/review/
 __pycache__/
+video/composition/.hyperframes/
+video/composition/node_modules/

@@ -9,7 +9,9 @@ follows the newest Herdr release (0.1.16 at the time of writing) and is used dai
 only; read [Things to know](#things-to-know) before installing. Take the whole thing, or copy
 the mods you like.
 
-![Pipeline in demo mode: queued tasks on the left, the planner at the centre, one task waiting for an answer and two ready for review](docs/pipeline-demo.png)
+[![A real Pipeline run: four tasks join the queue, a planner orders them, three agents work in their own worktrees, checks run, and each task is reviewed and merged](docs/pipeline.gif)](docs/pipeline.mp4)
+
+A real run, sped up: four tasks on a throwaway repository. Click it for the version with sound.
 
 ## What you get
 
@@ -120,6 +122,8 @@ the working notes agents follow in this repository; they are useful to people to
 | `layouts/main-custom.json` | Herdr's default layout, cloned, using the mods above (`files-modal` and `changes-modal` replace `files` and `changes`) |
 | `skills/herdr-show/` | tells Claude and Codex to post images with `herdr-show` and how to handle send-backs |
 | `upgrade.sh` | merges a new Herdr version's originals into the clones (see Upgrading with Herdr) |
+| `video/` | The README's video: scripts that record a real Pipeline run on a throwaway repository, and the Hyperframes composition that turns it into `docs/pipeline.mp4` and `docs/pipeline.gif` |
+| `skills/herdr-mods-video/` | `/herdr-mods-video`: re-records and re-renders that video |
 | `skills/herdr-mods-upgrade/` | `/herdr-mods-upgrade`: runs `upgrade.sh`, resolves conflicts, checks the result in Herdr |
 | `upstream` branch | Herdr's originals of every clone, one commit per Herdr version |
 

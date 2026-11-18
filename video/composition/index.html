@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ground: #0f1018;
+        --canvas: #181926;
+        --ink: #cdd6f4;
+        --muted: #a6adc8;
+        --accent: #89b4fa;
+        --done: #a6e3a1;
+        --font-display: "Inter", sans-serif;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--ground); }
+      #root { position: relative; width: 1920px; height: 1080px; font-family: var(--font-display); color: var(--ink); background: var(--ground); }
+      .clip { position: absolute; }
+      #glow { left: 260px; top: -40px; width: 1400px; height: 1000px; border-radius: 50%; opacity: 0.5;
+        background: radial-gradient(closest-side, rgba(137, 180, 250, 0.20), rgba(137, 180, 250, 0)); }
+      #stage { position: absolute; left: 160px; top: 46px; width: 1600px; height: 881px; overflow: hidden; border-radius: 14px;
+        background: var(--canvas); border: 1px solid rgba(205, 214, 244, 0.14); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55); }
+      #camera { position: absolute; left: 0; top: 0; width: 1600px; height: 881px; }
+      #still, #footage { position: absolute; left: 0; top: 0; width: 1600px; height: 881px; display: block; }
+      #veil { left: 0; top: 0; width: 1920px; height: 1080px; background: var(--ground); opacity: 0.8; }
+      .hook { left: 0; width: 1920px; text-align: center; font-weight: 650; letter-spacing: -0.035em; opacity: 0; }
+      #hook-1 { top: 392px; font-size: 124px; color: var(--ink); }
+      #hook-2 { top: 548px; font-size: 124px; color: var(--accent); }
+      .caption { left: 0; top: 962px; width: 1920px; text-align: center; font-size: 46px; font-weight: 600;
+        letter-spacing: -0.02em; color: var(--ink); opacity: 0; }
+      .caption b { font-weight: 600; color: var(--accent); }
+      #caption-6 b { color: var(--done); }
+      #curtain { left: 0; top: 0; width: 1920px; height: 1080px; background: var(--ground); opacity: 0; }
+      #name { left: 0; top: 388px; width: 1920px; text-align: center; font-size: 148px; font-weight: 680; letter-spacing: -0.045em; opacity: 0; }
+      #tagline { left: 0; top: 584px; width: 1920px; text-align: center; font-size: 44px; font-weight: 500; color: var(--muted); opacity: 0; }
+      #mods { left: 0; top: 694px; width: 1920px; text-align: center; font-size: 32px; font-weight: 500; color: var(--accent); letter-spacing: 0.01em; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="21.8" data-width="1920" data-height="1080">
+      <div id="glow" class="clip" data-start="0" data-duration="21.8" data-track-index="0"></div>
+
+      <div id="stage">
+        <div id="camera" data-layout-allow-overflow>
+          <img id="still" src="assets/footage.jpg" alt="" />
+          <video id="footage" class="clip" muted playsinline src="assets/footage.mp4" data-start="2.4" data-duration="15.6" data-media-start="0" data-track-index="2"></video>
+        </div>
+      </div>
+
+      <div id="veil" class="clip" data-start="0" data-duration="3" data-track-index="3"></div>
+      <div id="hook-1" class="clip hook" data-start="0" data-duration="2.7" data-track-index="4">Four tasks.</div>
+      <div id="hook-2" class="clip hook" data-start="0" data-duration="2.7" data-track-index="5">Zero babysitting.</div>
+
+      <div id="caption-1" class="clip caption" data-start="2.5" data-duration="3.1" data-track-index="6">Queue the work.</div>
+      <div id="caption-2" class="clip caption" data-start="5.6" data-duration="2.2" data-track-index="6">A <b>planner</b> orders it.</div>
+      <div id="caption-3" class="clip caption" data-start="7.8" data-duration="3.2" data-track-index="6">Each task gets its own <b>agent, branch and worktree</b>.</div>
+      <div id="caption-4" class="clip caption" data-start="11" data-duration="2.6" data-track-index="6">Checks run <b>before</b> review.</div>
+      <div id="caption-5" class="clip caption" data-start="13.6" data-duration="2.7" data-track-index="6">You approve. <b>It merges.</b></div>
+      <div id="caption-6" class="clip caption" data-start="16.3" data-duration="1.9" data-track-index="6"><b>4 tasks merged.</b></div>
+
+      <div id="curtain" class="clip" data-start="17.6" data-duration="4.2" data-track-index="7"></div>
+      <div id="name" class="clip" data-start="18.3" data-duration="3.5" data-track-index="8">herdr-mods</div>
+      <div id="tagline" class="clip" data-start="18.3" data-duration="3.5" data-track-index="9">Mods for Herdr</div>
+      <div id="mods" class="clip" data-start="18.3" data-duration="3.5" data-track-index="10">Pipeline · Show · Tasks · Watchers · Loops · Skills</div>
+
+      <audio id="music" src="assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3" data-start="0" data-duration="21.8" data-volume="0.42" data-fade-in="0.3" data-fade-out="1.8" data-track-index="11"></audio>
+      <audio id="sfx-land" src="assets/sfx/impactSoft_medium_001.ogg" data-start="2.4" data-duration="0.18" data-volume="0.5" data-track-index="12"></audio>
+      <audio id="sfx-card-1" src="assets/sfx/card-slide-1.ogg" data-start="3.01" data-duration="0.4" data-volume="0.3" data-track-index="13"></audio>
+      <audio id="sfx-card-2" src="assets/sfx/card-slide-1.ogg" data-start="3.55" data-duration="0.4" data-volume="0.3" data-track-index="13"></audio>
+      <audio id="sfx-card-3" src="assets/sfx/card-slide-1.ogg" data-start="4.1" data-duration="0.4" data-volume="0.3" data-track-index="13"></audio>
+      <audio id="sfx-card-4" src="assets/sfx/card-slide-1.ogg" data-start="4.64" data-duration="0.4" data-volume="0.3" data-track-index="13"></audio>
+      <audio id="sfx-count" src="assets/sfx/impactBell_heavy_000.ogg" data-start="16.38" data-duration="1.4" data-volume="0.32" data-track-index="14"></audio>
+    </div>
+    <script>
+      const W = 1600, H = 881;
+      const tl = gsap.timeline({ paused: true });
+
+      // Where the camera sits: scale, the point of the footage to look at, and where on the stage to put it (all 0..1).
+      const look = (scale, fx, fy, tx = 0.5, ty = 0.5) => {
+        const clamp = (value, size) => Math.max(-size * (scale - 1) / 2, Math.min(size * (scale - 1) / 2, value));
+        return { scale, x: clamp(W * (tx - 0.5) - scale * W * (fx - 0.5), W), y: clamp(H * (ty - 0.5) - scale * H * (fy - 0.5), H) };
+      };
+      const QUEUE = look(2.1, 0.1, 0.2, 0.22, 0.42), PLANNER = look(2.1, 0.33, 0.5), SLOTS = look(1.75, 0.4, 0.52),
+        REVIEW = look(2, 0.9, 0.24, 0.72, 0.4), RIGHT = look(1.4, 0.7, 0.4), WIDE = look(1, 0.5, 0.5);
+
+      tl.set("#camera", QUEUE, 0);
+      tl.fromTo("#hook-1", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 0.15);
+      tl.fromTo("#hook-2", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 0.82); // beat-grid: 0.82s
+      tl.to(["#hook-1", "#hook-2"], { opacity: 0, y: -18, duration: 0.3, ease: "power2.in" }, 2.2);
+      tl.fromTo("#veil", { opacity: 0.8 }, { opacity: 0, duration: 0.45, ease: "power2.out" }, 2.3); // beat-locked: 2.46s
+      tl.fromTo("#stage", { scale: 0.955 }, { scale: 1, duration: 0.7, ease: "power3.out" }, 2.3);
+
+      tl.to("#camera", { ...PLANNER, duration: 1.1, ease: "power2.inOut" }, 5.2);
+      tl.to("#camera", { ...SLOTS, duration: 1.2, ease: "power2.inOut" }, 7.35); // beat-locked: 7.79s
+      tl.to("#camera", { ...REVIEW, duration: 1.3, ease: "power2.inOut" }, 10.7);
+      tl.to("#camera", { ...RIGHT, duration: 1.1, ease: "power2.inOut" }, 12.6);
+      tl.to("#camera", { ...WIDE, duration: 1.2, ease: "power2.inOut" }, 15.2);
+
+      [["#caption-1", 2.75, 5.3], ["#caption-2", 5.74, 7.5], ["#caption-3", 7.95, 10.7], ["#caption-4", 11.15, 13.3],
+        ["#caption-5", 13.75, 16.0], ["#caption-6", 16.38, 17.9]].forEach(([id, enter, leave]) => {
+        tl.fromTo(id, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out" }, enter);
+        tl.to(id, { opacity: 0, duration: 0.22, ease: "power1.in" }, leave);
+      });
+
+      tl.fromTo("#curtain", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 17.5);
+      tl.to("#stage", { scale: 0.93, duration: 0.8, ease: "power2.inOut" }, 17.6);
+      tl.fromTo("#name", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" }, 18.45); // beat-locked: 18.55s
+      tl.fromTo("#tagline", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 18.95);
+      tl.fromTo("#mods", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, 19.3);
+
+      // The glow breathes on the music's beat grid (110 BPM), a stand-in for audio-reactive data.
+      for (let beat = 0.27; beat < 21; beat += 1.091) {
+        tl.to("#glow", { opacity: 0.72, duration: 0.14, ease: "power1.out" }, beat);
+        tl.to("#glow", { opacity: 0.5, duration: 0.7, ease: "power1.inOut" }, beat + 0.14);
+      }
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

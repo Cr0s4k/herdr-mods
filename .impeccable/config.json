@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-11-18T09:37:03.376Z",
+        "reason": "agent decided: the video's captions sit beside recorded Herdr UI text in a neutral grotesque, and Inter matches it; Hyperframes also renders with fonts it can fetch, not system fonts"
+      }
+    ]
+  }
+}

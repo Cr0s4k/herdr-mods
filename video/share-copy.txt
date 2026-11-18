@@ -1,0 +1,1 @@
+Four tasks, three agents, one screen. Pipeline for Herdr gives every task its own agent, branch and worktree, runs the checks, and waits for you to merge. This is a real run, sped up.
