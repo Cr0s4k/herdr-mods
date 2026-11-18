@@ -32,12 +32,15 @@ export async function openRepository(context, platform) {
 
   // Open the browser on this computer, even when Git ran on a remote machine.
   // -n delivers --new-tab even when Firefox is already running; Firefox forwards it.
-  const command = platform === "macos" ? "open" : "firefox";
-  const args = platform === "macos" ? ["-na", "Firefox", "--args", "--new-tab", remote.url] : ["--new-tab", remote.url];
-  let opened;
-  try { opened = await exec(command, args); }
-  catch { throw new Error("Could not open Firefox. Make sure Firefox is installed, then try again."); }
-  if (opened.code !== 0) throw new Error("Could not open Firefox. Make sure Firefox is installed, then try again.");
+  const mac = platform === "macos";
+  const attempts = [
+    mac ? ["open", ["-na", "Firefox", "--args", "--new-tab", remote.url]] : ["firefox", ["--new-tab", remote.url]],
+    [mac ? "open" : "xdg-open", [remote.url]],
+  ];
+  for (const [command, args] of attempts) {
+    try { if ((await exec(command, args)).code === 0) return; } catch {}
+  }
+  throw new Error(`Could not open a browser. Open ${remote.url} yourself.`);
 }
 
 export class GitHubRepo {

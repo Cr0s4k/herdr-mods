@@ -35,6 +35,7 @@ globalThis.__spaceNewNative = {
     finally { world.renderingRows = false; }
   },
   home: () => "/home/user", props: () => world.props,
+  shared: key => world.shared?.[key], setShared: (key, value) => { (world.shared ??= {})[key] = value; },
   spaces: () => world.spaces, panes: () => world.panes, focused: () => world.focus,
   terminals: () => [], theme: () => new Proxy({}, { get: (_, key) => key }),
   closeOverlay: id => world.closed.push(id), openOverlay: spec => world.opened.push(spec),
@@ -72,7 +73,7 @@ async function load(path, names) {
 const { ReviewPanes } = await load("../mods/tabs-show/review.js", "spaces, panes, terminals, focused, run, notify");
 const { listProjects } = await load("../mods/space-new/projects.js", "exec");
 Object.assign(globalThis.__spaceNewNative, { ReviewPanes, listProjects });
-const { default: Picker } = await load("../mods/space-new/main.js", "View, div, svg, h_flex, v_flex, Input, InputState, v_virtual_list, VirtualListScrollHandle, Scrollbar, home, spaces, panes, focused, run, theme, props, openOverlay, closeOverlay, listProjects, ReviewPanes");
+const { default: Picker } = await load("../mods/space-new/main.js", "View, div, svg, h_flex, v_flex, Input, InputState, v_virtual_list, VirtualListScrollHandle, Scrollbar, home, spaces, panes, focused, run, theme, props, openOverlay, closeOverlay, shared, setShared, listProjects, ReviewPanes");
 function setup(projects = true) {
   Object.assign(world, { props: { overlay: "picker", projects }, tasks: [], calls: [], closed: [], opened: [], notices: [],
     spaces: [{ id: "remote", active: true, machine: "other", tabs: [{ id: "old-tab", active: true }] }], panes: [],
@@ -108,6 +109,21 @@ test("project selection from a remote space creates two local shells and review,
   assert.equal(world.panes.find(p => p.pane === "right-shell").cwd, "/home/user/Projects/alpha");
   assert.deepEqual(world.closed, ["picker"]);
   assert.equal(world.notices.length, 0);
+});
+
+test("the projects folder can be changed and is remembered", async () => {
+  world.shared = {};
+  const picker = setup(); await drain();
+  assert.equal(picker.label(), "~/Projects");
+  find(picker.render(), "projects-folder").handlers.click({}, cx);
+  picker.folder.text = " ~/code/ ";
+  picker.folder.handlers.submit({}, cx); await drain();
+  assert.deepEqual([picker.root, picker.label(), world.shared["projects.root"]], ["/home/user/code", "~/code", "/home/user/code"]);
+  assert.equal(picker.projects[0].folder, "/home/user/code/alpha");
+  assert.equal(setup().root, "/home/user/code", "the next picker opens on the saved folder");
+  picker.setRoot("/srv/work", cx);
+  assert.equal(picker.label(), "/srv/work");
+  world.shared = {};
 });
 
 test("keyboard navigation selects and scrolls projects; an empty search cannot create a space", async () => {

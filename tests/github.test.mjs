@@ -14,6 +14,7 @@ globalThis.__githubNative = {
       return { code: result.status, stdout: result.stdout, stderr: result.stderr };
     }
     if (world.browserError) throw new Error("Firefox missing");
+    if (world.noFirefox && [command, ...args].some(part => /^firefox$/i.test(part))) return { code: 1, stdout: "", stderr: "" };
     return { code: world.browserCode ?? 0, stdout: "", stderr: "" };
   },
   notify: value => world.notices.push(value),
@@ -91,9 +92,21 @@ test("browser launch failures provide a useful recovery message", async t => {
   const cwd = await repository(t);
   git(cwd, "remote", "add", "origin", "https://github.com/Owner/repo");
   world.browserError = true;
-  await assert.rejects(openRepository({ cwd }, "macos"), /Make sure Firefox is installed/);
+  await assert.rejects(openRepository({ cwd }, "macos"), /Could not open a browser\. Open https:\/\/github\.com\/Owner\/repo yourself/);
   world.browserError = false; world.browserCode = 1;
-  await assert.rejects(openRepository({ cwd }, "macos"), /Make sure Firefox is installed/);
+  await assert.rejects(openRepository({ cwd }, "macos"), /Could not open a browser/);
+});
+
+test("without Firefox the repository opens in the default browser", async t => {
+  const cwd = await repository(t);
+  git(cwd, "remote", "add", "origin", "https://github.com/Owner/repo");
+  world.noFirefox = true;
+  t.after(() => { world.noFirefox = false; });
+  await openRepository({ cwd }, "macos");
+  assert.deepEqual(world.calls.at(-1), { command: "open", args: ["https://github.com/Owner/repo"], options: undefined });
+  world.calls = [];
+  await openRepository({ cwd }, "linux");
+  assert.deepEqual(world.calls.slice(1).map(call => call.command), ["firefox", "xdg-open"]);
 });
 
 test("repeated clicks while opening launch once and failure restores the button", async t => {

@@ -1,7 +1,8 @@
 # Spaces and agents
 
 The sidebar **+** offers **New space** for the usual terminal, or **From a project…**
-to search the folders in `~/Projects`. Choose a project to create a local space with
+to search the folders in `~/Projects`; **Change** beside the folder's name picks another
+folder, which Herdr remembers. Choose a project to create a local space with
 the default terminal on the left and **Changes + terminal** on the right. Both
 terminals start in the project folder, and focus stays in the left terminal.
 Use ↑/↓ and Enter to choose; Esc closes the picker. **Refresh projects** rereads the

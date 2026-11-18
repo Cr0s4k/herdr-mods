@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { home, spaces, panes, focused, run, theme, props, openOverlay, closeOverlay } from "herdr";
+import { home, spaces, panes, focused, run, theme, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { listProjects } from "./projects.js";
 import { ReviewPanes } from "./review.js";
 
@@ -12,15 +12,32 @@ export default class SpaceNew extends View {
     this.at = 0;
     this.projects = [];
     this.busy = false;
-    this.root = `${home().replace(/[\\/]$/, "")}/Projects`;
+    this.home = home().replace(/[\\/]$/, "");
+    this.root = shared("projects.root") || `${this.home}/Projects`;
     this.review = new ReviewPanes();
     if (this.mode !== "projects") return;
     this.scroll = VirtualListScrollHandle.new();
     this.input = InputState.new({ placeholder: "Search projects…" });
     this.input.on("change", (_e, cx) => { this.at = 0; this.scroll.scroll_to_item(0); cx.notify(); });
     this.input.on("submit", (_e, cx) => this.create(this.filtered()[this.at], cx));
+    this.folder = InputState.new({ placeholder: "Folder that holds your projects, such as ~/code" });
+    this.folder.on("submit", (_e, cx) => this.setRoot(this.folder.value(), cx));
     this.input.focus();
     this.load(cx);
+  }
+
+  label() { return this.root === this.home || this.root.startsWith(this.home + "/") ? "~" + this.root.slice(this.home.length) : this.root; }
+
+  setRoot(value, cx) {
+    const typed = value.trim().replace(/(.)[\\/]+$/, "$1");
+    this.editing = false;
+    if (typed) {
+      this.root = typed === "~" ? this.home : typed.startsWith("~/") ? this.home + typed.slice(1) : typed;
+      setShared("projects.root", this.root);
+      this.load(cx);
+    }
+    this.input.focus();
+    cx.notify();
   }
 
   load(cx) {
@@ -111,7 +128,7 @@ export default class SpaceNew extends View {
     }
     const projects = this.filtered();
     const message = this.loading ? "Loading projects…" : this.error
-      || (!this.projects.length ? "No project folders in ~/Projects. Add a folder there, then refresh."
+      || (!this.projects.length ? `No project folders in ${this.label()}. Add a folder there and refresh, or change the folder.`
         : !projects.length ? "No projects match your search." : null);
     return root.p(14).gap(10)
       .child(h_flex().items_center().gap(10).flex_none()
@@ -120,7 +137,14 @@ export default class SpaceNew extends View {
           .role("button").accessibility_label("Refresh projects").tooltip("Refresh projects")
           .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
           .on_click((_e, cx) => this.load(cx)).child(svg("mods/loops/loops.svg").size(14))))
-      .child(div().flex_none().text_size(11.5).text_color(t.muted).child("~/Projects"))
+      .child(this.editing
+        ? h_flex().h(28).flex_none().px(10).items_center().rounded(7).border_1().border_color(t.border).bg(t.background)
+          .child(Input.new(this.folder).flex_1().h_full().text_size(12).text_color(t.foreground))
+        : h_flex().flex_none().gap(8).items_center().text_size(11.5).text_color(t.muted)
+          .child(div().min_w(0).truncate().child(this.label()))
+          .child(div().id("projects-folder").flex_none().role("button").accessibility_label("Change the projects folder")
+            .text_color(t.accent).cursor_pointer()
+            .on_click((_e, cx) => { this.editing = true; this.folder.focus(); cx.notify(); }).child("Change")))
       .child(h_flex().h(34).flex_none().px(10).gap(8).items_center().rounded(7).border_1().border_color(t.accent).bg(t.background)
         .child(svg("mods/workspace-chrome/search.svg").size(14).text_color(t.muted))
         .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))

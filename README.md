@@ -5,9 +5,11 @@ a task pipeline, panels for screenshots, tickets, goals and watchers, a sidebar 
 agents under their spaces, and the agent skills that go with them.
 
 This is an unofficial, personal setup, shared as is. It isn't affiliated with Herdr. It
-follows the newest Herdr release (0.1.16 at the time of writing), is used daily on macOS only,
-and has a few of my habits built in (see [Things to know](#things-to-know)). Take the whole
-thing, or copy the mods you like.
+follows the newest Herdr release (0.1.16 at the time of writing) and is used daily on macOS
+only; read [Things to know](#things-to-know) before installing. Take the whole thing, or copy
+the mods you like.
+
+![Pipeline in demo mode: queued tasks on the left, the planner at the centre, one task waiting for an answer and two ready for review](docs/pipeline-demo.png)
 
 ## What you get
 
@@ -32,7 +34,6 @@ more:
 - pull requests and Watchers: GitHub's `gh`, signed in
 - Show: the Swift toolchain (Xcode command line tools)
 - highlighted diffs: [`bat`](https://github.com/sharkdp/bat)
-- the GitHub button: Firefox
 
 ```sh
 git clone https://github.com/Cr0s4k/herdr-mods.git
@@ -72,10 +73,6 @@ Loops, Skills and Pipeline's token counts also read your agents' local session f
 **Agents act on your repositories.** Live Pipeline starts real agents, creates worktrees and
 branches, and merges or pushes when you approve (or by itself, if you turn that on). Try the
 demo first: Pipeline's Settings, General, **Try a demo**.
-
-**Built-in habits.** The GitHub button opens Firefox, and **From a project…** lists the
-folders in `~/Projects`. Both are easy to change in `mods/tabs-show/github.js` and
-`mods/space-new/`.
 
 ## Working on it
 

@@ -2,10 +2,11 @@
 
 ## GitHub
 
-**GitHub** in the tab bar opens the current project in a new Firefox tab. It follows the
-focused terminal's folder, including subfolders and worktrees, and reads HTTPS or SSH
-GitHub remotes. It prefers `origin`, then the first GitHub fetch remote. Remote spaces
-read Git on their machine and open Firefox on this computer. Firefox must be installed.
+**GitHub** in the tab bar opens the current project on GitHub: in a new Firefox tab when
+Firefox is installed, otherwise in your default browser. It follows the focused terminal's
+folder, including subfolders and worktrees, and reads HTTPS or SSH GitHub remotes. It prefers
+`origin`, then the first GitHub fetch remote. Remote spaces read Git on their machine and
+open the browser on this computer.
 
 ## Feature toggles
 
