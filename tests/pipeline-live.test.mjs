@@ -141,14 +141,16 @@ test("OpenCode models are read from its server's list, grouped by provider as it
     { id: "off", providerID: "opencode", enabled: false },
     { id: "chat", providerID: "deepseek", variants: [] },
     { id: "paid-new", providerID: "opencode", cost: [{ input: 1, output: 2 }], time: { released: 5 } },
-    { id: "gratis", providerID: "opencode", name: "Gratis", cost: [{ input: 0, output: 0 }], time: { released: 2 } }] });
-  const providers = JSON.stringify({ data: [{ id: "opencode", name: "Personal / OpenCode" }, { id: "deepseek", name: "DeepSeek" }] });
+    { id: "gratis", providerID: "opencode", name: "Gratis", cost: [{ input: 0, output: 0 }], time: { released: 2 } },
+    { id: "chat", providerID: "opencode-go", name: "Chat" }] });
+  const providers = JSON.stringify({ data: [{ id: "opencode", name: "Personal / OpenCode" }, { id: "deepseek", name: "DeepSeek" }, { id: "opencode-go", name: "OpenCode Go" }] });
   assert.deepEqual(model.opencodeModels(list, providers), [
-    { slug: "opencode/gratis", name: "Gratis", group: "Personal / OpenCode", free: true, released: 2, efforts: [] },
-    { slug: "opencode/paid-new", name: "paid-new", group: "Personal / OpenCode", free: false, released: 5, efforts: [] },
-    { slug: "opencode/paid-old", name: "Paid Old", group: "Personal / OpenCode", free: false, released: 1, efforts: ["low", "high"] },
-    { slug: "deepseek/chat", name: "chat", group: "DeepSeek", free: false, released: 0, efforts: [] }]);
-  assert.deepEqual(model.opencodeModels(list).map(row => row.group), ["deepseek", "opencode", "opencode", "opencode"], "without provider names the ids head the groups");
+    { slug: "opencode-go/chat", name: "Chat", group: "OpenCode Go · subscription", free: false, released: 0, efforts: [] },
+    { slug: "opencode/gratis", name: "Gratis", group: "Personal / OpenCode · Zen balance", free: true, released: 2, efforts: [] },
+    { slug: "opencode/paid-new", name: "paid-new", group: "Personal / OpenCode · Zen balance", free: false, released: 5, efforts: [] },
+    { slug: "opencode/paid-old", name: "Paid Old", group: "Personal / OpenCode · Zen balance", free: false, released: 1, efforts: ["low", "high"] },
+    { slug: "deepseek/chat", name: "chat", group: "DeepSeek · your own key", free: false, released: 0, efforts: [] }], "the Go subscription heads the list, and each provider says who pays");
+  assert.deepEqual(model.opencodeModels(list).map(row => row.group), ["deepseek", "opencode", "opencode", "opencode", "opencode-go"], "without provider names the ids head the groups");
   assert.deepEqual(model.opencodeModels("<!doctype html>"), []);
 });
 

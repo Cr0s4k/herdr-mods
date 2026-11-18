@@ -156,7 +156,11 @@ nothing to finish.
    flags; **Default** leaves the agent's own setting. The chip and each task's
    inspector show what it started with. The models are a scrolling
    list headed by **Default**; OpenCode's are grouped by provider with the free ones first,
-   as its own model dialog shows them. Typing in the field narrows the list by name,
+   as its own model dialog shows them, except that **OpenCode Go** comes first. Each group's
+   header says who pays: Go is the subscription, **Personal / OpenCode** is Zen's pay-per-token
+   balance, and any other provider (DeepSeek with `DEEPSEEK_API_KEY` set, say) bills your own
+   key. The same model often appears in several groups; its slug's prefix (`opencode-go/…`)
+   tells them apart. Typing in the field narrows the list by name,
    provider or "free", and Enter picks the first match, or uses the name as typed when
    nothing matches. OpenCode's effort is the model's variant, so it is
    offered once a model is picked, and a task with a model runs on a private OpenCode

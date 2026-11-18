@@ -44,12 +44,16 @@ export function codexModels(text) {
     .map(model => ({ slug: String(model.slug), name: String(model.display_name ?? model.slug),
       efforts: (model.supported_reasoning_levels ?? []).map(level => level?.effort).filter(effort => /^[a-z]{1,20}$/.test(effort ?? "")) }));
 }
+const OPENCODE_BILLING = { "opencode-go": "subscription", opencode: "Zen balance" };
 // Grouped and ordered as OpenCode's own model dialog: by provider, the free ones first, then the newest.
+// The same model is often offered by several providers, so the Go subscription comes first and each header says who pays.
 export function opencodeModels(text, providersText = "") {
   let models, providers;
   try { models = JSON.parse(text)?.data; } catch { return []; }
   try { providers = JSON.parse(providersText)?.data; } catch { providers = []; }
-  const names = (Array.isArray(providers) ? providers : []).filter(provider => provider?.id).map(provider => [String(provider.id), String(provider.name ?? provider.id)]);
+  const listed = (Array.isArray(providers) ? providers : []).filter(provider => provider?.id);
+  const names = [...listed.filter(provider => provider.id === "opencode-go"), ...listed.filter(provider => provider.id !== "opencode-go")]
+    .map(provider => [String(provider.id), `${provider.name ?? provider.id} · ${OPENCODE_BILLING[provider.id] ?? "your own key"}`]);
   const at = id => { const index = names.findIndex(([known]) => known === id); return index < 0 ? names.length : index; };
   return (Array.isArray(models) ? models : []).filter(model => model?.id && model.providerID && model.enabled !== false)
     .map(model => ({ slug: `${model.providerID}/${model.id}`, name: String(model.name ?? model.id), group: names[at(model.providerID)]?.[1] ?? String(model.providerID),
