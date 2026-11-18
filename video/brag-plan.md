@@ -5,25 +5,24 @@ Mods for the Herdr terminal app. The headline one is Pipeline: queue tasks, and 
 own agent, branch and Git worktree, is checked, then waits for your review and merges.
 
 ## The angle
-No mock-up and no demo mode: the video is a real Pipeline run. Four small tasks on a throwaway
-repository (`tiny-shop`), three Claude Code agents at a time, recorded from the Herdr window and
-retimed to fit. The brag is that the whole thing fits on one screen and in twenty seconds.
+No mock-up and no demo mode: every shot is the real Herdr window on a throwaway repository
+(`tiny-shop`). Pipeline gets the first ten seconds, as the headline; then each of the other mods
+gets two to three seconds, one panel at a time. The brag is how much fits in one window.
 
 ## Hook (first 2-3 seconds)
-"Four tasks." then "Zero babysitting." over the dimmed Pipeline starfield, before the window
-comes forward.
+"Herdr, extended." then "Ten features, one window." over the dimmed Pipeline starfield.
 
 ## Key moments (the middle)
-- The four tasks drop into the queue, one by one.
-- Start: the planner at the centre orders the work, then tasks fly into the three work slots.
-- Agents work in parallel; the cards say Working, Running checks, Ready for review.
-- Each one merges and becomes a star in the completed trail: "4 tasks completed".
+- Pipeline: the four tasks drop into the queue, the planner orders them, three work slots fill,
+  then the review column and the merges.
+- Show: a screenshot arrives, the marked-up copy with a red circle and a note, then the fix.
+- Changes: the diff of an uncommitted change, split view.
+- Files: a source file, highlighted, in the dialog.
+- Since you left: an agent's handoff with a question for you.
+- Watchers: the toast as the tests pass.
 
 ## Outro / punchline
-"Merged while you watched." then the name, `herdr-mods`, and the other mods' names.
-
-## User flow worth showing
-Queue tasks → Start pipeline → agents work in their own worktrees, checks run → review → merge.
+The name, `herdr-mods`, "Mods for Herdr", and the features' names.
 
 ## Tone
 - Preset: polished
@@ -31,7 +30,7 @@ Queue tasks → Start pipeline → agents work in their own worktrees, checks ru
 - Interpretation: few words, long enough holds, slow push-ins on the real UI; no jokes, no stock SaaS claims
 
 ## Format: landscape — 1920x1080
-## Duration: 21 seconds
+## Duration: 30 seconds
 
 ## Visual identity (from the project)
 - Background: #181926 (the Pipeline canvas in the recorded theme)
@@ -58,52 +57,6 @@ and worktree, runs the checks, and waits for you to merge.
 
 ## Storyboard
 
-### Scene 1 — Hook — 2.4s
-Dimmed, blurred Pipeline canvas. "Four tasks." lands, then "Zero babysitting." under it.
-Sequential/interaction: two lines, one after the other, both held
-Audio intent: bed starts, calm
-Audio-coupled idea: none
-Transition mood: clean → Scene 2
-
-### Scene 2 — Queue — 3.2s
-The real window comes forward. The four tasks join the queue (footage part "queue").
-Caption: "Queue the work."
-Sequential/interaction: four task cards arrive one by one in the footage
-Audio intent: soft hit as the window lands; a card sound for each task
-Audio-coupled idea: card-by-card sequence
-Transition mood: clean → Scene 3
-
-### Scene 3 — Plan and start — 2.0s
-Push in on the planner at the centre while it reads the queue (footage part "plan").
-Caption: "A planner orders it."
-Sequential/interaction: none
-Audio intent: bed only
-Transition mood: soft → Scene 4
-
-### Scene 4 — Agents at work — 3.4s
-Pull back to the three work slots filling (footage part "work").
-Caption: "Each task: its own agent, branch and worktree."
-Sequential/interaction: none
-Audio intent: bed only
-Transition mood: soft → Scene 5
-
-### Scene 5 — Checked, reviewed, merged — 5.4s
-Drift to the right half: cards reach Review, merge, and become stars (footage part "land").
-Captions, one then the other: "Checks run before review." / "You approve. It merges."
-Sequential/interaction: two captions in sequence, each held at least 1.6s
-Audio intent: bed, slight lift
-Transition mood: clean → Scene 6
-
-### Scene 6 — Count — 1.6s
-Full window, everything merged (footage part "rest"). Caption: "4 tasks merged."
-Audio intent: one bell
-Transition mood: soft → Scene 7
-
-### Scene 7 — Name — 3.0s
-Window recedes and dims. "herdr-mods" with "Mods for Herdr" under it, then the mods' names in
-one line: Pipeline · Show · Tasks · Watchers · Loops · Skills.
-Audio intent: bed fades out
-Audio-coupled idea: name lands on the strong cue near 18.55s
-
-**Music mood for this video:** upbeat, restrained
-**Audio summary:** A warm bed from the first frame, a few soft accents on real UI moments, a bell on the count, fade under the name.
+The scenes and their seconds are in `video/composition-brief.md`. Each mod scene: a hard cut to
+that panel, a short push-in on what changed, one caption that starts with the feature's name.
+Restraint rule: no sound per caption; a card sound only where something arrives on screen.

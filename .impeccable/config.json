@@ -8,6 +8,33 @@
         "value": "inter",
         "createdAt": "2026-11-18T09:37:03.376Z",
         "reason": "agent decided: the video's captions sit beside recorded Herdr UI text in a neutral grotesque, and Inter matches it; Hyperframes also renders with fonts it can fetch, not system fonts"
+      },
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "video/capture/cart.html"
+        ],
+        "createdAt": "2026-11-18T10:59:04.901Z",
+        "reason": "Claude: fixture page for the video's Show scene, a fictional shop screenshot, not this project's UI"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "video/capture/cart.html"
+        ],
+        "createdAt": "2026-11-18T10:59:04.918Z",
+        "reason": "Claude: fixture page for the video's Show scene; the SAVE10 chip is a small coupon tag by design"
+      },
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "files": [
+          "video/composition/index.html"
+        ],
+        "createdAt": "2026-11-18T10:59:04.936Z",
+        "reason": "Claude: video/composition-brief.md (committed before this session) sets Inter as the film's font"
       }
     ]
   }

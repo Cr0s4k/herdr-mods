@@ -52,6 +52,35 @@ def do(command, **args):
     return answer
 
 
+TOASTER = APP / "mods/video-toast"
+LAYOUT = APP / "layouts/main-custom.json"
+OURS = r"tiny-shop|cart\."
+
+
+def quiet_toasts():
+    """Points the layout at a copy of Herdr's toast mod that drops every toast not about the throwaway project.
+    Returns the layout's text to put back with loud_toasts()."""
+    shutil.rmtree(TOASTER, ignore_errors=True)
+    do("mod.clone", name="toast", **{"as": "video-toast"})
+    main = TOASTER / "main.js"
+    main.write_text(main.read_text().replace("export default class Toast extends View {\n", f"""export default class Toast extends View {{
+  init() {{
+    const p = props() ?? {{}};
+    if (p.overlay && !/{OURS}/.test(`${{p.title ?? ""}} ${{p.body ?? ""}}`)) closeOverlay(p.overlay);
+  }}
+
+""", 1))
+    original = LAYOUT.read_text()
+    LAYOUT.write_text(json.dumps({**json.loads(original), "toast": "video-toast"}, indent=2, sort_keys=True) + "\n")
+    return original
+
+
+def loud_toasts(original):
+    if original is not None:
+        LAYOUT.write_text(original)
+    shutil.rmtree(TOASTER, ignore_errors=True)
+
+
 def saved(key):
     for _ in range(5):
         try:
@@ -121,9 +150,10 @@ def main():
     shutil.copy(REPO / "mods/pipeline/pipeline-model.js", DRIVER)
     subprocess.run(["herdr-app", "check", str(DRIVER)], check=True, stdout=subprocess.DEVNULL)
 
-    space = key = camera = None
+    space = key = camera = layout = None
     events = []
     try:
+        layout = quiet_toasts()
         before = {row["id"] for row in herdr("ls")["spaces"]}
         do("space.new", name="tiny-shop", folder=str(repo))
         for _ in range(50):
@@ -199,6 +229,7 @@ def main():
             camera.join()
             (out / "frames.json").write_text(json.dumps(camera.index))
         (out / "events.json").write_text(json.dumps(events, indent=1))
+        loud_toasts(layout)
         herdr("do", "layout.show", json.dumps({"id": "sidebar"}))
         if not args.keep:
             if space:

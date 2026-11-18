@@ -39,13 +39,7 @@ def anchors(events, last):
     return pairs
 
 
-def main():
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    run, out = Path(sys.argv[1]), Path(sys.argv[2])
-    frames = json.loads((run / "frames.json").read_text())
-    pairs = anchors(json.loads((run / "events.json").read_text()), frames[-1]["t"])
-
+def write(run, frames, pairs, end, out):
     def source(t):
         for (real, clip), (next_real, next_clip) in zip(pairs, pairs[1:]):
             if t <= next_clip:
@@ -53,7 +47,7 @@ def main():
         return pairs[-1][0]
 
     picks, at = [], 0
-    for n in range(round(END * FPS)):
+    for n in range(round(end * FPS)):
         wanted = source(n / FPS)
         while at + 1 < len(frames) and frames[at + 1]["t"] <= wanted:
             at += 1
@@ -69,8 +63,16 @@ def main():
                     "-movflags", "+faststart", str(out)], check=True)
     subprocess.run([*ffmpeg, "-i", str(run / "frames" / picks[0]), "-q:v", "3", str(out.with_suffix(".jpg"))], check=True)
     Path(listing.name).unlink()
-    print(f"{out}: {END}s from {pairs[-1][0] - pairs[0][0]:.0f}s of recording, {len(set(picks))} different frames")
+    print(f"{out}: {end}s from {pairs[-1][0] - pairs[0][0]:.0f}s of recording, {len(set(picks))} different frames")
 
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    run, out = Path(sys.argv[1]), Path(sys.argv[2])
+    frames = json.loads((run / "frames.json").read_text())
+    pairs = anchors(json.loads((run / "events.json").read_text()), frames[-1]["t"])
+    write(run, frames, pairs, END, out)
 
 if __name__ == "__main__":
     main()
