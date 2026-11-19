@@ -1,0 +1,5 @@
+{
+  "layout:main-custom": {
+    "cmd-p": "mod.open:find-file"
+  }
+}

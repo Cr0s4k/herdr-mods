@@ -1,7 +1,7 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay, run, keys } from "herdr";
 import { iconsReady, fileIcon } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageView } from "./images.js";
@@ -17,6 +17,12 @@ function location() {
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
+const SYMBOL = { cmd: "⌘", ctrl: "⌃", shift: "⇧", alt: "⌥" };
+
+function findFileLabel() {
+  const k = keys().find(b => b.action === "mod.open:find-file");
+  return k ? `Find file  ${k.keys.split("-").map(p => SYMBOL[p] ?? p.toUpperCase()).join("")}` : "Find file";
+}
 
 async function directory(path, on) {
   const windowsDirectory = async () => {
@@ -262,6 +268,10 @@ export default class Files extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(!this.embedded, el => el.child(div().font_semibold().child("Files")))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.muted).child(this.root?.split(/[\\/]/).pop() ?? ""))
+        .child(Button.new("files-find").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted)
+          .tooltip(findFileLabel()).accessibility_label("Find file").cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground))
+          .on_click(() => run("mod.open", { name: "find-file" }))
+          .child(svg("mods/find-file/search.svg").size(16)))
         .child(Button.new("files-collapse-all").size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted)
           .disabled(this.folders.size === 0).opacity(this.folders.size ? 1 : 0.4)
           .tooltip("Collapse all folders").accessibility_label("Collapse all folders")

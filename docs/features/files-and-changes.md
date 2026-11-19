@@ -23,6 +23,27 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 - Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
+## Find file
+
+**⌘P** (or the magnifier in the Files header) searches the focused pane's project by file name,
+like VS Code's Go to File. Letters match in order with gaps between them, so `fmain` finds
+`files-modal/main.js`; a space separates words that all have to match. Matches in the file name,
+at the start of a word and in a run rank first. With nothing typed, it lists the files you
+opened from it recently, then the changed ones (marked M, A or U like in Files).
+
+↑/↓ picks, Enter opens the file in the same dialog as Files, where ↑/↓ then
+steps through the other matches. Esc closes.
+
+- It searches the whole Git repository the pane is in: tracked and untracked files, without
+  ignored ones. Outside Git it searches the pane's folder, skipping hidden folders and
+  `node_modules`. Very large projects are cut at about 60,000 paths, and the popup says so.
+- The matching runs inside the mod, in the style of [fzf](https://github.com/junegunn/fzf),
+  so nothing needs installing and it works on spaces on other machines.
+- ⌘P opens it only in the `main-custom` layout. Herdr's **Go to…** stays on the sidebar's
+  Search button, and on ⌘P in Herdr's own layouts. Install adds the key under
+  `layout:main-custom` in `~/.config/herdr-app/keys.json` and never replaces a key you set
+  there: to give ⌘P back to Go to…, set `"cmd-p": "mod.open:picker"` in that section.
+
 **Changes + terminal** is a separate action beside the Files, Changes, Show and Loops side-panel
 toggles. It opens Changes as a normal pane on the right, with a normal terminal pane below
 it, starting at equal height. Once open, the action becomes **Focus changes** and returns

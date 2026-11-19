@@ -49,6 +49,7 @@ bind_palette() {
 mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills" "$HOME/.agents/skills"
 copy >/dev/null
 bind_palette
+"$repo/scripts/keys.sh" "$repo/keys.json" "$app/keys.json"
 for m in "${mods[@]}"; do
   for f in "$m"/*; do
     [ -f "$f" ] && [ -x "$f" ] && ln -sf "$app/mods/$(basename "$m")/$(basename "$f")" "$HOME/.local/bin/$(basename "$f")"

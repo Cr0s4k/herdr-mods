@@ -19,7 +19,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 |---|---|---|
 | **Pipeline** | Queue tasks, typed or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
-| **Files and Changes** | Files and diffs open in a large dialog, with push and pull counts, image previews and Material file icons. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
+| **Files and Changes** | Files and diffs open in a large dialog, with push and pull counts, image previews and Material file icons. ⌘P finds a file by name, like VS Code. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
 | **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
 | **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
@@ -45,7 +45,7 @@ cd herdr-mods
 ./install.sh --watch   # keep copying while you edit; Herdr reloads mods live
 ```
 
-Install does four things:
+Install does five things:
 
 - copies `mods/*` and `layouts/*` into `~/.config/herdr-app`, replacing mods of the same name
   that are already there
@@ -54,9 +54,11 @@ Install does four things:
 - links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex)
 - binds `cmd-shift-p` to the [command palette](docs/features/palette.md) on the main-custom
   layout in Herdr's `keys.json`, unless you already bound that key there
+- adds the shortcuts in `keys.json` (⌘P for Find file, in the `main-custom` layout only) to
+  Herdr's `keys.json`. A key you already bound in the same section stays yours.
 
 `ctrl-shift-l` switches back to Herdr's own layouts at any time. To remove everything, switch
-layout, then delete those copies and links.
+layout, then delete those copies and links, and the `layout:main-custom` keys.
 
 ## Things to know
 
@@ -102,6 +104,8 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Changes (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
+| `mods/find-file/` | Find file: the ⌘P popup, and `match.js`, its fzf-style matcher |
+| `keys.json`, `scripts/keys.sh` | The shortcuts install adds to Herdr's `keys.json`, and the script that adds them without replacing yours |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
 | `mods/review-pane/` | Changes inside a normal pane, sharing the existing view through a symlink |
 | `mods/files-pane/`, `mods/show-pane/`, `mods/loops-pane/` | Normal pane versions of the existing panels, sharing their views through symlinks |

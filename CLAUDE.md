@@ -13,6 +13,8 @@ through the link nor loads the mod's own SVG icons. That is why install copies.
 
 Install picks everything up by folder: every `mods/*`, `layouts/*.json` and `skills/*`, and any
 executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs no script edits.
+A shortcut goes in `keys.json`, same sections as Herdr's; install adds each key the person hasn't
+bound in that section (`scripts/keys.sh`) and never replaces one.
 
 ## Working on it
 

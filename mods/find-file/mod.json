@@ -1,0 +1,11 @@
+{
+  "overlay": {
+    "at": "top",
+    "height": 0.8,
+    "kind": "popup",
+    "offset": 40,
+    "width": 640
+  },
+  "place": "none",
+  "title": "Find file"
+}
