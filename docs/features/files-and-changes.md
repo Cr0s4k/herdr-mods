@@ -40,9 +40,10 @@ steps through the other matches. Esc closes.
 - The matching runs inside the mod, in the style of [fzf](https://github.com/junegunn/fzf),
   so nothing needs installing and it works on spaces on other machines.
 - Install adds the key to `global` in `~/.config/herdr-app/keys.json`, so it works in every
-  layout, and never replaces a key you set there. To use another key, bind it to
-  `mod.open:find-file` and set `"cmd-shift-n"` to something else; the Files button's tooltip
-  shows whichever key you chose.
+  layout, and never replaces a key you set there. To use another key, bind `mod.open:find-file`
+  to it there instead; install then leaves ⇧⌘N alone, and the Files button's tooltip and the
+  command palette show your key.
+- The [command palette](palette.md) lists it as **Find file…**.
 
 **Changes + terminal** is a separate action beside the Files, Changes, Show and Loops side-panel
 toggles. It opens Changes as a normal pane on the right, with a normal terminal pane below

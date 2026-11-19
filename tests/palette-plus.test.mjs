@@ -33,7 +33,7 @@ test("every enabled side panel is listed, and features switched off stay out", (
   setup();
   world.shared.features = { loops: false };
   const panels = more().filter(e => e.group === "Panel").map(e => e.name);
-  assert.deepEqual(panels, ["files", "changes", "show", "brief", "skills", "watchers", "plane", "linear"].map(id => `tabs-show.${id}`));
+  assert.deepEqual(panels, ["mod.open", ...["files", "changes", "show", "brief", "skills", "watchers", "plane", "linear"].map(id => `tabs-show.${id}`)]);
   world.shared["workspace.panels"] = ["changes"];
   assert.ok(!more().some(e => e.name === "tabs-show.files"));
 });
@@ -91,4 +91,9 @@ test("dialogs open centred, and space focus switches both ways", () => {
   assert.equal(world.shared["spaces.focus"], "space");
   titled("All spaces").do();
   assert.equal(world.shared["spaces.focus"], null);
+});
+
+test("Find file is listed even without the tab bar, and opens the find-file popup", () => {
+  setup({ tabBar: false, sidebar: false });
+  assert.deepEqual(titled("Find file…"), { name: "mod.open", args: { name: "find-file" }, group: "Panel", title: "Find file…", words: "go to file open search fuzzy quick name" });
 });

@@ -1,5 +1,8 @@
 {
   "global": {
     "cmd-shift-n": "mod.open:find-file"
+  },
+  "layout:main-custom": {
+    "cmd-shift-p": "mod.open:palette-plus"
   }
 }

@@ -45,17 +45,17 @@ cd herdr-mods
 ./install.sh --watch   # keep copying while you edit; Herdr reloads mods live
 ```
 
-Install does five things:
+Install does four things:
 
 - copies `mods/*` and `layouts/*` into `~/.config/herdr-app`, replacing mods of the same name
   that are already there
 - links any executable at the top of a mod folder (`herdr-show`, `herdr-watch`,
   `herdr-pipeline`, …) into `~/.local/bin`
 - links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex)
-- binds `cmd-shift-p` to the [command palette](docs/features/palette.md) on the main-custom
-  layout in Herdr's `keys.json`, unless you already bound that key there
-- adds the shortcuts in `keys.json` (⇧⌘N for Find file) to Herdr's `keys.json`. A key you
-  already bound in the same section stays yours.
+- adds the shortcuts in `keys.json` to Herdr's `keys.json`: `cmd-shift-p` for the
+  [command palette](docs/features/palette.md) on the main-custom layout, and `cmd-shift-n` for
+  [Find file](docs/features/files-and-changes.md#find-file). A key you already bound in the same
+  section stays yours, and an action you already gave a key gets no second one.
 
 `ctrl-shift-l` switches back to Herdr's own layouts at any time. To remove everything, switch
 layout, then delete those copies and links, and the keys from `keys.json`.

@@ -60,6 +60,7 @@ export function more() {
   const space = spaces().find(s => s.active);
   const where = focused();
 
+  list.push(command("Panel", "Find file…", "mod.open", "go to file open search fuzzy quick name", { name: "find-file" }));
   if (shown(root, "tabs-show")) {
     const panel = find(root, n => n.id === "panel"), body = find(root, n => n.id === "panel-body");
     const enabled = new Set([...(shared("workspace.panels") ?? ["files", "changes"]), "show", "brief", "plane", "linear",

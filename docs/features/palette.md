@@ -6,7 +6,7 @@ it too. Herdr's macOS menu item and Herdr's own layouts still open the plain pal
 
 What it adds:
 
-- **Panel**: open or close each side panel (Files, Changes, Show, Brief, Loops, Skills,
+- **Panel**: [Find file…](files-and-changes.md#find-file), open or close each side panel (Files, Changes, Show, Brief, Loops, Skills,
   Watchers, Tasks, Linear), and move the open one into a pane. Panels switched off in Feature
   toggles stay out.
 - **Pipeline**: open this space's Pipeline, start or pause it, add a task, merge or approve
@@ -37,5 +37,6 @@ since Herdr delivers mod commands to shown copies only.
   which moves it into a pane with its current state, like its Move to pane button.
 
 `./install.sh` binds `cmd-shift-p` to `mod.open:palette-plus` in the `layout:main-custom`
-section of Herdr's `keys.json`. It does this only when nothing is bound to the palette yet and
-you haven't bound `cmd-shift-p` in that section.
+section of Herdr's `keys.json`, from the repo's `keys.json` through `scripts/keys.sh`. It does
+this only when nothing is bound to the palette yet and you haven't bound `cmd-shift-p` in that
+section.
