@@ -1,5 +1,5 @@
 {
   "global": {
-    "cmd-alt-n": "mod.open:find-file"
+    "cmd-shift-n": "mod.open:find-file"
   }
 }
