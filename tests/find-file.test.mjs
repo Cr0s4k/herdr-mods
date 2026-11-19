@@ -60,21 +60,21 @@ test("install adds the repo's shortcuts to keys.json and never replaces one alre
   const dir = await mkdtemp(`${tmpdir()}/keys-`);
   try {
     const mine = `${dir}/keys.json`;
-    await writeFile(mine, JSON.stringify({ global: { "cmd-p": "mod.open:picker" }, "layout:main-custom": {} }, null, 2) + "\n");
+    await writeFile(mine, JSON.stringify({ global: { "cmd-p": "mod.open:picker" }, terminal: {} }, null, 2) + "\n");
     const first = await run(script, [ours, mine]);
-    assert.match(first.stdout, /added cmd-p/);
+    assert.match(first.stdout, /added cmd-alt-n/);
     const merged = JSON.parse(await readFile(mine, "utf8"));
-    assert.equal(merged["layout:main-custom"]["cmd-p"], "mod.open:find-file");
-    assert.equal(merged.global["cmd-p"], "mod.open:picker");
+    assert.deepEqual(merged.global, { "cmd-p": "mod.open:picker", "cmd-alt-n": "mod.open:find-file" });
+    assert.deepEqual(merged.terminal, {});
 
     const before = await readFile(mine, "utf8");
     assert.equal((await run(script, [ours, mine])).stdout, "");
     assert.equal(await readFile(mine, "utf8"), before);
 
-    merged["layout:main-custom"]["cmd-p"] = "mod.open:picker";
+    merged.global["cmd-alt-n"] = "space.new";
     await writeFile(mine, JSON.stringify(merged, null, 2) + "\n");
-    assert.match((await run(script, [ours, mine])).stdout, /kept your cmd-p/);
-    assert.equal(JSON.parse(await readFile(mine, "utf8"))["layout:main-custom"]["cmd-p"], "mod.open:picker");
+    assert.match((await run(script, [ours, mine])).stdout, /kept your cmd-alt-n/);
+    assert.equal(JSON.parse(await readFile(mine, "utf8")).global["cmd-alt-n"], "space.new");
 
     assert.match((await run(script, [ours, `${dir}/missing.json`])).stdout, /not found/);
   } finally {

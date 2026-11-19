@@ -1,5 +1,5 @@
 {
-  "layout:main-custom": {
-    "cmd-p": "mod.open:find-file"
+  "global": {
+    "cmd-alt-n": "mod.open:find-file"
   }
 }

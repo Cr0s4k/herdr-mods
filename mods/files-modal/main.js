@@ -17,11 +17,12 @@ function location() {
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
-const SYMBOL = { cmd: "⌘", ctrl: "⌃", shift: "⇧", alt: "⌥" };
+const SYMBOL = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" }, ORDER = Object.keys(SYMBOL);
 
 function findFileLabel() {
   const k = keys().find(b => b.action === "mod.open:find-file");
-  return k ? `Find file  ${k.keys.split("-").map(p => SYMBOL[p] ?? p.toUpperCase()).join("")}` : "Find file";
+  const parts = k?.keys.split("-").sort((a, b) => (ORDER.indexOf(a) + 1 || 9) - (ORDER.indexOf(b) + 1 || 9));
+  return parts ? `Find file  ${parts.map(p => SYMBOL[p] ?? p.toUpperCase()).join("")}` : "Find file";
 }
 
 async function directory(path, on) {

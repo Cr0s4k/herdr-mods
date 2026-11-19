@@ -25,7 +25,7 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
 
 ## Find file
 
-**⌘P** (or the magnifier in the Files header) searches the focused pane's project by file name,
+**⌥⌘N** (or the magnifier in the Files header) searches the focused pane's project by file name,
 like VS Code's Go to File. Letters match in order with gaps between them, so `fmain` finds
 `files-modal/main.js`; a space separates words that all have to match. Matches in the file name,
 at the start of a word and in a run rank first. With nothing typed, it lists the files you
@@ -39,10 +39,10 @@ steps through the other matches. Esc closes.
   `node_modules`. Very large projects are cut at about 60,000 paths, and the popup says so.
 - The matching runs inside the mod, in the style of [fzf](https://github.com/junegunn/fzf),
   so nothing needs installing and it works on spaces on other machines.
-- ⌘P opens it only in the `main-custom` layout. Herdr's **Go to…** stays on the sidebar's
-  Search button, and on ⌘P in Herdr's own layouts. Install adds the key under
-  `layout:main-custom` in `~/.config/herdr-app/keys.json` and never replaces a key you set
-  there: to give ⌘P back to Go to…, set `"cmd-p": "mod.open:picker"` in that section.
+- Install adds the key to `global` in `~/.config/herdr-app/keys.json`, so it works in every
+  layout, and never replaces a key you set there. To use another key, bind it to
+  `mod.open:find-file` and set `"cmd-alt-n"` to something else; the Files button's tooltip
+  shows whichever key you chose.
 
 **Changes + terminal** is a separate action beside the Files, Changes, Show and Loops side-panel
 toggles. It opens Changes as a normal pane on the right, with a normal terminal pane below
