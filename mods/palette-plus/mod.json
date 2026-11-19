@@ -1,0 +1,15 @@
+{
+  "cloned_from": {
+    "name": "palette",
+    "version": "0.1.16"
+  },
+  "overlay": {
+    "at": "top",
+    "height": 0.8,
+    "kind": "popup",
+    "offset": 40,
+    "width": 620
+  },
+  "place": "none",
+  "title": "Command palette"
+}
