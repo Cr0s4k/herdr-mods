@@ -3,7 +3,7 @@ import { spaces, panes, focused, props, run, notify, nextCommand } from "herdr";
 
 const PANELS = {
   files: { mod: "files-pane", name: "Files" },
-  changes: { mod: "review-pane", name: "Changes" },
+  changes: { mod: "review-pane", name: "Git" },
   show: { mod: "show-pane", name: "Show" },
   loops: { mod: "loops-pane", name: "Loops" },
   brief: { mod: "brief-pane", name: "Brief" },

@@ -5,6 +5,7 @@ import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageCompare } from "./images.js";
 import { parseBranch, remoteGit } from "./sync.js";
+import { History, commitHeader } from "./history.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -88,14 +89,14 @@ function parseAnsi(text) {
   });
 }
 
-async function highlighted({ root, on, hasHead, base }, file) {
+async function highlighted({ root, on, hasHead, base, head }, file) {
   const run = async (script, args) => {
     const r = await exec("sh", ["-c", script, "sh", ...args], { cwd: root, on }).catch(() => null);
     return r?.code === 0 && r.stdout.length < 2000000 ? parseAnsi(r.stdout) : null;
   };
   const [old, now] = await Promise.all([
     hasHead && !file.fresh && file.status !== "A" ? run(`git show "$2:$1" | { ${bat()} --file-name "$1"; }`, [file.path, base ?? "HEAD"]) : null,
-    file.status !== "D" ? run(`${bat()} -- "$1"`, [file.path]) : null,
+    file.status === "D" ? null : head ? run(`git show "$2:$1" | { ${bat()} --file-name "$1"; }`, [file.path, head]) : run(`${bat()} -- "$1"`, [file.path]),
   ]);
   return { old, now };
 }
@@ -112,7 +113,7 @@ const statusColor = (s, t) => s === "A" ? t.ansi2 : s === "D" || s === "U" ? t.a
 
 export default class Changes extends View {
   init(_props, cx) {
-    bindMoveCommand(this, "changes", cx, () => ({ message: this.message, context: this.context }));
+    bindMoveCommand(this, "changes", cx, () => ({ message: this.message, context: this.context, tab: this.tab }));
     this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
     cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);
@@ -125,6 +126,8 @@ export default class Changes extends View {
     this.input.on("submit", (_e, cx) => this.commit(cx));
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
+    this.tab = "changes";
+    if (props()?.panelState?.tab === "history") this.select("history", cx);
     this.refresh(cx);
     const draft = props()?.panelState;
     if (draft?.message && (!draft.context || draft.context === this.context)) {
@@ -199,6 +202,7 @@ export default class Changes extends View {
     if (context !== this.context) {
       this.context = context; this.root = null; this.sync = null; this.files = []; this.open = null;
       this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note = null; this.watched = null; this.closed = false; this.limited = false;
+      this.history?.reset();
     }
     if (!cwd) return;
     this.loading = true;
@@ -235,6 +239,7 @@ export default class Changes extends View {
         this.root = root; this.on = on; this.sync = parseBranch(header); this.hasHead = head.code === 0; this.files = files; this.limited = entries.length > 1000; this.error = null;
         this.watch(root, cx);
         if (this.fetchedRoot !== root) this.fetch(cx);
+        if (this.tab === "history") this.history.load(cx);
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
         if (this.open) {
           try { await this.load(this.open, context); }
@@ -258,7 +263,7 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 5000).map(l => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? [this.base ?? "HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? [this.base ?? "HEAD"] : []), ...(this.head ? [this.head] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
@@ -308,7 +313,7 @@ export default class Changes extends View {
   }
 
   initViewer(p, cx) {
-    this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.base = p.base ?? null; this.index = p.index ?? 0;
+    this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.base = p.base ?? null; this.head = p.head ?? null; this.commit = p.commit ?? null; this.index = p.index ?? 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.show(this.index, cx);
@@ -323,7 +328,7 @@ export default class Changes extends View {
         const stage = (rev) => stageImage(this.root, file.path, rev).catch(() => null);
         const [before, after] = await Promise.all([
           this.hasHead && !file.fresh && file.status !== "A" ? stage(this.base ?? "HEAD") : undefined,
-          file.status !== "D" ? stage() : undefined,
+          file.status !== "D" ? stage(this.head ?? undefined) : undefined,
         ]);
         if (this.index !== index) return;
         this.pictures = { before, after }; this.loadingDiff = false;
@@ -378,6 +383,20 @@ export default class Changes extends View {
       .child(this.half(r.right, t));
   }
 
+  select(tab, cx) {
+    this.tab = tab;
+    if (tab === "history") { this.history ??= new History(this); this.history.load(cx); }
+    cx.notify();
+  }
+
+  tabButton(id, label, count, t) {
+    const on = this.tab === id;
+    return h_flex().id(`git-tab-${id}`).h(26).px(9).gap(6).flex_none().items_center().rounded(6).cursor_pointer().text_size(12)
+      .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.select(id, cx)).child(label)
+      .when(count !== null, (e) => e.child(div().text_size(11).text_color(t.muted).child(String(count))));
+  }
+
   button(id, label, on, active, t, name) {
     return div().id(id).when(Boolean(name), (e) => e.tooltip(name).accessibility_label(name)).h(26).px(10).flex().items_center().rounded(6).cursor_pointer().text_size(12)
       .bg(active ? t.selected : t.background).border_1().border_color(t.border).hover((s) => s.bg(t.hover))
@@ -400,6 +419,7 @@ export default class Changes extends View {
         else return;
         cx.stop_propagation();
       })
+      .when(Boolean(this.commit), (e) => e.child(commitHeader(this.commit, t)))
       .child(h_flex().h(48).flex_none().px(16).gap(10).items_center().border_b(1).border_color(t.border)
         .child(div().w(14).text_size(12).text_color(statusColor(file.status, t)).child(file.status))
         .child(fileIcon(file.path, {}, t))
@@ -447,13 +467,16 @@ export default class Changes extends View {
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
       })
-      .when(!this.embedded, el => el.child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Changes"))
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(11).text_color(t.muted).child(`${this.files.length} files`))
-        .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
-        .child(moveToPaneButton("changes", { message: this.message, context: this.context }, t))))
+      .child(h_flex().h(this.embedded ? 38 : 42).flex_none().px(this.embedded ? 8 : 14).gap(4).items_center().border_b(1).border_color(t.border)
+        .when(!this.embedded, el => el.child(div().font_semibold().mr(6).child("Git")))
+        .child(this.tabButton("changes", "Changes", this.files.length, t))
+        .child(this.tabButton("history", "History", null, t))
+        .child(div().flex_1())
+        .when(this.tab === "changes", el => el.child(h_flex().gap(8).mr(4).text_size(11).child(div().text_color(t.ansi2).child(`+${add}`)).child(div().text_color(t.ansi1).child(`−${del}`))))
+        .when(!this.embedded, el => el.child(moveToPaneButton("changes", { message: this.message, context: this.context, tab: this.tab }, t))))
+      .when(this.tab === "history", el => el.child(this.history.render(t)))
       // Keep flex sizing on the panel child; the scroll region fills its bounds.
-      .child(div().flex_1().min_h(0).relative()
+      .when(this.tab === "changes", el => el.child(div().flex_1().min_h(0).relative()
         .child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f, i) => {
         const parts = f.path.split("/"), name = parts.pop();
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => this.view(i))
@@ -462,11 +485,11 @@ export default class Changes extends View {
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.muted).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
       })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.muted).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
-        .child(Scrollbar.vertical("changes-list").absolute().inset_0()))
-      .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.muted).child("Showing the first 1,000 changed files")))
+        .child(Scrollbar.vertical("changes-list").absolute().inset_0())))
+      .when(this.tab === "changes" && this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.muted).child("Showing the first 1,000 changed files")))
       .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)))
       .when(Boolean(this.sync) && shared("features")?.syncBar !== false, el => el.child(this.syncBar(t)))
-      .when(shared("features")?.commitBox !== false, el => el.child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
+      .when(this.tab === "changes" && shared("features")?.commitBox !== false, el => el.child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
         .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit"))));
   }

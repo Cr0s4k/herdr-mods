@@ -5,7 +5,7 @@ export const GROUPS = ["Panel", "Pipeline", "Review"];
 
 const PANELS = [
   ["files", "Files", "files-modal", "tree explorer browse"],
-  ["changes", "Changes", "changes-modal", "git diff commit uncommitted"],
+  ["changes", "Git", "changes-modal", "changes diff commit uncommitted history log commits branches graph"],
   ["show", "Show", "show", "screenshots images markup draw"],
   ["brief", "Brief", "brief", "since you left feed summary finished"],
   ["loops", "Loops", "loops", "goals scheduled loop"],

@@ -67,6 +67,13 @@ test("a subfolder uses origin and requests a new Firefox tab locally", async t =
   assert.deepEqual(world.calls[1], { command: "open", args: ["-na", "Firefox", "--args", "--new-tab", "https://github.com/Owner/repo"], options: undefined });
 });
 
+test("a commit opens at its own page under the repository", async t => {
+  const cwd = await repository(t);
+  git(cwd, "remote", "add", "origin", "https://github.com/Owner/repo.git");
+  await openRepository({ cwd, on: null }, "macos", "/commit/abc123");
+  assert.deepEqual(world.calls[1].args, ["-na", "Firefox", "--args", "--new-tab", "https://github.com/Owner/repo/commit/abc123"]);
+});
+
 test("a worktree resolves rewritten SSH URLs and falls back to a GitHub upstream", async t => {
   const cwd = await repository(t), worktree = join(cwd, "linked checkout");
   git(cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "initial", "--allow-empty");

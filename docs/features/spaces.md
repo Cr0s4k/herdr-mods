@@ -24,7 +24,7 @@ renames it. Here a space is locked to the first place it has outside your home f
 takes that repo's (or folder's) name as its own, and the sidebar and the status bar keep
 showing that folder's repo and branch wherever its terminals go. A space opened at `~` waits
 for its first `cd`. To move a space, right-click → rename it to nothing: it locks again to
-where its first terminal is now. Files and Changes still follow the focused terminal.
+where its first terminal is now. Files and Git still follow the focused terminal.
 
 A Pipeline task's worktree could also rename the whole space. While one of its terminals, or the folder it was made in, is in the
 repo's main checkout, the sidebar keeps the space there and under the repo's name (a name you

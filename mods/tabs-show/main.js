@@ -263,7 +263,7 @@ export default class Tabs extends View {
       .when(enabled.includes("changes"), el => el.child(reviewButton)
         .child(div().w(1).h(16).mx(7).flex_none().bg(t.border)))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
-      .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
+      .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Git", "mods/changes-modal/git.svg")))
       .child(panelButton("show", "Show", "mods/show/show.svg"))
       .when(loopsOn, el => el.child(panelButton("loops", "Loops", "mods/loops/loops.svg")))
       .when(skillsOn, el => el.child(panelButton("skills", "Skills", "mods/skills/skills.svg")))

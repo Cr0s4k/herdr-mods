@@ -1,7 +1,10 @@
-# Files and Changes in a dialog
+# Files and Git in a dialog
 
-The Files and Changes panels only list; clicking a file opens it in a large dialog instead of
+The Files and Git panels only list; clicking a file opens it in a large dialog instead of
 the narrow panel. ↑/↓ steps through the listed files, Esc closes.
+
+**Git** is Herdr's Changes panel, renamed. It has two tabs: **Changes**, your uncommitted
+files, and **History**, the commits (see [History](#history)).
 
 - **Files** shows the file with syntax highlighting (Herdr's code view).
   Use **Collapse all folders** in its header to close every expanded folder at once.
@@ -20,7 +23,7 @@ the narrow panel. ↑/↓ steps through the listed files, Esc closes.
   The bottom status bar shows the same counts beside the space's branch (`main ↑2 ↓1`), only when
   there is something to push or pull. Click **↓N** to pull or **↑N** to push; a failure shows in
   red beside them for a few seconds. It checks every 10 seconds and fetches every 3 minutes.
-- Both use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
+- Files and Git use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
 
 ## Find file
@@ -45,19 +48,41 @@ steps through the other matches. Esc closes.
   command palette show your key.
 - The [command palette](palette.md) lists it as **Find file…**.
 
-**Changes + terminal** is a separate action beside the Files, Changes, Show and Loops side-panel
-toggles. It opens Changes as a normal pane on the right, with a normal terminal pane below
+**Changes + terminal** is a separate action beside the Files, Git, Show and Loops side-panel
+toggles. It opens Git as a normal pane on the right, with a normal terminal pane below
 it, starting at equal height. Once open, the action becomes **Focus changes** and returns
 to that pane without creating another terminal or closing your chosen side panel.
 Pane navigation, swapping, dragging, splitting, zooming and closing use Herdr's usual
 shortcuts and controls. The arrangement belongs to its tab and Herdr remembers it.
-**Changes** toggles the normal side panel, just like Files, Show and Loops. It works
+**Git** toggles the normal side panel, just like Files, Show and Loops. It works
 independently of the review panes, so either view is available when you want it.
 
-Files, Changes, Show and Loops each have a **Move to pane** icon in their side-panel header.
+Files, Git, Show and Loops each have a **Move to pane** icon in their side-panel header.
 It opens that view as a normal pane in the current tab, then hides the side panel. New panes
-keep the current folder expansion, commit draft or filters. If that view already has a pane
+keep the current folder expansion, commit draft, Git tab or filters. If that view already has a pane
 in the tab, the action focuses it and keeps its existing state. These panes support the usual
 navigation, drag, split, zoom and close controls. Use the toolbar toggle whenever you want
 the side panel again. Moving a panel does not start a terminal; **Changes + terminal**
 remains the shortcut for the paired layout.
+
+## History
+
+- Lists the latest 1,000 commits, newest first, with a graph of where branches fork and merge.
+  **All branches** (on by default) includes every local branch, remote branch and tag; off, only
+  the checked-out branch. Branch, remote and tag names sit on the commit they point at; the
+  checked-out branch is highlighted and its commit's dot is a ring.
+- **↑ not pushed** marks commits of the checked-out branch that no remote has yet.
+- The search box filters by message, author, hash or branch name; every word must match. The
+  graph hides while you search.
+- Click a commit for its details under the list; double-click to go straight to its diff.
+  - **View changes** opens its files and diffs in the same dialog as Changes, compared with its
+    first parent.
+  - **Copy hash** copies the full hash.
+  - **GitHub** opens the commit on GitHub, the same way the tab bar's GitHub button opens the
+    repository. It shows only when the repository has a GitHub remote, and works once the
+    commit is pushed.
+  - **Revert** asks first, then makes a new commit that undoes it. It works on commits of the
+    checked-out branch, not on merge commits, and only with no uncommitted changes to tracked
+    files. If Git stops on a conflict, the revert is undone and the error shows in red.
+- It re-reads the log when a branch, tag or `HEAD` moves, checked when the folder changes and
+  every 10 seconds.

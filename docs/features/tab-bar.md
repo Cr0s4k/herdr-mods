@@ -13,8 +13,8 @@ open the browser on this computer.
 The switch icon in the tab bar, after GitHub, opens **Features**: on/off switches for parts
 of the mods. Everything is on until you switch it off, and changes apply at once.
 
-- **Commit message box**: the message field and Commit button at the bottom of Changes.
-- **Push and pull**: the branch bar with ahead/behind counts and Push/Pull in Changes.
+- **Commit message box**: the message field and Commit button at the bottom of Git's Changes tab.
+- **Push and pull**: the branch bar with ahead/behind counts and Push/Pull in Git.
 - **Loops**: the Loops button in the tab bar and its side panel.
 - **Skills**: the Skills button in the tab bar and its side panel.
 - **Watchers**: the Watchers button in the tab bar and its side panel. Off, watchers still

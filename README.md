@@ -19,7 +19,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 |---|---|---|
 | **Pipeline** | Queue tasks, typed or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
-| **Files and Changes** | Files and diffs open in a large dialog, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
+| **Files and Git** | Files and diffs open in a large dialog, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
 | **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
 | **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
@@ -102,15 +102,15 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/show/herdr-show` | Show: the command that posts images and saves markups (Python) |
 | `mods/show/render.swift` | Show: burns the drawn marks into a PNG; compiled on first use to `~/.cache/herdr-show/render` |
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
-| `mods/files-modal/icons.js` | File and folder icon lookup, shared with Changes (`mods/changes-modal/icons.js` is a symlink; install copies it) |
+| `mods/files-modal/icons.js` | File and folder icon lookup, shared with Git (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/find-file/` | Find file: the ⇧⌘N popup, and `match.js`, its fzf-style matcher |
 | `keys.json`, `scripts/keys.sh` | The shortcuts install adds to Herdr's `keys.json`, and the script that adds them without replacing yours |
-| `mods/changes-modal/` | Herdr's Changes panel, cloned: the panel lists files, the diff opens in a dialog |
-| `mods/review-pane/` | Changes inside a normal pane, sharing the existing view through a symlink |
+| `mods/changes-modal/` | Herdr's Changes panel, cloned and named Git: the Changes tab lists files, the History tab (`history.js`) lists commits, diffs open in a dialog |
+| `mods/review-pane/` | Git inside a normal pane, sharing the existing view through a symlink |
 | `mods/files-pane/`, `mods/show-pane/`, `mods/loops-pane/` | Normal pane versions of the existing panels, sharing their views through symlinks |
 | `mods/tabs-show/panel-actions.js` | Shared Move to pane action and keyboard-focus handling |
-| `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Changes title for review panes |
+| `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Git title for review panes |
 | `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
 | `mods/loops/` | Codex, Claude and OpenCode goals and scheduled loops panel, with Python readers |
 | `mods/skills/`, `mods/skills-pane/` | Skills inventory and reader, with shared-file deduplication, scope and agent filters, and a normal pane view |

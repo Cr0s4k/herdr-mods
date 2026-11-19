@@ -1,6 +1,6 @@
 # Show
 
-A **Show** panel (top right, next to Files and Changes). Claude or Codex posts screenshots there; you
+A **Show** panel (top right, next to Files and Git). Claude or Codex posts screenshots there; you
 mark them up, send them back, and the fixed screenshot lands underneath.
 
 ```

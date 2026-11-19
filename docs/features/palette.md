@@ -6,7 +6,7 @@ it too. Herdr's macOS menu item and Herdr's own layouts still open the plain pal
 
 What it adds:
 
-- **Panel**: [Find file…](files-and-changes.md#find-file), open or close each side panel (Files, Changes, Show, Brief, Loops, Skills,
+- **Panel**: [Find file…](files-and-changes.md#find-file), open or close each side panel (Files, Git, Show, Brief, Loops, Skills,
   Watchers, Tasks, Linear), and move the open one into a pane. Panels switched off in Feature
   toggles stay out.
 - **Pipeline**: open this space's Pipeline, start or pause it, add a task, merge or approve

@@ -182,7 +182,7 @@ test("the normal Changes side panel can close and restore per space independentl
 
 test("Changes is a distinct action that explains the terminal before opening", async () => {
   const tabs = setupTabs(), root = tabs.render(), button = find(root, "review-changes");
-  assert.match(find(root, "panel-changes").styles.tooltip[0], /Changes side panel/);
+  assert.match(find(root, "panel-changes").styles.tooltip[0], /Git side panel/);
   assert.match(text(button), /Changes \+ terminal/);
   assert.match(button.styles.tooltip[0], /terminal underneath in this tab/);
   button.handlers.click({}, cx);

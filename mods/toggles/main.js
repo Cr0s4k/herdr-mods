@@ -12,8 +12,8 @@ function find(node, id) {
 }
 
 export const FEATURES = [
-  ["commitBox", "Commit message box", "Message field and Commit button in Changes"],
-  ["syncBar", "Push and pull", "Branch, commits ahead and behind, Push and Pull in Changes"],
+  ["commitBox", "Commit message box", "Message field and Commit button in Git"],
+  ["syncBar", "Push and pull", "Branch, commits ahead and behind, Push and Pull in Git"],
   ["loops", "Loops", "Loops button and side panel"],
   ["skills", "Skills", "Skills button and side panel"],
   ["watchers", "Watchers", "Watchers button and side panel; watchers keep checking"],

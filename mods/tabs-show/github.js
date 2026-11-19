@@ -18,7 +18,7 @@ export function githubUrl(remote) {
   return `https://github.com/${match[1]}/${match[2]}`;
 }
 
-export async function openRepository(context, platform) {
+export async function openRepository(context, platform, path = "") {
   if (!context.cwd) throw new Error("Select a project folder, then try GitHub again.");
   const result = await exec("git", ["remote", "-v"], context);
   if (result.code !== 0) throw new Error("This folder is not a Git repository. Select a repository, then try again.");
@@ -32,15 +32,15 @@ export async function openRepository(context, platform) {
 
   // Open the browser on this computer, even when Git ran on a remote machine.
   // -n delivers --new-tab even when Firefox is already running; Firefox forwards it.
-  const mac = platform === "macos";
+  const mac = platform === "macos", url = remote.url + path;
   const attempts = [
-    mac ? ["open", ["-na", "Firefox", "--args", "--new-tab", remote.url]] : ["firefox", ["--new-tab", remote.url]],
-    [mac ? "open" : "xdg-open", [remote.url]],
+    mac ? ["open", ["-na", "Firefox", "--args", "--new-tab", url]] : ["firefox", ["--new-tab", url]],
+    [mac ? "open" : "xdg-open", [url]],
   ];
   for (const [command, args] of attempts) {
     try { if ((await exec(command, args)).code === 0) return; } catch {}
   }
-  throw new Error(`Could not open a browser. Open ${remote.url} yourself.`);
+  throw new Error(`Could not open a browser. Open ${url} yourself.`);
 }
 
 export class GitHubRepo {
