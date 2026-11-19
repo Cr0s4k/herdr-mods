@@ -472,7 +472,7 @@ export default class Changes extends View {
         .child(this.tabButton("changes", "Changes", this.files.length, t))
         .child(this.tabButton("history", "History", null, t))
         .child(div().flex_1())
-        .when(this.tab === "changes", el => el.child(h_flex().gap(8).mr(4).text_size(11).child(div().text_color(t.ansi2).child(`+${add}`)).child(div().text_color(t.ansi1).child(`−${del}`))))
+        .when(this.tab === "changes" && !this.embedded, el => el.child(h_flex().gap(8).mr(4).text_size(11).child(div().text_color(t.ansi2).child(`+${add}`)).child(div().text_color(t.ansi1).child(`−${del}`))))
         .when(!this.embedded, el => el.child(moveToPaneButton("changes", { message: this.message, context: this.context, tab: this.tab }, t))))
       .when(this.tab === "history", el => el.child(this.history.render(t)))
       // Keep flex sizing on the panel child; the scroll region fills its bounds.
