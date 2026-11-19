@@ -1,11 +1,12 @@
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageCompare } from "./images.js";
 import { parseBranch, remoteGit } from "./sync.js";
 import { History, commitHeader } from "./history.js";
+import { Motions, target, viewTop, changeStarts } from "./vim.js";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -39,6 +40,7 @@ function diffRows(lines) {
 }
 
 const SPLIT = "changes-modal.split";
+const ROW = 22, ASIDE = 260;
 
 function splitRows(rows) {
   const out = [];
@@ -314,6 +316,7 @@ export default class Changes extends View {
 
   initViewer(p, cx) {
     this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.base = p.base ?? null; this.head = p.head ?? null; this.commit = p.commit ?? null; this.index = p.index ?? 0;
+    this.vim = new Motions(); this.scroll = VirtualListScrollHandle.new(); this.fileScroll = VirtualListScrollHandle.new(); this.bodyHeight = 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.show(this.index, cx);
@@ -323,6 +326,7 @@ export default class Changes extends View {
     if (index < 0 || index >= this.files.length) return;
     const file = this.files[index], context = key();
     this.index = index; this.open = file.path; this.setLines([]); this.split = null; this.loadingDiff = true; this.pictures = null;
+    this.cursor = 0; this.top = 0; this.scroll.scroll_to_item(0); this.fileScroll.scroll_to_item(index);
     if (isImage(file.path) && !this.on) {
       cx.spawn(async (cx) => {
         const stage = (rev) => stageImage(this.root, file.path, rev).catch(() => null);
@@ -358,29 +362,83 @@ export default class Changes extends View {
       .children(spans.map((s) => div().flex_none().when(s.color !== null, (e) => e.text_color(typeof s.color === "string" ? s.color : t[`ansi${s.color}`])).child(s.text)));
   }
 
-  row({ kind, number, text, spans }, t) {
-    if (kind === "@") return div().w_full().px(12).h(22).flex_none().flex().items_center().truncate().bg(t.raised).text_color(t.muted).child(text);
-    return h_flex().w_full().h(22).flex_none().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
-      .child(div().w(40).flex_none().text_right().text_color(t.dim).child(number === undefined ? "" : String(number)))
+  cursorMark(t) {
+    return div().absolute().inset_0().bg(t.accent + "1f").border_l(2).border_color(t.accent);
+  }
+
+  row({ kind, number, text, spans }, t, here) {
+    if (kind === "@") return div().w_full().px(12).h(ROW).flex_none().relative().flex().items_center().truncate().bg(t.raised).text_color(t.muted)
+      .when(here, (e) => e.child(this.cursorMark(t))).child(text);
+    return h_flex().w_full().h(ROW).flex_none().relative().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
+      .when(here, (e) => e.child(this.cursorMark(t)))
+      .child(div().w(40).flex_none().text_right().text_color(here ? t.foreground : t.dim).child(number === undefined ? "" : String(number)))
       .child(div().w(10).flex_none().text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.dim).child(kind === " " ? "" : kind))
       .child(this.code(text, spans, t));
   }
 
-  half(side, t) {
+  half(side, t, here) {
     return h_flex().flex_1().min_w(0).h_full().gap(12).overflow_hidden()
       .when(!side, (e) => e.bg(t.raised + "80"))
       .when(side?.kind === "+", (e) => e.bg(t.ansi2 + "18")).when(side?.kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .when(Boolean(side), (e) => e
-        .child(div().w(40).flex_none().text_right().text_color(t.dim).child(String(side.number)))
+        .child(div().w(40).flex_none().text_right().text_color(here ? t.foreground : t.dim).child(String(side.number)))
         .child(this.code(side.text, side.spans, t)));
   }
 
-  splitRow(r, t) {
-    if (!("left" in r)) return this.row(r, t);
-    return h_flex().w_full().h(22).flex_none()
-      .child(this.half(r.left, t))
+  splitRow(r, t, here) {
+    if (!("left" in r)) return this.row(r, t, here);
+    return h_flex().w_full().h(ROW).flex_none().relative()
+      .child(this.half(r.left, t, here))
       .child(div().w(1).h_full().flex_none().bg(t.border))
-      .child(this.half(r.right, t));
+      .child(this.half(r.right, t, here))
+      .when(here, (e) => e.child(this.cursorMark(t)));
+  }
+
+  go({ motion, count }, rows, split, cx) {
+    const total = rows.length, page = Math.floor(this.bodyHeight / (ROW * (Number(settings().zoom) || 1))) || 30;
+    if (!total) return;
+    const top = Math.min(this.top, total - 1), at = Math.max(top, Math.min(top + page, this.cursor));
+    const changed = rows.map((r) => split ? r.left?.kind === "-" || r.right?.kind === "+" : r.kind === "-" || r.kind === "+");
+    const to = target(motion, count, at, total, page, changeStarts(changed)), next = viewTop(motion, at, to, top, page, total);
+    if (next > top) this.scroll.scroll_to_item(Math.min(total - 1, next + page - 1));
+    else if (next < top) this.scroll.scroll_to_item(next);
+    this.cursor = to; this.top = next;
+    cx.notify();
+  }
+
+  setSplit(on, cx) {
+    const split = this.split ?? splitRows(this.rows);
+    if (on) {
+      const r = this.rows[this.cursor];
+      this.cursor = Math.max(0, split.findIndex((s) => s === r || s.left === r || s.right === r));
+    } else {
+      const s = split[this.cursor];
+      this.cursor = s ? Math.max(0, this.rows.indexOf(s.right ?? s.left ?? s)) : 0;
+    }
+    this.split = split;
+    this.scroll.scroll_to_item(this.cursor);
+    setShared(SPLIT, on);
+    cx.notify();
+  }
+
+  fileRow(f, current, t) {
+    const parts = f.path.split("/"), name = parts.pop();
+    return h_flex().w_full().h(28).flex_none().px(10).gap(6).items_center().cursor_pointer().text_size(12)
+      .when(current, (e) => e.bg(t.selected)).when(!current, (e) => e.hover((s) => s.bg(t.hover)))
+      .child(div().w(12).flex_none().text_size(11).text_color(statusColor(f.status, t)).child(f.status))
+      .child(fileIcon(f.path, {}, t))
+      .child(div().min_w(0).truncate().when(current, (e) => e.font_semibold()).child(name))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(parts.join("/")))
+      .when(f.add > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${f.add}`)))
+      .when(f.del > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
+  }
+
+  fileList(t) {
+    return div().w(ASIDE).h_full().flex_none().relative().py(6).border_r(1).border_color(t.border)
+      .child(v_virtual_list("changes-modal-files", this.files.length, 28, (i) => String(i),
+        (range) => this.files.slice(range.start, range.end).map((f, k) => this.fileRow(f, range.start + k === this.index, t)))
+        .track_scroll(this.fileScroll).size_full().on_item_click((i, cx) => this.show(Number(i), cx)))
+      .child(Scrollbar.vertical("changes-modal-files").viewport_from_layout().absolute().inset_0());
   }
 
   select(tab, cx) {
@@ -407,14 +465,17 @@ export default class Changes extends View {
     const t = theme(), file = this.files[this.index], split = shared(SPLIT) !== false;
     if (!file) return div().size_full().bg(t.background);
     if (split && !this.split) this.split = splitRows(this.rows);
-    const rows = split ? this.split : this.rows;
-    const parts = file.path.split("/"), name = parts.pop();
+    const rows = split ? this.split : this.rows, cursor = Math.min(this.cursor, Math.max(0, rows.length - 1));
+    const parts = file.path.split("/"), name = parts.pop(), aside = this.files.length > 1;
     const step = (d, cx) => this.show(this.index + d, cx);
     return v_flex().id("changes-viewer").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_key_down((e, cx) => {
-        if (["down", "right", "j"].includes(e.key)) step(1, cx);
-        else if (["up", "left", "k"].includes(e.key)) step(-1, cx);
-        else if (e.key === "s") { setShared(SPLIT, !split); cx.notify(); }
+        const motion = this.pictures ? null : this.vim.read(e);
+        if (motion?.motion) this.go(motion, rows, split, cx);
+        else if (motion) cx.notify();
+        else if (["down", "right"].includes(e.key)) step(1, cx);
+        else if (["up", "left"].includes(e.key)) step(-1, cx);
+        else if (e.key === "s" && !this.pictures) this.setSplit(!split, cx);
         else if (e.key === "escape") closeOverlay(props().overlay);
         else return;
         cx.stop_propagation();
@@ -428,25 +489,39 @@ export default class Changes extends View {
         .when(file.del > 0, (e) => e.child(div().text_size(12).text_color(t.ansi1).child(`−${file.del}`)))
         .child(div().flex_1())
         .when(!this.pictures, (e) => e.child(h_flex().gap(4)
-          .child(this.button("cm-unified", "Unified", () => setShared(SPLIT, false), !split, t))
-          .child(this.button("cm-split", "Split", () => setShared(SPLIT, true), split, t))))
+          .child(this.button("cm-unified", "Unified", (cx) => split && this.setSplit(false, cx), !split, t))
+          .child(this.button("cm-split", "Split", (cx) => !split && this.setSplit(true, cx), split, t))))
         .child(div().w(8))
         .child(this.button("cm-prev", "↑", (cx) => step(-1, cx), false, t, "Previous file"))
         .child(div().text_size(12).text_color(t.muted).child(`${this.index + 1} / ${this.files.length}`))
         .child(this.button("cm-next", "↓", (cx) => step(1, cx), false, t, "Next file"))
         .child(div().w(8))
         .child(this.button("cm-close", "✕", () => closeOverlay(props().overlay), false, t, "Close")))
-      .when(Boolean(this.pictures), (e) => e.child(imageCompare(this.pictures.before, this.pictures.after, t)))
-      .when(!this.pictures, (e) => e.child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
-        .when(split, (e) => e.child(v_virtual_list("changes-modal-diff", rows.length, 22, (i) => String(i),
-          (range) => rows.slice(range.start, range.end).map((r) => this.splitRow(r, t))).size_full()))
-        .when(!split, (e) => e.child(div().id("changes-modal-x").size_full().overflow_x_scrollbar()
-          .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-modal-diff", rows.length, 22, (i) => String(i),
-            (range) => rows.slice(range.start, range.end).map((r) => this.row(r, t))).size_full()))))
-        .child(Scrollbar.vertical("changes-modal-diff").viewport_from_layout().absolute().inset_0())
-        .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.muted).child("Loading…")))))
+      .child(div().flex().flex_1().min_h(0)
+        .when(aside, (e) => e.child(this.fileList(t)))
+        .child(v_flex().flex_1().min_w(0).h_full()
+          .when(Boolean(this.pictures), (e) => e.child(imageCompare(this.pictures.before, this.pictures.after, t, aside ? ASIDE : 0)))
+          .when(!this.pictures, (e) => e.child(this.diff(rows, split, cursor, t)))))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
-        .child("↑ ↓ file").when(!this.pictures, (e) => e.child("S split / unified")).child("Esc close"));
+        .child("↑ ↓ file")
+        .when(!this.pictures, (e) => e.child("j k line, 10j").child("⌃D ⌃U half page").child("gg G top, bottom").child("]c [c change").child("S split / unified"))
+        .child("Esc close")
+        .child(div().flex_1())
+        .when(Boolean(this.vim.typed), (e) => e.child(div().text_color(t.foreground).child(this.vim.typed))));
+  }
+
+  diff(rows, split, cursor, t) {
+    const list = (draw) => v_virtual_list("changes-modal-diff", rows.length, ROW, (i) => String(i), (range) => {
+      this.top = range.start;
+      return rows.slice(range.start, range.end).map((r, k) => draw(r, range.start + k === cursor));
+    }).track_scroll(this.scroll).size_full().on_item_click((i, cx) => { this.cursor = Number(i); cx.notify(); });
+    return div().id("changes-modal-body").flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
+      .on_size_change((size) => { this.bodyHeight = size.height; })
+      .when(split, (e) => e.child(list((r, here) => this.splitRow(r, t, here))))
+      .when(!split, (e) => e.child(div().id("changes-modal-x").size_full().overflow_x_scrollbar()
+        .child(div().w_full().min_w(this.diffWidth).h_full().child(list((r, here) => this.row(r, t, here))))))
+      .child(Scrollbar.vertical("changes-modal-diff").viewport_from_layout().absolute().inset_0())
+      .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_color(t.muted).child("Loading…")));
   }
 
   diffRow({ kind, number, text }, t) {

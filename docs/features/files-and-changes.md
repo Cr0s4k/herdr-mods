@@ -1,7 +1,8 @@
 # Files and Git in a dialog
 
 The Files and Git panels only list; clicking a file opens it in a large dialog instead of
-the narrow panel. ↑/↓ steps through the listed files, Esc closes.
+the narrow panel. ↑/↓ steps through the listed files, Esc closes, and Vim's keys move
+through the file (see [Keys in the dialog](#keys-in-the-dialog)).
 
 **Git** is Herdr's Changes panel, renamed. It has two tabs: **Changes**, your uncommitted
 files, and **History**, the commits (see [History](#history)).
@@ -9,7 +10,8 @@ files, and **History**, the commits (see [History](#history)).
 - **Files** shows the file with syntax highlighting (Herdr's code view).
   Use **Collapse all folders** in its header to close every expanded folder at once.
 - **Changes** shows the diff, **Split** (old and new side by side) or **Unified** (`S` toggles,
-  and the choice sticks). Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
+  and the choice sticks). When there is more than one file, every file sits in a list on the
+  left with its status and +/− counts; click one to open it. The list follows ↑/↓. Diffs are syntax-highlighted with [`bat`](https://github.com/sharkdp/bat)
   when it's installed (`brew install bat`), in the theme's terminal colors; without it they're plain.
 - Images (PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, TIFF) show as pictures: in Files on their own,
   in Changes as **Before** (`HEAD`) and **After** (working copy) side by side, like GitHub. SVGs
@@ -25,6 +27,26 @@ files, and **History**, the commits (see [History](#history)).
   red beside them for a few seconds. It checks every 10 seconds and fetches every 3 minutes.
 - Files and Git use VS Code's [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)
   file and folder icons (MIT, vendored in `mods/files-modal/icons/`; `scripts/icons.sh` updates them).
+
+## Keys in the dialog
+
+Like Vim, a number before a key repeats it: `10j` moves ten lines down.
+
+| Key | Moves |
+|---|---|
+| `j` / `k` | a line down / up |
+| `⌃D` / `⌃U` | half a screen down / up, scrolling with it (`20⌃D`: 20 lines) |
+| `⌃F` / `⌃B`, Page Down / Page Up | a screen down / up |
+| `gg` / `G` | to the top / bottom; `42G` to line 42 |
+| `]c` / `[c` | to the next / previous change (Git only) |
+| ↑ / ↓ | to the next / previous file |
+
+- In a diff the line under the cursor is marked; clicking a line moves it there. The view
+  keeps three lines around it, and a long jump such as `G` centres it. The footer shows a
+  count or `g` while you type it; Esc drops it.
+- In Files the cursor is Herdr's code-view caret: its line number lights up and the footer
+  shows `Ln 42 / 300`. Clicking into the text hands the keyboard to the code view, so ↑/↓
+  then move its caret instead of changing file.
 
 ## Find file
 

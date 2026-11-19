@@ -38,17 +38,17 @@ function frame(pic, color, t, room) {
 }
 
 // The dialog is 90% of the window; the rest is its header, footer, padding and captions.
-const room = (sides, label) => {
+const room = (sides, label, aside = 0) => {
   const v = globalThis.window.viewport_size();
-  return { width: (v.width * 0.9 - 32 - 16 * (sides - 1)) / sides - 34, height: v.height * 0.9 - 78 - 32 - 54 - (label ? 24 : 0) };
+  return { width: (v.width * 0.9 - aside - 32 - 16 * (sides - 1)) / sides - 34, height: v.height * 0.9 - 78 - 32 - 54 - (label ? 24 : 0) };
 };
 
 export function imageView(pic, t) {
   return v_flex().flex_1().min_h(0).p(16).child(frame(pic, null, t, room(1, false)));
 }
 
-export function imageCompare(before, after, t) {
-  const sides = Number(before !== undefined) + Number(after !== undefined), space = room(sides, true);
+export function imageCompare(before, after, t, aside = 0) {
+  const sides = Number(before !== undefined) + Number(after !== undefined), space = room(sides, true, aside);
   const side = (label, pic, color) => v_flex().flex_1().min_w(0).min_h(0).gap(6)
     .child(div().flex_none().text_size(12).font_semibold().text_color(color).child(label))
     .child(frame(pic, color, t, space));

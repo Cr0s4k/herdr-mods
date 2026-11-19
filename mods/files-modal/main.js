@@ -5,6 +5,7 @@ import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, setting
 import { iconsReady, fileIcon } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageView } from "./images.js";
+import { Motions, target, viewTop, lineStarts, lineAt } from "./vim.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -16,7 +17,7 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
-const PER_FOLDER = 500, TOTAL = 5000;
+const PER_FOLDER = 500, TOTAL = 5000, LINE = 21;
 const SYMBOL = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" }, ORDER = Object.keys(SYMBOL);
 
 function findFileLabel() {
@@ -169,7 +170,7 @@ export default class Files extends View {
   }
 
   initViewer(p, cx) {
-    this.files = p.files ?? []; this.index = p.index ?? 0;
+    this.files = p.files ?? []; this.index = p.index ?? 0; this.vim = new Motions(); this.codeHeight = 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.show(this.index, cx);
@@ -178,6 +179,7 @@ export default class Files extends View {
   show(index, cx) {
     if (index < 0 || index >= this.files.length) return;
     this.code?.release(); this.code = null; this.fileError = null; this.picture = undefined; this.index = index;
+    this.line = 0; this.col = 0; this.top = 0; this.placed = 0; this.starts = [0];
     const { root, on } = props(), path = this.files[index];
     if (isImage(path)) {
       if (on) { this.fileError = "Image previews only work for local folders"; cx.notify(); return; }
@@ -198,10 +200,40 @@ export default class Files extends View {
           value: text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text,
           font_family: settings().font_family, font_size: 13,
           syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.muted, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
+        const value = this.code.value();
+        this.starts = lineStarts(value); this.length = value.length;
       } catch { if (this.index === index) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
       finally { cx.notify(); }
     });
     cx.notify();
+  }
+
+  go({ motion, count }, cx) {
+    const total = this.starts.length, page = Math.floor(this.codeHeight / (LINE * (Number(settings().zoom) || 1))) || 30, caret = this.code.selected_range().end;
+    if (caret !== this.placed) {
+      this.line = lineAt(this.starts, caret); this.col = caret - this.starts[this.line];
+      if (this.line < this.top || this.line >= this.top + page) this.top = Math.max(0, this.line - Math.floor(page / 2));
+    }
+    const at = this.line, top = this.top, to = target(motion, count, at, total, page), next = viewTop(motion, at, to, top, page, total, 0);
+    const own = to < top ? to : to > top + page - 1 ? to - page + 1 : top;
+    this.line = to; this.top = next;
+    // The editor scrolls only as far as shows the caret, and only for the caret it has when it draws:
+    // to scroll further, show the row the view should reach first and move the caret a frame later.
+    if (next !== own) {
+      const code = this.code;
+      this.place(next > top ? Math.min(total - 1, next + page - 1) : next);
+      cx.spawn(async (cx) => {
+        await cx.sleep(40);
+        if (this.code === code && this.line === to) { this.place(to); cx.notify(); }
+      });
+    } else this.place(to);
+    cx.notify();
+  }
+
+  place(line) {
+    const end = line + 1 < this.starts.length ? this.starts[line + 1] - 1 : this.length;
+    this.placed = Math.min(this.starts[line] + this.col, end);
+    this.code.set_selected_range({ start: this.placed, end: this.placed });
   }
 
   button(id, label, on, t, name) {
@@ -217,8 +249,11 @@ export default class Files extends View {
     const step = (d, cx) => this.show(this.index + d, cx);
     return v_flex().id("files-viewer").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_key_down((e, cx) => {
-        if (["down", "right", "j"].includes(e.key)) step(1, cx);
-        else if (["up", "left", "k"].includes(e.key)) step(-1, cx);
+        const motion = this.code ? this.vim.read(e) : null;
+        if (motion?.motion) this.go(motion, cx);
+        else if (motion) cx.notify();
+        else if (["down", "right"].includes(e.key)) step(1, cx);
+        else if (["up", "left"].includes(e.key)) step(-1, cx);
         else if (e.key === "escape") closeOverlay(p.overlay);
         else return;
         cx.stop_propagation();
@@ -233,9 +268,16 @@ export default class Files extends View {
         .child(this.button("fm-next", "↓", cx => step(1, cx), t, "Next file"))
         .child(div().w(8))
         .child(this.button("fm-close", "✕", () => closeOverlay(p.overlay), t, "Close")))
-      .child(this.picture !== undefined ? imageView(this.picture, t) : this.code ? Editor.new(this.code).flex_1().min_h(0) : div().flex_1().p(16).text_color(t.muted).child(this.fileError || "Loading file…"))
+      .child(this.picture !== undefined ? imageView(this.picture, t) : this.code
+        ? div().id("files-code").flex_1().min_h(0).on_size_change((size) => { this.codeHeight = size.height; }).child(Editor.new(this.code).size_full())
+        : div().flex_1().p(16).text_color(t.muted).child(this.fileError || "Loading file…"))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
-        .child("↑ ↓ file (before clicking into the text)").child("Esc close"));
+        .child("↑ ↓ file (before clicking into the text)")
+        .when(Boolean(this.code), (e) => e.child("j k line, 10j").child("⌃D ⌃U half page").child("gg G top, bottom"))
+        .child("Esc close")
+        .child(div().flex_1())
+        .when(Boolean(this.vim.typed), (e) => e.child(div().text_color(t.foreground).child(this.vim.typed)))
+        .when(Boolean(this.code), (e) => e.child(`Ln ${this.line + 1} / ${this.starts.length}`)));
   }
 
   rows(prefix, depth, out, t) {
