@@ -26,10 +26,11 @@ globalThis.__panelNative = {
     }
   },
   notify: message => world.notices.push(message),
+  nextCommand: () => world.commands.length ? Promise.resolve(world.commands.shift()) : new Promise(() => {}),
 };
 let source = (await readFile(new URL("../mods/tabs-show/panel-actions.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { div, svg, spaces, panes, focused, props, run, notify } = globalThis.__panelNative;\n" + source;
-const { moveToPane, moveToPaneButton } = await import("data:text/javascript," + encodeURIComponent(source));
+source = "const { div, svg, spaces, panes, focused, props, run, notify, nextCommand } = globalThis.__panelNative;\n" + source;
+const { moveToPane, moveToPaneButton, bindMoveCommand } = await import("data:text/javascript," + encodeURIComponent(source));
 const cx = { spawn: fn => world.tasks.push(fn(cx)), notify() {},
   sleep: async () => { if (world.switchTab) world.focus = { tab: "other-tab", pane: "other" }; } };
 function setup() {
@@ -37,7 +38,7 @@ function setup() {
     spaces: [{ active: true, tabs: [{ id: "tab", active: true }] }],
     panes: [{ pane: "agent", terminal: "terminal", tab: "tab", program: { agent: true } }],
     focus: { tab: "tab", pane: "agent" }, props: null,
-    calls: [], tasks: [], notices: [], defer: false, switchTab: false,
+    calls: [], tasks: [], notices: [], commands: [], defer: false, switchTab: false,
   });
 }
 
@@ -127,17 +128,35 @@ test("the compact header control identifies its action and the existing destinat
   assert.equal(world.calls[0][1].pane, "existing");
 });
 
+test("the palette's pane command moves a side panel with the state it has when asked", async () => {
+  setup();
+  const view = { all: false };
+  world.commands = ["focus", "pane"];
+  bindMoveCommand(view, "show", cx, () => ({ all: view.all }));
+  view.all = true;
+  await new Promise(resolve => setTimeout(resolve));
+  assert.deepEqual(world.calls[0], ["pane.split", { pane: "agent", direction: "right", mod: "show-pane", props: { tab: "tab", panelState: { all: true } } }]);
+});
+
+test("pane copies and dialogs leave their commands to themselves", () => {
+  setup();
+  bindMoveCommand({ embedded: true }, "show", cx);
+  world.props = { overlay: "dialog" };
+  bindMoveCommand({}, "changes", cx);
+  assert.equal(world.tasks.length, 0);
+});
+
 // The real Changes initializer clears draft text when its context first loads.
 // A moved draft must be restored after that reset, and cleared on a later repo change.
 globalThis.__changesNative = {
-  ...globalThis.__panelNative, View: class {}, iconsReady: Promise.resolve(),
+  ...globalThis.__panelNative, View: class {}, iconsReady: Promise.resolve(), bindMoveCommand: () => {},
   InputState: { new: () => {
     let value = "";
     return { on() {}, value: () => value, set_value: next => { value = next; } };
   } },
 };
 source = (await readFile(new URL("../mods/changes-modal/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, InputState, iconsReady, spaces, panes, focused, props } = globalThis.__changesNative;\n" + source;
+source = "const { View, InputState, iconsReady, spaces, panes, focused, props, bindMoveCommand } = globalThis.__changesNative;\n" + source;
 const { default: Changes } = await import("data:text/javascript," + encodeURIComponent(source));
 
 test("moving Changes preserves the draft after the initial context reset", () => {

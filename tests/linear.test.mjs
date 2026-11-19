@@ -85,6 +85,7 @@ globalThis.__linearNative = {
   retryLaunch() {},
   run: (command, args) => { world.calls.push([command, args]); if (command === "tab.new") world.spaces[0].tabs.push({ id: "new", name: args.name }); },
   moveToPaneButton: (kind, state) => { world.moves.push({ kind, state }); return native(); },
+  bindMoveCommand: () => {},
 };
 let source = (await readFile(new URL("../mods/linear/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = `const { ${Object.keys(globalThis.__linearNative).join(", ")} } = globalThis.__linearNative;\n` + source + "\n//# sourceURL=linear-panel-test.js";

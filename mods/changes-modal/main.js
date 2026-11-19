@@ -2,7 +2,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { iconsReady, fileIcon, light } from "./icons.js";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageCompare } from "./images.js";
 import { parseBranch, remoteGit } from "./sync.js";
 
@@ -112,6 +112,7 @@ const statusColor = (s, t) => s === "A" ? t.ansi2 : s === "D" || s === "U" ? t.a
 
 export default class Changes extends View {
   init(_props, cx) {
+    bindMoveCommand(this, "changes", cx, () => ({ message: this.message, context: this.context }));
     this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
     cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);

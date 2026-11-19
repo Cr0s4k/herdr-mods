@@ -100,6 +100,7 @@ globalThis.__skillsNative = {
   appHome: () => "/app", spaces: () => world.spaces, panes: () => world.panes, focused: () => world.focus,
   props: () => world.props, theme: () => new Proxy({}, { get: (_, key) => key }), settings: () => ({}),
   moveToPaneButton: () => native(),
+  bindMoveCommand: () => {},
   exec: (_cmd, args, options) => {
     world.execs.push({ args, options });
     return world.defer ? new Promise(resolve => world.waiters.push(resolve))

@@ -3,7 +3,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay } from "herdr";
 import { iconsReady, fileIcon } from "./icons.js";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageView } from "./images.js";
 
 function location() {
@@ -45,6 +45,7 @@ async function directory(path, on) {
 
 export default class Files extends View {
   init(_props, cx) {
+    bindMoveCommand(this, "files", cx, () => this.paneState());
     this.handle = cx.focus_handle();
     cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (props()?.overlay) return this.initViewer(props(), cx);
@@ -246,6 +247,10 @@ export default class Files extends View {
     return out;
   }
 
+  paneState() {
+    return { folders: [...this.folders], root: this.root, on: this.on ?? null };
+  }
+
   render(cx) {
     if (props()?.overlay) return this.renderViewer();
     if (key() !== this.context?.key) this.refresh(cx);
@@ -263,7 +268,7 @@ export default class Files extends View {
           .when(this.folders.size > 0, el => el.cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground)))
           .on_click((_e, cx) => this.collapseAll(cx))
           .child(svg("mods/files-modal/collapse-all.svg").size(16)))
-        .when(!this.embedded, el => el.child(moveToPaneButton("files", { folders: [...this.folders], root: this.root, on: this.on ?? null }, t))))
+        .when(!this.embedded, el => el.child(moveToPaneButton("files", this.paneState(), t))))
       .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.muted).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.muted).child("File list limited to 500 entries per folder and 5,000 total"))));

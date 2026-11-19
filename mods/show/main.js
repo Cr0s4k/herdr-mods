@@ -2,7 +2,7 @@ import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, home, appHome, spaces, panes, agents, theme, run, props, openOverlay, closeOverlay, notify, watchFolder } from "herdr";
 import * as fs from "fs/promises";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { ink, spin, watchMotion } from "./ui.js";
 
 const ITEMS = () => `${appHome()}/show/items`;
@@ -117,6 +117,7 @@ export default class Show extends View {
   init(_props, cx) {
     watchMotion(cx);
     this.mode = props()?.editor ? "editor" : "panel";
+    if (this.mode === "panel") bindMoveCommand(this, "show", cx, () => ({ all: this.all }));
     this.size = { width: 360, height: 600 };
     if (this.mode === "editor") return this.initEditor(cx);
     this.items = [];

@@ -3,12 +3,13 @@ import { v_flex, h_flex, Button, Input, InputState } from "gpui-base";
 import { spaces, panes, focused, exec, home, shared, theme, window } from "herdr";
 import { ITEMS, ERROR, UNTIL, active, bySpace, heading, origin, waitingFor, facts, ago } from "./watchers-model.js";
 import { syncWatchers } from "./watchers-tracker.js";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 
 const LEVEL = { success: "ansi2", warning: "blocked", error: "blocked", info: "accent" };
 
 export default class Watchers extends View {
   init(_props, cx) {
+    bindMoveCommand(this, "watchers", cx);
     this.kind = "pr"; this.until = "review"; this.mode = "succeeds";
     this.adding = null; this.busy = new Set(); this.problem = null; this.folded = new Map();
     this.ref = InputState.new({ placeholder: "Number or link (empty: this branch's)" });

@@ -2,10 +2,10 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Button, TextView } from "gpui-base";
 import { spaces, agents, props, shared, setShared, run, theme } from "herdr";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 
 export default class Brief extends View {
-  init() { this.history = false; this.expanded = new Set(); }
+  init(_props, cx) { this.history = false; this.expanded = new Set(); bindMoveCommand(this, "brief", cx); }
 
   space() {
     // A moved panel stays with its tab, even if another space becomes active.

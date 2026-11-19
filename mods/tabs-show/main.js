@@ -62,6 +62,7 @@ export default class Tabs extends View {
         if (command === "review") this.review.open(cx);
         else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
         else if (command === "pipeline") this.openPipeline();
+        else if (command.startsWith("pipeline-")) this.pipelineCommand(command.slice("pipeline-".length), cx);
         else if ((command === "loops" || command === "skills" || command === "watchers") && shared("features")?.[command] === false) continue;
         else if (["files", "changes", "show", "loops", "brief", "skills", "watchers", "linear", "plane"].includes(command)) this.togglePanel(command);
       }
@@ -86,6 +87,18 @@ export default class Tabs extends View {
       context: key ? { ...all[key].context, space: space.id }
         : { id: pipelineId(on, cwd, space.id), cwd, on, name: cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || space.name, space: space.id },
     } });
+  }
+
+  // Pipeline hears commands only while it's on screen, and a new one only once it has started.
+  pipelineCommand(command, cx) {
+    const here = () => panes().some(pane => pane.mod === "pipeline" && pane.tab === focused()?.tab);
+    if (here()) { run(`pipeline.${command}`); return; }
+    this.openPipeline();
+    cx.spawn(async cx => {
+      for (let tries = 0; tries < 50 && !here(); tries++) await cx.sleep(100);
+      await cx.sleep(300);
+      if (here()) run(`pipeline.${command}`);
+    });
   }
 
   // One tab per wheel notch. A touchpad or smooth-scrolling mouse sends many

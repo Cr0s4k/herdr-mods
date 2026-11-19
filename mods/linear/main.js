@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Input, InputState, TextView, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { appHome, spaces, panes, agents, focused, props, exec, hc, readTextFile, theme, knownAgents, run, shared } from "herdr";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { contextFor, issueKey, issueId, priorityName, statusName, assigneeName, projectName, statusColor, taskFor, targetsFor, startArgs, descriptionBlocks } from "./model.js";
 import { LAUNCHES, PENDING, worktrees, queueLaunch, updateLaunch, retryLaunch } from "./launches.js";
 import { loadProcedures } from "./procedures.js";
@@ -19,6 +19,7 @@ export default class Linear extends View {
   get clearProjectLabel() { return "Clear"; }
 
   init(_props, cx) {
+    bindMoveCommand(this, () => this.provider, cx, () => this.state());
     this.handle = cx.focus_handle();
     this.scroll = VirtualListScrollHandle.new();
     const state = props()?.panelState ?? {};

@@ -12,21 +12,22 @@ version="$(herdr-app --version | awk '{print $2}')"
 
 # Writes each clone's shipped original into $1 the way mod.clone/layout.clone would.
 snapshot() {
-  local dest="$1" m ours shipped f name l
+  local dest="$1" m ours shipped src f name l
   for m in "$repo"/mods/*/; do
     ours="$(basename "$m")"; shipped="$(jq -r '.cloned_from.name // empty' "$m/mod.json")"
     [ -n "$shipped" ] || continue
     mkdir -p "$dest/mods/$ours"
-    for f in "$app/mods/$shipped"/*; do
+    src="$app/mods/$shipped"; [ -d "$src" ] || src="$app/frame/$shipped"
+    for f in "$src"/*; do
       name="$(basename "$f")"
       case "$name" in gpui-kit.d.ts|jsconfig.json|mod.json) continue ;; esac
       if [[ "$name" == *.js ]]; then
-        sed -e "s#mods/$shipped/#mods/$ours/#g" -e "s#mod: \"$shipped\"#mod: \"$ours\"#g" "$f" > "$dest/mods/$ours/$name"
+        sed -e "s#mods/$shipped/#mods/$ours/#g" -e "s#frame/$shipped/#mods/$ours/#g" -e "s#mod: \"$shipped\"#mod: \"$ours\"#g" "$f" > "$dest/mods/$ours/$name"
       else
         cp "$f" "$dest/mods/$ours/$name"
       fi
     done
-    jq -S --arg n "$shipped" --arg v "$version" '. + {cloned_from: {name: $n, version: $v}}' "$app/mods/$shipped/mod.json" > "$dest/mods/$ours/mod.json"
+    jq -S --arg n "$shipped" --arg v "$version" '. + {cloned_from: {name: $n, version: $v}}' "$src/mod.json" > "$dest/mods/$ours/mod.json"
   done
   for l in "$repo"/layouts/*.json; do
     shipped="$(jq -r '.cloned_from.name // empty' "$l")"

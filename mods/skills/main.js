@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Input, InputState, TextView, Editor, EditorState } from "gpui-base";
 import { appHome, spaces, panes, focused, props, exec, readTextFile, theme, settings, openOverlay, closeOverlay } from "herdr";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { GROUPS, AGENTS, contextFor, visibleSkills, expandedSkills, agentsFor, agentLabel, originLabel, statusLabel, shortPath } from "./model.js";
 
 const ICON = "mods/skills/skills.svg";
@@ -10,6 +10,7 @@ const bodyOf = text => text.replace(/^\ufeff?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)
 
 export default class Skills extends View {
   init(_props, cx) {
+    bindMoveCommand(this, "skills", cx, () => this.state());
     this.handle = cx.focus_handle();
     if (props()?.overlay && props()?.skill) return this.initReader(props(), cx);
     const state = props()?.panelState ?? {};

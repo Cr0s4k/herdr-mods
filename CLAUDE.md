@@ -44,8 +44,9 @@ executable at the top of a mod folder goes into `~/.local/bin`. A new mod needs 
   `herdr-app do mod.open '{"name":"<mod>"}'` (no tab to clean up). Herdr keeps a mod's old code
   when you rewrite it right away; use a new throwaway name per change.
 - Mods whose `mod.json` has `cloned_from`, and `layouts/main-custom.json`, are clones of Herdr's
-  shipped mods and layout. The `upstream` branch holds Herdr's originals of them, one commit per
-  Herdr version, so `git diff upstream main -- <path>` shows only our changes. When Herdr updates
+  shipped mods and layout (`palette-plus` clones `frame/palette`, which `upgrade.sh` also reads).
+  The `upstream` branch holds Herdr's originals of them, one commit per Herdr version, so
+  `git diff upstream main -- <path>` shows only our changes. When Herdr updates
   (`./install.sh` lists clones behind it), follow `skills/herdr-mods-upgrade/SKILL.md`.
 - In a clone, keep Herdr's functions where they are and add ours beside them; edit Herdr's lines
   only where the feature needs it. Merges of new Herdr versions stay clean that way.

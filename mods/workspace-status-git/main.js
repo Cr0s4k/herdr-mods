@@ -59,7 +59,7 @@ export default class WorkspaceStatus extends View {
   hint(t) {
     const mac = window()?.platform === "macos";
     const mod = { cmd: mac ? "⌘" : "Ctrl+", ctrl: mac ? "⌃" : "Ctrl+", shift: mac ? "⇧" : "Shift+", alt: mac ? "⌥" : "Alt+", option: mac ? "⌥" : "Alt+" };
-    const b = keys().find((k) => k.section === "global" && k.action === "app.palette");
+    const b = keys().find((k) => k.action === "mod.open:palette-plus") ?? keys().find((k) => k.section === "global" && k.action === "app.palette");
     const parts = b && b.keys.endsWith("--") ? [...b.keys.slice(0, -2).split("-"), "-"] : b?.keys.split("-");
     const key = parts && parts.map((p) => mod[p.toLowerCase()] ?? p.toUpperCase()).join("");
     return key ? `${key}  commands` : "commands";
@@ -80,6 +80,6 @@ export default class WorkspaceStatus extends View {
       .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.muted)).child(`${list.length} agents`)
         .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
       .child(div().flex_1())
-      .child(div().id("palette").text_color(brighter(t)).on_click(() => run("app.palette")).child(this.hint(t)));
+      .child(div().id("palette").text_color(brighter(t)).on_click(() => run("mod.open", { name: "palette-plus" })).child(this.hint(t)));
   }
 }

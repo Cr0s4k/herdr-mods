@@ -124,7 +124,10 @@ export default class Spaces extends View {
     this.nav = [];
     cx.spawn(async (cx) => {
       for (;;) {
-        if (await nextCommand() !== "focus") continue;
+        const command = await nextCommand();
+        if (command === "tidy") { this.tidy(); cx.notify(); continue; }
+        if (command === "needs-you") { this.toggleAttention(cx); continue; }
+        if (command !== "focus") continue;
         this.keyboard = true;
         this.held = false;
         if (!this.nav.some(n => n.key === this.cursor)) this.cursor = shared("spaces.focus") ? null : `space:${spaces().find(s => s.active)?.id}`;
@@ -517,6 +520,12 @@ export default class Spaces extends View {
         cx.notify();
       });
     }
+  }
+
+  toggleAttention(cx) {
+    this.attention = !this.attention;
+    localStorage.setItem("spaces.attention", String(this.attention));
+    cx.notify();
   }
 
   // Most recently used first, pinned ones among the pinned; spaces unused for an hour fold.
@@ -1008,7 +1017,7 @@ export default class Spaces extends View {
           .hover(s => s.bg(t.hover).text_color(t.foreground))
           .accessibility_label(this.attention ? "Show all spaces" : `Show agents needing you, ${attentionCount}`)
           .tooltip(this.attention ? "Show all spaces" : "Show only agents that need you")
-          .on_click((_e, cx) => { this.attention = !this.attention; localStorage.setItem("spaces.attention", String(this.attention)); cx.notify(); })
+          .on_click((_e, cx) => this.toggleAttention(cx))
           .child("Needs you").when(attentionCount > 0, el => el.child(div().text_color(t.blocked).child(String(attentionCount))))))
         .when(!collapsed, el => el.child(div().id("spaces-tidy").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
           .hover(s => s.bg(t.hover).text_color(t.foreground))

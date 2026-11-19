@@ -73,10 +73,11 @@ globalThis.__briefNative = {
   shared: key => world.values.get(key), setShared: (key, value) => world.values.set(key, value),
   run: (...args) => world.calls.push(args), theme: () => new Proxy({}, { get: (_, key) => key }),
   moveToPaneButton: () => element(),
+  bindMoveCommand: () => {},
 };
 const source = (await readFile(new URL("../mods/brief/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const { default: Brief } = await import("data:text/javascript," + encodeURIComponent(
-  modelSource.replaceAll("export ", "") + "\nconst { View, div, TextView, v_flex, h_flex, Button, spaces, agents, props, shared, setShared, run, theme, moveToPaneButton } = globalThis.__briefNative;\n" + source));
+  modelSource.replaceAll("export ", "") + "\nconst { View, div, TextView, v_flex, h_flex, Button, spaces, agents, props, shared, setShared, run, theme, moveToPaneButton, bindMoveCommand } = globalThis.__briefNative;\n" + source));
 const textOf = node => typeof node === "string" ? node : (node?.nodes ?? []).map(textOf).join(" ");
 const find = (node, id) => node?.idArgs?.[0] === id ? node : (node?.nodes ?? []).map(child => find(child, id)).find(Boolean);
 

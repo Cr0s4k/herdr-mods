@@ -32,10 +32,11 @@ globalThis.__loopsNative = {
   theme: () => new Proxy({}, { get: (_, k) => k }),
   props: () => world.props ?? null,
   moveToPaneButton: kind => native().id(`move-${kind}-to-pane`),
+  bindMoveCommand: () => {},
 };
 const source = (await readFile(new URL("../mods/loops/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "")
-  .replace("const STATUS", "const { View, div, svg, v_flex, h_flex, Button, appHome, spaces, panes, exec, run, theme, props, moveToPaneButton } = globalThis.__loopsNative;\nconst STATUS");
+  .replace("const STATUS", "const { View, div, svg, v_flex, h_flex, Button, appHome, spaces, panes, exec, run, theme, props, moveToPaneButton, bindMoveCommand } = globalThis.__loopsNative;\nconst STATUS");
 const { default: Loops } = await import("data:text/javascript," + encodeURIComponent(source));
 const goal = (id, cwd, status = "active") => ({ thread_id: id, objective: `Goal ${id}`, cwd, status,
   tokens_used: 250, token_budget: 1000, time_used_seconds: 90, updated_at_ms: 1000 });

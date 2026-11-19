@@ -35,8 +35,20 @@ behind() {
   done
 }
 
+# cmd-shift-p opens palette-plus on our layout; Herdr's palette keeps the menu and its own layouts.
+# Never writes a keys.json Herdr hasn't made: any edit makes the file the person's, ending default updates.
+bind_palette() {
+  local keys="$app/keys.json" section="layout:$layout" next
+  [ -f "$keys" ] || return 0
+  jq -e --arg s "$section" '(.. | strings | select(. == "mod.open:palette-plus")) // .[$s]["cmd-shift-p"]' "$keys" >/dev/null 2>&1 && return 0
+  next="$(jq --arg s "$section" '.[$s] = ((.[$s] // {}) + {"cmd-shift-p": "mod.open:palette-plus"})' "$keys")" || return 0
+  printf '%s\n' "$next" > "$keys"
+  echo "keys.json: cmd-shift-p opens palette-plus on the $layout layout"
+}
+
 mkdir -p "$app/mods" "$app/layouts" "$HOME/.local/bin" "$HOME/.claude/skills" "$HOME/.agents/skills"
 copy >/dev/null
+bind_palette
 for m in "${mods[@]}"; do
   for f in "$m"/*; do
     [ -f "$f" ] && [ -x "$f" ] && ln -sf "$app/mods/$(basename "$m")/$(basename "$f")" "$HOME/.local/bin/$(basename "$f")"

@@ -21,6 +21,14 @@ export function bindPaneFocus(view, cx) {
   });
 }
 
+// The palette's "Move … panel to a pane". Pane copies (embedded) and dialogs keep nextCommand for themselves.
+export function bindMoveCommand(view, kind, cx, state = () => ({})) {
+  if (view.embedded || props()?.overlay) return;
+  cx.spawn(async cx => {
+    for (;;) if (await nextCommand() === "pane") moveToPane(typeof kind === "function" ? kind() : kind, state(), cx);
+  });
+}
+
 export function moveToPane(kind, state, cx) {
   const panel = PANELS[kind], space = spaces().find(s => s.active);
   const tab = space?.tabs.find(t => t.active)?.id;

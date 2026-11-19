@@ -27,6 +27,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 | **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
 | **Skills** | A searchable inventory of the agent skills available in a folder and on the machine. | [skills.md](docs/features/skills.md) |
 | **Tab bar** | A GitHub button for the current project, and on/off switches for most of the above. | [tab-bar.md](docs/features/tab-bar.md) |
+| **Command palette** | `cmd-shift-p` lists the panels, Pipeline, review and space actions beside Herdr's own commands. | [palette.md](docs/features/palette.md) |
 
 ## Install
 
@@ -44,13 +45,15 @@ cd herdr-mods
 ./install.sh --watch   # keep copying while you edit; Herdr reloads mods live
 ```
 
-Install does three things:
+Install does four things:
 
 - copies `mods/*` and `layouts/*` into `~/.config/herdr-app`, replacing mods of the same name
   that are already there
 - links any executable at the top of a mod folder (`herdr-show`, `herdr-watch`,
   `herdr-pipeline`, …) into `~/.local/bin`
 - links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex)
+- binds `cmd-shift-p` to the [command palette](docs/features/palette.md) on the main-custom
+  layout in Herdr's `keys.json`, unless you already bound that key there
 
 `ctrl-shift-l` switches back to Herdr's own layouts at any time. To remove everything, switch
 layout, then delete those copies and links.
@@ -116,6 +119,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
 | `mods/toggles/` | Feature toggles popup, opened from the tab bar; it sizes itself to its rows (`mods/tabs-show/toggles.js` is a symlink) |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
+| `mods/palette-plus/` | Herdr's command palette, cloned from `frame/palette`, with the mods' actions added (`more.js`) |
 | `mods/workspace-status-git/` | Herdr's bottom status bar, cloned, with commits to push and pull beside the branch |
 | `mods/changes-modal/sync.js` | Reads the branch's ahead/behind counts, shared with the status bar and review pane through symlinks |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |

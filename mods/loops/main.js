@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button } from "gpui-base";
 import { appHome, spaces, panes, exec, run, theme, props } from "herdr";
-import { moveToPaneButton } from "./panel-actions.js";
+import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 
 const STATUS = {
   active: ["Active", "working"],
@@ -41,6 +41,7 @@ function duration(seconds) {
 
 export default class Loops extends View {
   init(_props, cx) {
+    bindMoveCommand(this, "loops", cx, () => this.paneState());
     this.items = [];
     this.loading = true;
     const state = props()?.panelState;
@@ -121,6 +122,10 @@ export default class Loops extends View {
     const args = { name, folder: goal.cwd, argv: opencode ? ["opencode", "--session", goal.thread_id] : ["codex", "resume", goal.thread_id] };
     if (space) run("tab.new", { ...args, space: space.id });
     else run("space.new", { ...args, name: goal.cwd.split("/").pop() || name, tab: name });
+  }
+
+  paneState() {
+    return { all: this.all, completed: this.completed, showCodex: this.showCodex, showClaude: this.showClaude, showOpenCode: this.showOpenCode };
   }
 
   render() {
@@ -219,9 +224,7 @@ export default class Loops extends View {
         .child(button("loops-refresh", svg("mods/loops/loops.svg").size(13), (cx) => {
           cx.spawn(async (cx) => this.reload(cx));
         }).accessibility_label("Refresh loops").tooltip("Refresh loops"))
-        .when(!this.embedded, el => el.child(moveToPaneButton("loops", {
-          all: this.all, completed: this.completed, showCodex: this.showCodex, showClaude: this.showClaude, showOpenCode: this.showOpenCode,
-        }, t))))
+        .when(!this.embedded, el => el.child(moveToPaneButton("loops", this.paneState(), t))))
       .child(v_flex().id("loops-list").flex_1().min_h(0).overflow_y_scrollbar().px(14)
         .when(Boolean(error), (el) => el.child(v_flex().py(12).gap(5).text_size(11.5).text_color(t.blocked)
           .child(div().whitespace_normal().child(error))
