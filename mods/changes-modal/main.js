@@ -75,7 +75,7 @@ function splitRows(rows) {
   return out;
 }
 
-const bat = () => `b=$(command -v bat || command -v batcat) || exit 9; COLORTERM=truecolor "$b" --color=always --style=plain --paging=never --theme="${light() ? "Catppuccin Latte" : "Catppuccin Mocha"}" --tabs=4 "$@"`;
+const bat = () => `b=$(command -v bat || command -v batcat) || exit 9; COLORTERM=truecolor "$b" --color=always --style=plain --paging=never --theme="${light() ? "Catppuccin Latte" : "Catppuccin Mocha"}" --tabs=4`;
 
 function parseAnsi(text) {
   return text.replace(/\n$/, "").split("\n").map((line) => {
