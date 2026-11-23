@@ -18,7 +18,7 @@ function location() {
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
-const lineHeight = (size) => Math.round(size * 1.6);
+const lineHeight = (size) => size * 1.6;
 const SYMBOL = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" }, ORDER = Object.keys(SYMBOL);
 
 function findFileLabel() {
