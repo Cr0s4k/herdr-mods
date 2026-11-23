@@ -77,8 +77,8 @@ export default class WorkspaceStatus extends View {
       .when(Boolean(space?.branch), el => el.child(label("branch", space.branch)))
       .when(Boolean(this.syncing || this.sync?.ahead || this.sync?.behind), el => el.child(this.counts(t)))
       .when(Boolean(this.error), el => el.child(div().min_w(0).truncate().text_color(t.ansi1).child(this.error)))
-      .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.muted)).child(`${list.length} agents`)
-        .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
+      .child(h_flex().gap(6).items_center().child(div().size(6).rounded(3).bg(t.muted)).child(`${list.length} ${list.length === 1 ? "agent" : "agents"}`)
+        .when(needs > 0, el => el.child(div().text_color(t.blocked).child(`· ${needs} ${needs === 1 ? "needs" : "need"} you`))))
       .child(div().flex_1())
       .child(div().id("palette").text_color(brighter(t)).on_click(() => run("mod.open", { name: "palette-plus" })).child(this.hint(t)));
   }

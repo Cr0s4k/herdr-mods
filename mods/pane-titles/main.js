@@ -65,7 +65,7 @@ export default class Pane extends View {
     const t = theme();
     const p = this.me();
     if (!p) return div();
-    const name = PANEL_TITLES[p.mod] ?? (((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell");
+    const name = p.name || (PANEL_TITLES[p.mod] ?? (((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell"));
     const summary = p.mod === "review-pane" ? shared(`review-pane.summary.${p.tab}`) : null;
     const pic = icon(p.program, 14, t.muted);
     const st = p.status;

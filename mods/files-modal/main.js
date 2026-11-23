@@ -17,7 +17,8 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
-const PER_FOLDER = 500, TOTAL = 5000, LINE = 21;
+const PER_FOLDER = 500, TOTAL = 5000;
+const lineHeight = (size) => Math.round(size * 1.6);
 const SYMBOL = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" }, ORDER = Object.keys(SYMBOL);
 
 function findFileLabel() {
@@ -198,7 +199,6 @@ export default class Files extends View {
         const t = theme(), ext = path.includes(".") ? path.split(".").pop() : "txt";
         this.code = EditorState.new({ language: LANG[ext] ?? ext, readonly: true,
           value: text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text,
-          font_family: settings().font_family, font_size: 13,
           syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.muted, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
         const value = this.code.value();
         this.starts = lineStarts(value); this.length = value.length;
@@ -209,7 +209,7 @@ export default class Files extends View {
   }
 
   go({ motion, count }, cx) {
-    const total = this.starts.length, page = Math.floor(this.codeHeight / (LINE * (Number(settings().zoom) || 1))) || 30, caret = this.code.selected_range().end;
+    const total = this.starts.length, page = Math.floor(this.codeHeight / (lineHeight(settings().font_size) * (Number(settings().zoom) || 1))) || 30, caret = this.code.selected_range().end;
     if (caret !== this.placed) {
       this.line = lineAt(this.starts, caret); this.col = caret - this.starts[this.line];
       if (this.line < this.top || this.line >= this.top + page) this.top = Math.max(0, this.line - Math.floor(page / 2));
@@ -243,7 +243,7 @@ export default class Files extends View {
   }
 
   renderViewer() {
-    const t = theme(), p = props(), path = this.files[this.index];
+    const t = theme(), p = props(), path = this.files[this.index], font = settings();
     if (!path) return div().size_full().bg(t.background);
     const parts = path.split("/"), name = parts.pop(), mark = p.marks?.[`${p.root}/${path}`];
     const step = (d, cx) => this.show(this.index + d, cx);
@@ -269,7 +269,7 @@ export default class Files extends View {
         .child(div().w(8))
         .child(this.button("fm-close", "✕", () => closeOverlay(p.overlay), t, "Close")))
       .child(this.picture !== undefined ? imageView(this.picture, t) : this.code
-        ? div().id("files-code").flex_1().min_h(0).on_size_change((size) => { this.codeHeight = size.height; }).child(Editor.new(this.code).size_full())
+        ? div().id("files-code").flex_1().min_h(0).on_size_change((size) => { this.codeHeight = size.height; }).child(Editor.new(this.code).font_family(font.font_family).text_size(font.font_size).size_full())
         : div().flex_1().p(16).text_color(t.muted).child(this.fileError || "Loading file…"))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child("↑ ↓ file (before clicking into the text)")

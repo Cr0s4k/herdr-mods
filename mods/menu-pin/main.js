@@ -38,6 +38,7 @@ function items(p, git) {
       return [
         ...(inTab
           ? [
+              ["Rename", "pane.rename", { pane: tg.pane }],
               ["Split right", "pane.split", { direction: "right", pane: tg.pane }],
               ["Split down", "pane.split", { direction: "down", pane: tg.pane }],
               ["Zoom", "pane.zoom", { pane: tg.pane }],
@@ -86,7 +87,7 @@ function menuIcon(command, args) {
   if (command === "space.hide") return "mods/space-hide/eye-off.svg";
   if (command === "space.pin") return `mods/workspace-chrome/${args.pin ? "pin" : "pin-off"}.svg`;
   if (command === "space.focus") return args.id ? "mods/menu-pin/focus.svg" : "mods/workspace-chrome/layers.svg";
-  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
+  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? (args?.direction === "down" ? "panel-bottom" : "panel-right") : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
 
