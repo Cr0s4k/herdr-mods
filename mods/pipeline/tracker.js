@@ -1,5 +1,5 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
-import { STORE, MOVING, reduce, migrate, agentOpening } from "./pipeline-model.js";
+import { STORE, MOVING, reduce, migrate, agentOpening, prune } from "./pipeline-model.js";
 import { LiveRunner, prompt, openTry } from "./pipeline-live.js";
 import { loadProcedures } from "./procedures.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
@@ -90,8 +90,11 @@ export class PipelineTracker {
   start(cx) {
     this.last = null;
     this.live.start();
+    // A minute in, once the window's tabs are back, then hourly.
+    this.tidied = Date.now() - 3540000;
     cx.timer.every(1000, cx => {
       const now = Date.now(), all = shared(STORE) ?? {};
+      if (now - this.tidied > 3600000) { this.tidied = now; cx.spawn(() => this.tidy()); }
       const away = this.last === null ? Infinity : now - this.last;
       this.last = now;
       let changed = false;
@@ -109,6 +112,18 @@ export class PipelineTracker {
       if (changed) setShared(STORE, next);
       this.live.step(cx);
     });
+  }
+
+  async tidy() {
+    const folders = [...new Set(Object.values(shared(STORE) ?? {}).filter(state => state?.context?.cwd && !state.context.on).map(state => state.context.cwd))];
+    let gone = new Set();
+    try {
+      const missing = await exec("sh", ["-c", 'for d; do [ -d "$d" ] || printf "%s\\n" "$d"; done', "sh", ...folders], { timeout: 15000 });
+      if (missing.code === 0) gone = new Set(missing.stdout.split("\n").filter(Boolean).map(cwd => JSON.stringify([null, cwd])));
+    } catch { /* Nothing is called gone without an answer. */ }
+    const views = panes().filter(pane => pane.mod === "pipeline"), open = new Set(spaces().filter(space => space.tabs.some(tab => views.some(pane => pane.tab === tab.id))).map(space => space.id));
+    const all = shared(STORE) ?? {}, next = prune(all, Date.now(), { gone, open });
+    if (next !== all) setShared(STORE, next);
   }
 
   announce(before, after) {

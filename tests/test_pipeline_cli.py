@@ -86,3 +86,20 @@ class PipelineCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UsageLogTest(PipelineCliTests):
+    def test_usage_counts_recent_presses_and_names_what_was_never_pressed(self):
+        folder = Path(self.home.name, "pipeline")
+        folder.mkdir()
+        rows = [{"at": NOW * 1000, "name": "approve", "task": "T-1"}, {"at": (NOW - 3600) * 1000, "name": "approve"},
+                {"at": NOW * 1000, "name": "open", "drawer": "settings", "section": "delivery"}, {"at": (NOW - 40 * 86400) * 1000, "name": "revert"}]
+        (folder / "usage.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\nnot json\n")
+        text = self.run_cli("--usage")
+        self.assertRegex(text, r"\s2  approve")
+        self.assertIn("open drawer=settings section=delivery", text)
+        never = text.split("Never pressed: ")[1]
+        self.assertIn("revert", never, "pressed too long ago to count")
+        self.assertNotIn("approve,", never)
+        self.assertNotIn("launched", never, "what only the runner sends was never a button")
+        self.assertRegex(self.run_cli("--usage", "60"), r"\s1  revert")

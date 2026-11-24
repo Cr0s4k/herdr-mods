@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -156,6 +157,47 @@ def detail(state, task, now, full):
         print(line)
 
 
+def known_actions():
+    """What the view can send: every action the reducer knows, less those only the runner sends."""
+    here = Path(os.path.realpath(__file__)).parent
+    try:
+        model = (here / "pipeline-model.js").read_text()
+        runner = (here / "pipeline-live.js").read_text() + (here / "tracker.js").read_text()
+    except OSError:
+        return set()
+    return set(re.findall(r'case "(\w+)"', model)) - set(re.findall(r'type: "(\w+)"', runner))
+
+
+def usage(days, now):
+    """What was pressed in Pipeline's view, from the log it keeps on this computer."""
+    path = home() / "pipeline" / "usage.jsonl"
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        sys.exit(f"herdr-pipeline: nothing logged yet at {path}.")
+    counts, last, first = {}, {}, None
+    for line in lines:
+        try:
+            row = json.loads(line)
+            at, name = row["at"] / 1000, str(row["name"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if now - at > days * 86400:
+            continue
+        first = at if first is None else min(first, at)
+        label = name + "".join(f" {key}={row[key]}" for key in ("drawer", "section", "kind") if row.get(key))
+        counts[label] = counts.get(label, 0) + 1
+        last[label] = max(last.get(label, 0), at)
+    if not counts:
+        sys.exit(f"herdr-pipeline: nothing pressed in the last {days} days.")
+    print(f"Pressed in Pipeline over the last {days} days (logged since {time.strftime('%Y-%m-%d', time.localtime(first))}):")
+    for label, count in sorted(counts.items(), key=lambda item: -item[1]):
+        print(f"{count:6}  {label:34} last {time.strftime('%Y-%m-%d %H:%M', time.localtime(last[label]))}")
+    never = sorted(known_actions() - {label.split()[0] for label in counts})
+    if never:
+        print("\nNever pressed: " + ", ".join(never))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Show Herdr Pipeline's live tasks for this project. Read-only.",
                                      epilog="Examples: herdr-pipeline · herdr-pipeline T-3 · herdr-pipeline . (the task of this worktree) · herdr-pipeline --events 20")
@@ -165,7 +207,11 @@ def main():
     parser.add_argument("--full", action="store_true", help="whole description and check output")
     parser.add_argument("--events", type=int, metavar="N", help="the last N events of the pipeline, oldest first")
     parser.add_argument("--json", action="store_true", help="raw JSON (a task in full; a pipeline without bulky fields)")
+    parser.add_argument("--usage", type=int, nargs="?", const=14, metavar="DAYS", help="which Pipeline buttons were pressed in the last DAYS days (14), and which never")
     args = parser.parse_args()
+    if args.usage:
+        usage(args.usage, time.time())
+        return
 
     now, cwd = time.time(), os.getcwd()
     pipelines = load()

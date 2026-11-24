@@ -593,6 +593,27 @@ export function resetSettings(state, now = Date.now()) {
 }
 // A saved pipeline can go once nothing of it is left to finish: no agent, worktree or open pull request.
 export const forgettable = state => Boolean(state?.live && !state.running && (state.tasks ?? []).every(task => task.status === "done" || (task.status === "queued" && !task.workspaces && !task.planned)));
+// Every change rewrites the whole store, so what nobody can return to is dropped: an example pipeline left alone for a day, a pipeline whose folder is gone
+// (`gone`, as [on, cwd] keys) with nothing left to finish, and the check output and older log lines of finished tasks. `open` holds the spaces showing a Pipeline tab; a view whose save went anyway makes a new one.
+export function prune(all, now, { gone = new Set(), open = new Set() } = {}) {
+  let changed = false;
+  const next = {};
+  for (const [key, state] of Object.entries(all ?? {})) {
+    if (!state || newer(state)) { next[key] = state; continue; }
+    const lost = gone.has(JSON.stringify([state.context?.on ?? null, state.context?.cwd])), space = state.space ?? state.context?.space;
+    const shown = Boolean(space) && open.has(space), idle = !state.schedule && !(state.tasks ?? []).some(task => MOVING.includes(task.status));
+    if (state.live ? lost && forgettable(state) : !shown && (lost || (idle && now - (state.lastTick ?? 0) > 86400000))) { changed = true; continue; }
+    const bulky = task => task.status === "done" && (task.checkOutput || task.log?.length > 8);
+    if (!state.live || !(state.tasks ?? []).some(bulky)) { next[key] = state; continue; }
+    changed = true;
+    next[key] = { ...state, tasks: state.tasks.map(task => {
+      if (!bulky(task)) return task;
+      const { checkOutput, ...rest } = task;
+      return rest.log ? { ...rest, log: rest.log.slice(-8) } : rest;
+    }) };
+  }
+  return changed ? next : all;
+}
 // Each task's own port, so two branches can run their Try it command at once.
 export function taskPort(task) {
   let hash = 0;

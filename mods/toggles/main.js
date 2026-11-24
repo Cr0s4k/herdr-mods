@@ -20,6 +20,7 @@ export const FEATURES = [
   ["needsYou", "Needs you", "Filter button at the top of the Spaces sidebar"],
   ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["recent", "Recent conversations", "Closed agent conversations under their space, to resume"],
+  ["usageLog", "Pipeline usage log", "Notes which Pipeline buttons you press, in a file on this computer only"],
 ];
 
 const PAD = 8, HEADER = 30, ROW = 48;

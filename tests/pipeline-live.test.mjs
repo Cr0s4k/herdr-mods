@@ -2288,3 +2288,27 @@ test("a task with an open PR says what its agent does, and reopens a closed one 
   await settle(runner);
   assert.match(row(world.state(), "T-1").reopenError, /never appeared/);
 });
+
+test("stale saves are pruned: idle examples, pipelines of folders that are gone, and the bulk of finished tasks", () => {
+  const day = 86400000, now = 10 * day;
+  const lines = Array.from({ length: 12 }, (_, n) => ({ message: `line ${n}`, at: n }));
+  const all = {
+    'idle': { context: { cwd: "/a", space: "s1" }, lastTick: now - 2 * day, tasks: [{ id: "DEMO-1", status: "input" }] },
+    'shown': { context: { cwd: "/a", space: "s2" }, lastTick: now - 2 * day, tasks: [] },
+    'fresh': { context: { cwd: "/a", space: "s3" }, lastTick: now - 1000, tasks: [] },
+    'moving': { context: { cwd: "/a", space: "s4" }, lastTick: now - 2 * day, tasks: [{ id: "DEMO-1", status: "working" }] },
+    'named': { context: { cwd: "/a" }, lastTick: now - 2 * day, tasks: [] },
+    'live:kept': { live: true, context: { cwd: "/a" }, lastTick: 0, tasks: [{ id: "T-1", status: "done", checkOutput: "long", log: lines }, { id: "T-2", status: "review", checkOutput: "kept", log: lines }] },
+    'live:lost': { live: true, context: { cwd: "/tmp/gone" }, lastTick: 0, tasks: [{ id: "T-1", status: "done" }] },
+    'live:lost-busy': { live: true, context: { cwd: "/tmp/gone" }, lastTick: 0, tasks: [{ id: "T-1", status: "review", workspaces: {} }] },
+    'live:away': { live: true, context: { cwd: "/tmp/gone", on: "server" }, lastTick: 0, tasks: [] },
+    'live:newer': { live: true, version: 999, context: { cwd: "/tmp/gone" }, tasks: [] },
+  };
+  const gone = new Set(['[null,"/tmp/gone"]']);
+  const next = model.prune(all, now, { gone, open: new Set(["s2"]) });
+  assert.deepEqual(Object.keys(next), ["shown", "fresh", "moving", "live:kept", "live:lost-busy", "live:away", "live:newer"]);
+  const [done, waiting] = next["live:kept"].tasks;
+  assert.deepEqual([done.checkOutput, done.log.length, done.log.at(-1).message], [undefined, 8, "line 11"]);
+  assert.equal(waiting, all["live:kept"].tasks[1], "unfinished work keeps everything");
+  assert.equal(model.prune(next, now, { gone, open: new Set(["s2"]) }), next, "nothing left to drop leaves the store alone");
+});

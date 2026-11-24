@@ -225,9 +225,17 @@ export default class Pipeline extends View {
   close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
+  // A log of what was pressed, kept on this computer only, to see later which parts of Pipeline are used. No titles or text go in it.
+  track(name, detail = {}) {
+    if (shared("features")?.usageLog === false) return;
+    const line = JSON.stringify({ at: Date.now(), pipeline: this.storeKey(), name, ...detail });
+    Promise.resolve(exec("sh", ["-c", 'mkdir -p "$1" && printf "%s\\n" "$2" >> "$1/usage.jsonl"', "sh", `${appHome()}/pipeline`, line])).catch(() => {});
+  }
   act(action, cx) {
     const all = shared(STORE) ?? {}, key = this.storeKey(), state = all[key];
     if (!state) return;
+    const on = action.id && state.tasks?.find(task => task.id === action.id);
+    this.track(action.type, { ...(on ? { task: on.id, status: on.status } : {}), ...(typeof action.value === "boolean" || typeof action.value === "string" && action.value.length < 24 ? { value: action.value } : {}) });
     const next = reduce(state, action);
     if (next !== state) setShared(STORE, shareSettings({ ...all, [key]: next }, key, state, next));
     cx.notify();
@@ -552,6 +560,7 @@ export default class Pipeline extends View {
     });
   }
   open(drawer, cx, section) {
+    if (drawer) this.track("open", { drawer, ...(section ? { section } : {}) });
     if (section) this.section = section;
     if (drawer === "settings" && this.state()?.live) {
       this.checkInput.set_value(this.state().check?.command ?? "");
@@ -668,6 +677,7 @@ export default class Pipeline extends View {
   }
   openLink(url) {
     if (!/^https?:\/\//.test(url ?? "")) return;
+    this.track("link", { host: url.replace(/^https?:\/\/([^/]+).*$/, "$1"), ...(/\/pull\/\d+/.test(url) ? { kind: "pr" } : {}) });
     const opener = appWindow()?.platform === "macos" ? "open" : appWindow()?.platform === "windows" ? "explorer" : "xdg-open";
     exec(opener, [url]).catch(() => {});
   }
@@ -717,6 +727,7 @@ export default class Pipeline extends View {
   inspect(id, cx) {
     if (this.drawer === "task" && this.detailsFor) this.saveDetails(cx);
     const task = this.state()?.tasks.find(task => task.id === id);
+    if (task) this.track("inspect", { task: id, status: task.status });
     this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null; this.imageNote = null;
     this.detailsFor = task?.status === "queued" && this.state()?.live ? id : null;
     if (this.detailsFor) { this.details.set_value(task.description ?? ""); this.taskModelInput.set_value(task.tune?.model ?? ""); }
@@ -796,7 +807,16 @@ export default class Pipeline extends View {
 
   render(cx) {
     const state = this.state(), t = theme();
-    if (!state) return div().p(24).text_color(t.foreground).child("Loading Pipeline…");
+    if (!state) {
+      // A save pruned while this view stayed open is made again.
+      cx.timer?.after(0, cx => {
+        const all = shared(STORE) ?? {};
+        if (!all[this.id]) setShared(STORE, { ...all, [this.id]: createPipeline(this.context) });
+        if (this.mode === "live") this.enterLive(cx);
+        cx.notify();
+      });
+      return div().p(24).text_color(t.foreground).child("Loading Pipeline…");
+    }
     if (newer(state)) return v_flex().p(24).gap(8).text_color(t.foreground)
       .child(div().text_size(14).font_semibold().child("This pipeline was saved by a newer Pipeline"))
       .child(div().text_size(12).line_height(1.5).text_color(t.muted).child("It stays untouched until the newer version is installed again. Run ./install.sh from the herdr-mods checkout that has it."));

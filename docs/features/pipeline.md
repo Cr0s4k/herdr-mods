@@ -441,3 +441,14 @@ agent to read cheaply: the project's unfinished tasks, how long each has been in
 what holds it. `herdr-pipeline T-3` shows one task (worktree, error, the end of its check
 output, summary, tokens and its history with times); `.` picks the task of the worktree you're
 in. `--events N`, `--done`, `--full`, `--all` and `--json` widen it.
+
+Pipeline notes which of its buttons you press in a file on this computer
+(`~/.config/herdr-app/pipeline/usage.jsonl`: the action, the task's id and status, never a
+title or text). `herdr-pipeline --usage` counts the last 14 days, most pressed first, and lists
+what was never pressed; `--usage 60` looks further back. The tab bar's switches turn the log
+off (**Pipeline usage log**).
+
+Saved pipelines nobody can return to are cleared out a minute after Herdr starts and then
+hourly: an example pipeline left alone for a day, and a pipeline whose folder is gone with
+nothing left to finish. Finished tasks keep their summary, links and last eight history lines,
+and lose their check output.

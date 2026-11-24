@@ -74,8 +74,13 @@ is no telemetry. Three features read credentials on your machine:
 - **Plane** saves your instance URL and access token with owner-only permissions in
   `~/.config/herdr-app/plane/credentials.json`.
 
-Loops, Skills and Pipeline's token counts also read your agents' local session files
-(Claude Code, Codex, OpenCode), read-only.
+Loops, Skills, the sidebar's Recent row and Pipeline's token counts also read your agents'
+local session files (Claude Code, Codex, OpenCode), read-only.
+
+**A local log.** Pipeline notes which of its buttons you press (the action's name, the task's
+id and status, never a title or text) in `~/.config/herdr-app/pipeline/usage.jsonl`, so you
+can see later what you use: `herdr-pipeline --usage`. It never leaves your computer. Turn it
+off under the tab bar's switches (**Pipeline usage log**), and delete the file whenever you like.
 
 **Agents act on your repositories.** Live Pipeline starts real agents, creates worktrees and
 branches, and merges or pushes when you approve (or by itself, if you turn that on). Try the

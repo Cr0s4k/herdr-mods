@@ -33,7 +33,7 @@ globalThis.__pipelineView = {
   InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => { world.runs.push([name, args]); world.onRun?.(name, args); },
   panes: () => world.panes ?? [], spaces: () => world.spaces ?? [],
-  knownAgents: async () => [], exec: async (...args) => world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
+  knownAgents: async () => [], exec: async (...args) => args[1]?.[1]?.includes("usage.jsonl") ? (world.tracked ??= []).push(JSON.parse(args[1][4])) && { code: 0, stdout: "" } : world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
   trustKeys: screen => /Yes, I trust/.test(screen) ? ["down", "enter"] : null,
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
@@ -1887,4 +1887,24 @@ test("the Implementer setting picks who writes the code, and a queued task can k
   flip(view, "solo-T-1");
   assert.equal(row(view, "T-1").solo, true);
   assert.match(text(view.render(cx)), /writes this task's code itself/);
+});
+
+test("what is pressed is noted in a local log, without titles, unless the log is switched off", async () => {
+  const view = setupLive();
+  view.title.set_value("A secret title");
+  world.tracked = [];
+  click(view, "create");
+  view.inspect("T-1", cx);
+  view.open("settings", cx, "delivery");
+  view.openLink("https://github.com/me/shop/pull/12");
+  await Promise.resolve();
+  const noted = world.tracked.map(({ at, pipeline, ...rest }) => rest);
+  assert.deepEqual(noted, [{ name: "create" }, { name: "inspect", task: "T-1", status: "queued" }, { name: "open", drawer: "settings", section: "delivery" }, { name: "link", host: "github.com", kind: "pr" }]);
+  assert.ok(world.tracked.every(row => row.at > 0 && row.pipeline.startsWith("live:")));
+  assert.doesNotMatch(JSON.stringify(world.tracked), /secret/);
+  world.data.features = { usageLog: false };
+  view.inspect("T-1", cx);
+  await Promise.resolve();
+  assert.equal(world.tracked.length, 4);
+  delete world.data.features;
 });
