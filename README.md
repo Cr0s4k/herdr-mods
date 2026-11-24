@@ -21,7 +21,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
 | **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Notes left on a diff's lines go to the agent as one message. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
-| **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, recent conversations to resume, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
+| **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, recent conversations to resume and a search of everything said in them (⇧⌘F), focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
 | **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
 | **Watchers** | Get told when a pull request is reviewed, checked or merged, or when a shell command succeeds. | [watchers.md](docs/features/watchers.md) |
 | **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
@@ -53,8 +53,9 @@ Install does four things:
   `herdr-pipeline`, …) into `~/.local/bin`
 - links each `skills/*` into `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex)
 - adds the shortcuts in `keys.json` to Herdr's `keys.json`: `cmd-shift-p` for the
-  [command palette](docs/features/palette.md) on the main-custom layout, and `cmd-shift-n` for
-  [Find file](docs/features/files-and-changes.md#find-file). A key you already bound in the same
+  [command palette](docs/features/palette.md) on the main-custom layout, `cmd-shift-n` for
+  [Find file](docs/features/files-and-changes.md#find-file) and `cmd-shift-f` for
+  [Find conversation](docs/features/spaces.md#find-conversation). A key you already bound in the same
   section stays yours, and an action you already gave a key gets no second one.
 
 `ctrl-shift-l` switches back to Herdr's own layouts at any time. To remove everything, switch
@@ -109,6 +110,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Git (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
+| `mods/find-chat/` | Find conversation: the ⇧⌘F popup that searches what was said in past conversations and resumes one; the search itself is in `mods/spaces-pin/recent.py` |
 | `mods/find-file/` | Find file: the ⇧⌘N popup, and `match.js`, its fzf-style matcher |
 | `scripts/pipeline-shots.mjs` | Screenshots Pipeline's inspector for one made-up task per state, to check its layout by eye |
 | `keys.json`, `scripts/keys.sh` | The shortcuts install adds to Herdr's `keys.json`, and the script that adds them without replacing yours |

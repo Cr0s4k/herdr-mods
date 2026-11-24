@@ -1,5 +1,6 @@
 {
   "global": {
+    "cmd-shift-f": "mod.open:find-chat",
     "cmd-shift-n": "mod.open:find-file"
   },
   "layout:main-custom": {

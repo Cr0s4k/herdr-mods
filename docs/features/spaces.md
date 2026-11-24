@@ -30,6 +30,29 @@ task's, for one) are listed too, with a branch mark; such a one resumes in its o
 A worktree that was removed takes its conversations out of the list. **Needs you** and the narrow sidebar
 leave the row out.
 
+### Find conversation
+
+**⇧⌘F** (or **Find conversation…** in the [command palette](palette.md)) searches what you and
+the agents said in past conversations, for the one whose title you don't remember.
+
+- Type words: a conversation matches when every word appears somewhere in what you typed or
+  the agent answered, in any case and inside longer words (`limit` finds `limits`). Tool
+  output, thinking and helper agents aren't searched. Each result shows its title, the agent,
+  how long ago it was used and the line where the words are, marked.
+- With nothing typed it lists the latest conversations, newest first.
+- It searches the repository of the focused pane and its worktrees (a worktree's results carry
+  a branch mark). **⇥**, or a click on the folder's name in the search box, switches to
+  **Everywhere**: every folder's conversations, each with its folder's name. The choice sticks.
+- ↑/↓ picks, Enter resumes it in a new tab, in its own folder: in the space opened on that
+  folder when there is one, else in the space on screen. A conversation whose folder was
+  removed is dimmed and can't be resumed. Esc closes.
+- It doesn't know which conversations are open in a tab already, so resuming one of those
+  opens it a second time.
+- Claude Code's and Codex's conversations are read in full, the newest 600 and 400 files; a
+  search that takes over eight seconds stops and says so. OpenCode's match on their titles only.
+- Install adds the key to `global` in `~/.config/herdr-app/keys.json` and never replaces a key
+  you set there. To use another, bind `mod.open:find-chat` to it instead.
+
 An agent that a Pipeline task owns says where Pipeline has the task beside its status:
 **Checks**, **Checks failed**, **Review**, **Merging**, **PR** or **Stopped**. Its tooltip adds
 the task's title. While the agent works or asks, Herdr's own status says enough.

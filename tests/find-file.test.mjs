@@ -64,7 +64,7 @@ test("install adds the repo's shortcuts to keys.json and never replaces one alre
     const first = await run(script, [ours, mine]);
     assert.match(first.stdout, /added cmd-shift-n/);
     const merged = JSON.parse(await readFile(mine, "utf8"));
-    assert.deepEqual(merged.global, { "cmd-p": "mod.open:picker", "cmd-shift-n": "mod.open:find-file" });
+    assert.deepEqual(merged.global, { "cmd-p": "mod.open:picker", "cmd-shift-f": "mod.open:find-chat", "cmd-shift-n": "mod.open:find-file" });
     assert.deepEqual(merged.terminal, {});
     assert.deepEqual(merged["layout:main-custom"], { "cmd-shift-p": "mod.open:palette-plus" });
 
@@ -81,7 +81,7 @@ test("install adds the repo's shortcuts to keys.json and never replaces one alre
     const out = (await run(script, [ours, mine])).stdout;
     assert.doesNotMatch(out, /cmd-shift-n/);
     assert.match(out, /kept your cmd-shift-p → "app.palette"/);
-    assert.deepEqual(JSON.parse(await readFile(mine, "utf8")).global, { "cmd-p": "mod.open:find-file" });
+    assert.deepEqual(JSON.parse(await readFile(mine, "utf8")).global, { "cmd-p": "mod.open:find-file", "cmd-shift-f": "mod.open:find-chat" });
 
     assert.match((await run(script, [ours, `${dir}/missing.json`])).stdout, /not found/);
   } finally {

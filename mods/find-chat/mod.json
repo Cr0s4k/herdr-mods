@@ -1,0 +1,11 @@
+{
+  "overlay": {
+    "at": "top",
+    "height": 0.8,
+    "kind": "popup",
+    "offset": 40,
+    "width": 760
+  },
+  "place": "none",
+  "title": "Find conversation"
+}

@@ -14,6 +14,7 @@ What it adds:
   Queue, Review, Pull requests, Completed, Activity, Schedule, Plan and Settings. From another
   tab, Pipeline opens first.
 - **Review**: Changes + terminal in this tab, and the project on GitHub.
+- **Agent**: [Find conversation…](spaces.md#find-conversation), beside Herdr's own agent commands.
 - **Space**: a new space from `~/Projects`, hide this space for a while, hidden spaces, Focus
   this space (or All spaces again), Tidy, the Needs you filter, and keyboard focus in the
   sidebar.
