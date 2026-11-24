@@ -286,7 +286,7 @@ nothing to finish.
    repository's PR template or rules, or one summary line, a few bullets and the ticket link.
    It writes it to `herdr-pr.md` in the worktree's Git folder, so it is never committed;
    without one the description is just the ticket link. The card then moves to its own **Pull requests**
-   section under Review, with a link. Pipeline asks GitHub once a minute what the PR waits for and
+   section under Review, with a link, and the pull request comes first in the task's inspector. Pipeline asks GitHub once a minute what the PR waits for and
    puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
    **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by
    branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
@@ -296,7 +296,7 @@ nothing to finish.
    pull request while its agent goes on: it adds **Agent working** or **Agent needs you**, and
    a pull request that conflicts with its base has **Ask the agent to rebase**, which tells the
    agent to rebase onto the base branch, resolve the conflicts and push (with the agent's tab
-   closed it reads **Reopen agent and ask it to rebase**, and the request is the reopened
+   closed it reads **Reopen agent to rebase**, and the request is the reopened
    agent's first message). When the agent's tab was closed the inspector also offers **Reopen agent**, which starts the same
    agent in the worktree continuing its last conversation there (`claude --continue`,
    `codex resume --last`, `opencode --continue`). The task finishes when the PR is merged (then cleans up as above), or returns to

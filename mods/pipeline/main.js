@@ -220,6 +220,7 @@ export default class Pipeline extends View {
         else if (command === "live" || command === "simulation") this.setMode(command, cx);
         else if (DRAWERS.includes(command)) this.open(command, cx);
         else if (command === "close") this.open(null, cx);
+        else if (command.startsWith("task-") && state.tasks.some(task => task.id === command.slice(5))) this.inspect(command.slice(5), cx);
       }
     });
   }
@@ -782,7 +783,7 @@ export default class Pipeline extends View {
   button(id, label, fn, t, options = {}) {
     const small = Boolean(options.small);
     return Button.new(`pipeline-${id}`).h(small ? 24 : 32).px(options.iconOnly ? (small ? 5 : 8) : small ? 8 : 11).gap(small ? 5 : 6).flex_none().flex().items_center().justify_center()
-      .rounded(6).text_size(small ? 11 : 12).border_1().border_color(options.primary ? t.accent : t.border)
+      .rounded(6).max_w_full().overflow_hidden().text_size(small ? 11 : 12).border_1().border_color(options.primary ? t.accent : t.border)
       .when(options.segment === "left", el => el.rounded_r(0))
       .when(options.segment === "right", el => el.rounded_l(0).when(!options.primary, el => el.border_l(0)))
       .bg(options.primary ? t.accent : options.selected ? t.selected : t.surface)
@@ -2052,9 +2053,10 @@ export default class Pipeline extends View {
     const branch = (trees[0] ?? Object.values(task.planned ?? {})[0])?.branch;
     body.child(this.copyable(`title-${task.id}`, task.title).text_size(18).font_semibold().line_height(1.3));
     body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : adoptStep(task) ?? labelFor(state, task.status)))
-      .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
+    if (task.agent) body.child(div().id(`pipeline-agent-line-${task.id}`).w_full().min_w(0).text_size(12).line_height(1.45).text_color(t.muted).child(`${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`));
     if (task.error) body.child(this.copyable(`error-${task.id}`, task.error).text_size(12).line_height(1.45).text_color(t.blocked));
+    if (task.status === "pr" && task.prs) this.prDetail(body, state, task, t, several);
     if (adoptStep(task) && !task.discard) {
       const pane = panes().find(row => row.terminal === task.adopt.terminal), agent = task.adopt.agent ?? "Its agent";
       body.child(this.label(!task.adopt.files ? `${agent} was asked what it is working on and which uncommitted files are its own. It answers when its current turn ends; then Pipeline makes the worktree and moves those files.`
@@ -2111,7 +2113,7 @@ export default class Pipeline extends View {
           { small: true, icon: "eye", disabled: Boolean(asked?.pending || asked?.sent), hint: "Asks its agent for before and after screenshots of what it changed, presented on a page. It appears here when its turn ends" }))
         .when(Boolean(asked && !asked.pending), el => el.child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child(asked.sent ? "Asked. The page appears here when its turn ends." : "Couldn't reach its terminal."))));
     }
-    if (task.terminal && task.status !== "done" && !task.discard) {
+    if (task.terminal && task.status !== "done" && !task.discard && !(task.status === "pr" && (task.agentState === "gone" || task.reopen))) {
       if (task.reason === "trust") body.child(this.label(`${task.agent ?? "Its agent"} asks whether to trust this new worktree before it starts. The worktree is your repository at its current commit.`, t))
         .child(this.button(`trust-task-${task.id}`, "Trust this worktree", cx => this.trust(task, cx), t, { icon: "check", primary: true, hint: "Answers “Yes, I trust this folder” in its terminal" }));
       const question = this.liveQuestion(task);
@@ -2157,38 +2159,7 @@ export default class Pipeline extends View {
             : "Rebases onto it and fast-forwards. Its worktree and your project folder must have no uncommitted changes." }));
       if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));
     }
-    if (task.status === "pr" && task.prs) {
-      if (task.agentState === "gone" || task.reopen) {
-        body.child(this.label(`Its agent's tab is closed, so nobody is there to fix what the pull request needs. Its worktree${several ? "s are" : " is"} still here.`, t));
-        if (task.reopenError) body.child(div().id(`pipeline-reopen-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(task.reopenError));
-        body.child(this.button(`reopen-${task.id}`, task.reopen ? "Reopening…" : "Reopen agent", cx => this.act({ type: "reopen", id: task.id }, cx), t,
-          { icon: "reset", disabled: Boolean(task.reopen), hint: `Starts ${task.agent ?? "its agent"} again in the worktree, continuing its last conversation there` }));
-      } else if (prAgent(task)) body.child(this.label(`${prAgent(task)} in its worktree. The card stays here until the pull request merges or closes.`, t));
-      for (const [name, pr] of Object.entries(task.prs)) {
-        const prTarget = task.workspaces?.[name]?.target, need = prNeed(pr, prTarget), suffix = several ? `-${name}` : "", prefix = several ? `${name} · ` : "";
-        body.child(this.heading(pr.merged ? `${prefix}Pull request #${pr.number} · Merged` : pr.status ? `${prefix}Pull request #${pr.number} · ${need.label}` : `${prefix}Pull request #${pr.number}`));
-        if (!pr.merged && !pr.status) body.child(this.label("Asking GitHub what it waits for…", t));
-        if (!pr.merged) for (const item of prChecklist(pr, prTarget)) body.child(h_flex().id(`pipeline-pr-${item.name.toLowerCase()}-${task.id}${suffix}`).gap(8).items_start().text_size(12).line_height(1.45)
-          .child(dot(toneColor(item.tone, t)).mt(6))
-          .child(div().w(54).flex_none().text_color(t.muted).child(item.name))
-          .child(div().flex_1().min_w(0).text_color(item.tone === "blocked" ? t.blocked : t.foreground).child(item.value)));
-        const clash = !pr.merged && prConflict({ prs: { [name]: pr } }), gone = task.agentState === "gone" || !task.terminal;
-        if (clash) body.child(this.button(`pr-rebase-${task.id}${suffix}`, task.reopen ? "Reopening…" : gone ? `Reopen agent and ask it to rebase onto ${prTarget ?? "its base"}` : this.rebased === task.id ? "Asked. It rebases and pushes" : `Ask the agent to rebase onto ${prTarget ?? "its base"}`,
-          cx => gone ? this.act({ type: "reopen", id: task.id, ask: "rebase" }, cx) : this.rebasePr(task, pr, prTarget, cx), t,
-          { icon: "reset", primary: !task.reopen && this.rebased !== task.id, disabled: Boolean(task.reopen) || task.agentState === "working",
-            hint: `${gone ? "Starts its agent again in the worktree, continuing its last conversation, and tells it" : "Tells its agent"} to rebase onto origin/${prTarget ?? "the base branch"}, resolve the conflicts and push` }));
-        if (pr.readyError) body.child(div().id(`pipeline-pr-ready-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.readyError));
-        const draft = Boolean(pr.status?.draft);
-        body.child(h_flex().gap(8).flex_wrap()
-          .child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several && !draft, hint: pr.url }))
-          .when(!pr.merged && Boolean(pr.status), el => el.child(this.button(`pr-ready-${task.id}${suffix}`, pr.readying ? "Asking GitHub…" : draft ? "Mark ready" : "Back to draft",
-            cx => this.act({ type: "prReady", id: task.id, repo: name, undo: !draft }, cx), t,
-            { icon: draft ? "check" : null, primary: draft && !pr.readying, disabled: Boolean(pr.readying), hint: draft ? "Marks it ready for review on GitHub (gh pr ready)" : "Makes it a draft again on GitHub (gh pr ready --undo)" }))));
-      }
-      body.child(this.label(several ? "Pipeline asks GitHub about each one once a minute. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
-        : "Pipeline asks GitHub once a minute. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
-    }
-    else if (task.status === "merging") body.child(this.label(state.delivery === "pr" ? `Pushing ${several ? "the branches and opening pull requests" : "the branch and opening a pull request"}…` : `Merging into ${target}${several ? ` in ${task.repos.join(" + ")}` : ""}${state.pushAfterMerge ? " and pushing to origin" : ""}…`, t));
+    if (task.status === "merging") body.child(this.label(state.delivery === "pr" ? `Pushing ${several ? "the branches and opening pull requests" : "the branch and opening a pull request"}…` : `Merging into ${target}${several ? ` in ${task.repos.join(" + ")}` : ""}${state.pushAfterMerge ? " and pushing to origin" : ""}…`, t));
     const pushed = task.status === "done" && pushNote(task);
     if (pushed && !pushed.ok) {
       body.child(div().id(`pipeline-push-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Merged, not pushed. ${pushed.error}`));
@@ -2231,6 +2202,38 @@ export default class Pipeline extends View {
     if (log.length && shown) body.child(v_flex().id(`pipeline-history-lines-${task.id}`).gap(3).pl(18).children(log.map((item, n) => h_flex().gap(8).items_start().text_size(11.5).line_height(1.45).text_color(t.muted)
       .child(div().w(84).flex_none().child(item.at ? stamp(item.at) : ""))
       .child(div().flex_1().min_w(0).child(this.copyable(`history-${task.id}-${n}`, String(item.message ?? item).replace(new RegExp(`^${task.id.replace(/[^\\w-]/g, "")}( · | )`), "")).text_size(11.5).line_height(1.45))))));
+  }
+  // An open pull request comes first in its task: what it waits for, and what can be done about it from here.
+  prDetail(body, state, task, t, several) {
+    for (const [name, pr] of Object.entries(task.prs)) {
+      const prTarget = task.workspaces?.[name]?.target, need = prNeed(pr, prTarget), suffix = several ? `-${name}` : "", prefix = several ? `${name} · ` : "";
+      body.child(this.heading(pr.merged ? `${prefix}Pull request #${pr.number} · Merged` : pr.status ? `${prefix}Pull request #${pr.number} · ${need.label}` : `${prefix}Pull request #${pr.number}`));
+      if (!pr.merged && !pr.status) body.child(this.label("Asking GitHub what it waits for…", t));
+      if (!pr.merged) for (const item of prChecklist(pr, prTarget)) body.child(h_flex().id(`pipeline-pr-${item.name.toLowerCase()}-${task.id}${suffix}`).gap(8).items_start().text_size(12).line_height(1.45)
+        .child(dot(toneColor(item.tone, t)).mt(6))
+        .child(div().w(54).flex_none().text_color(t.muted).child(item.name))
+        .child(div().flex_1().min_w(0).text_color(item.tone === "blocked" ? t.blocked : t.foreground).child(item.value)));
+      const clash = !pr.merged && prConflict({ prs: { [name]: pr } }), gone = task.agentState === "gone" || !task.terminal;
+      if (clash) body.child(this.button(`pr-rebase-${task.id}${suffix}`, task.reopen ? "Reopening…" : gone ? "Reopen agent to rebase" : this.rebased === task.id ? "Asked. It rebases and pushes" : "Ask the agent to rebase",
+        cx => gone ? this.act({ type: "reopen", id: task.id, ask: "rebase" }, cx) : this.rebasePr(task, pr, prTarget, cx), t,
+        { icon: "reset", primary: !task.reopen && this.rebased !== task.id, disabled: Boolean(task.reopen) || task.agentState === "working",
+          hint: `${gone ? "Starts its agent again in the worktree, continuing its last conversation, and tells it" : "Tells its agent"} to rebase onto origin/${prTarget ?? "the base branch"}, resolve the conflicts and push` }));
+      if (pr.readyError) body.child(div().id(`pipeline-pr-ready-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.readyError));
+      const draft = Boolean(pr.status?.draft);
+      body.child(h_flex().gap(8).flex_wrap()
+        .child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several && !draft && !clash, hint: pr.url }))
+        .when(!pr.merged && Boolean(pr.status), el => el.child(this.button(`pr-ready-${task.id}${suffix}`, pr.readying ? "Asking GitHub…" : draft ? "Mark ready" : "Back to draft",
+          cx => this.act({ type: "prReady", id: task.id, repo: name, undo: !draft }, cx), t,
+          { icon: draft ? "check" : null, primary: draft && !pr.readying, disabled: Boolean(pr.readying), hint: draft ? "Marks it ready for review on GitHub (gh pr ready)" : "Makes it a draft again on GitHub (gh pr ready --undo)" }))));
+    }
+    if (task.agentState === "gone" || task.reopen) {
+      body.child(this.label(`Its agent's tab is closed, so nobody is there to fix what the pull request needs. Its worktree${several ? "s are" : " is"} still here.`, t));
+      if (task.reopenError) body.child(div().id(`pipeline-reopen-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(task.reopenError));
+      body.child(this.button(`reopen-${task.id}`, task.reopen ? "Reopening…" : "Reopen agent", cx => this.act({ type: "reopen", id: task.id }, cx), t,
+        { icon: "reset", disabled: Boolean(task.reopen), hint: `Starts ${task.agent ?? "its agent"} again in the worktree, continuing its last conversation there` }));
+    } else if (prAgent(task)) body.child(this.label(`${prAgent(task)} in its worktree. The card stays here until the pull request merges or closes.`, t));
+    body.child(this.label(several ? "Pipeline asks GitHub about each one once a minute. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
+      : "Pipeline asks GitHub once a minute. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
   }
   revertDetail(body, state, task, t) {
     const where = [...new Set((task.landed ?? []).map(repo => repo.branch))].join(" + "), sure = this.confirm === `revert-${task.id}`, byPr = revertsByPr(task);

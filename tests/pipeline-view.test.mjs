@@ -842,9 +842,9 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.equal(find(waiting, "pr-rebase-T-2"), undefined, "no rebase is offered without conflicts");
   view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
     status: { draft: false, mergeable: "CONFLICTING", mergeState: "DIRTY", review: null, failed: 0, failing: [], pending: 0, passed: 2 } }, cx);
-  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Ask the agent to rebase onto main/);
+  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Ask the agent to rebase/);
   view.act({ type: "agentSeen", id: "T-2", state: "gone" }, cx);
-  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Reopen agent and ask it to rebase onto main/);
+  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Reopen agent to rebase/);
   click(view, "pr-rebase-T-2");
   assert.deepEqual([row(view, "T-2").reopen, row(view, "T-2").reopenAsk], [true, "rebase"]);
   view.act({ type: "reopenFailed", id: "T-2", error: null }, cx);
