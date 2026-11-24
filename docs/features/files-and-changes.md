@@ -39,6 +39,7 @@ Like Vim, a number before a key repeats it: `10j` moves ten lines down.
 | `⌃F` / `⌃B`, Page Down / Page Up | a screen down / up |
 | `gg` / `G` | to the top / bottom; `42G` to line 42 |
 | `]c` / `[c` | to the next / previous change (Git only) |
+| `C` / `X` | add or edit a note on the line / remove it (Git only; see [Notes for the agent](#notes-for-the-agent)) |
 | ↑ / ↓ | to the next / previous file |
 
 - In a diff the line under the cursor is marked; clicking a line moves it there. The view
@@ -47,6 +48,28 @@ Like Vim, a number before a key repeats it: `10j` moves ten lines down.
 - In Files the cursor is Herdr's code-view caret: its line number lights up and the footer
   shows `Ln 42 / 300`. Clicking into the text hands the keyboard to the code view, so ↑/↓
   then move its caret instead of changing file.
+
+## Notes for the agent
+
+While you read a diff, leave notes on its lines and send them all to the agent as one message,
+instead of describing each place in its terminal.
+
+- **`C`** on the line under the cursor opens a one-line note. Enter saves it, Esc cancels. The
+  note sits under its line; `C` there edits it and **`X`** removes it. Saving it empty removes
+  it too.
+- Notes stay while you step through the files, close the dialog and come back: the file list
+  and the Changes tab show how many each file has. A note follows its line when the file
+  changes; when the line leaves the diff, the note moves to the top and says so.
+- A bar under the header counts the checkout's notes. **Send** (`⌘↵`) sends them to the agent
+  working in that folder: the one in front, else the one that acted last. With several, click
+  the agent's name to pick another. The message lists each note with its file, line and the
+  line quoted ([what the agent receives](../../skills/herdr-pipeline/examples.md)). Sent notes
+  are removed; if the agent doesn't take them (it is waiting for an answer, say), they stay.
+- **Copy** puts the same message on the clipboard, for a folder with no agent. **Clear**
+  removes every note, and asks once.
+- Notes work on a removed line, in a Pipeline task's diff and in a commit opened from History.
+  Each of those keeps its own notes, and Send takes all of the checkout's.
+- Unsent notes are dropped after 30 days.
 
 ## Find file
 

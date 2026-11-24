@@ -41,6 +41,7 @@ One file each in `procedures/`. `{{name}}` marks a value the mod fills in.
 | adopt-moved.md | the converted work went to a new agent | `task`, `folder`: its worktree |
 | ticket-launch.md | a ticket started from the Linear or Plane panel, after the ticket itself | `ticket`: ticket.md |
 | demo-task.md | the setup card's task that writes a run-and-show skill | nothing |
+| review-notes.md | **Send** in the Git dialog, after notes were left on lines of a diff (to an agent working in that folder, Pipeline's or not) | `count`: how many notes; `notes`: the numbered notes, each with its file and line, the line quoted, and what the person wrote |
 
 ## Changing one
 
@@ -53,7 +54,7 @@ Rules the files must keep:
 
 - Pipeline reads these names back: `herdr-summary.md` with its `Changed:`, `Checked:` and `Unsure:` lines, `herdr-pr.md`, `herdr-brief.md`, the `herdr-evidence` folder with `NN-before-…png` and `NN-after-…png` pairs, `walkthrough.url`, and the `title`, `description` and `files` keys of adopt-ask.md.
 - evidence-later.md is sent as one line: its lines are joined with spaces, so it takes no lists. walkthrough.md, ticket.md and uncommitted.md stay one line.
-- A new `{{name}}` needs its value where the procedure is filled: `procedure(name, values)` in `mods/pipeline/pipeline-live.js`, or `mods/linear/model.js` for ticket-launch.md. An unknown name becomes nothing.
+- A new `{{name}}` needs its value where the procedure is filled: `procedure(name, values)` in `mods/pipeline/pipeline-live.js`, or `mods/linear/model.js` for ticket-launch.md, or `mods/changes-modal/main.js` for review-notes.md. An unknown name becomes nothing.
 - A new file goes in `PROCEDURES` in `mods/pipeline/procedures.js`, in the table above, and in `preview.mjs` so it shows in examples.md.
 
 Still built in code, because they are mostly values from the task or tied to a JSON schema: the task framing around these (worktree, branch, hand-off) and the planner's and setup helper's prompts, all in `mods/pipeline/pipeline-live.js`.

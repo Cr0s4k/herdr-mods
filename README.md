@@ -19,7 +19,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 |---|---|---|
 | **Pipeline** | Queue tasks, typed or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
-| **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
+| **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Notes left on a diff's lines go to the agent as one message. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
 | **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, recent conversations to resume, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
 | **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
@@ -113,6 +113,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `scripts/pipeline-shots.mjs` | Screenshots Pipeline's inspector for one made-up task per state, to check its layout by eye |
 | `keys.json`, `scripts/keys.sh` | The shortcuts install adds to Herdr's `keys.json`, and the script that adds them without replacing yours |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned and named Git: the Changes tab lists files, the History tab (`history.js`) lists commits, diffs open in a dialog |
+| `mods/changes-modal/notes.js` | Notes on a diff's lines: where they are kept, how they follow their line, and the list sent to the agent (`skills/herdr-pipeline/procedures/review-notes.md` is the message) |
 | `mods/review-pane/` | Git inside a normal pane, sharing the existing view through a symlink |
 | `mods/files-pane/`, `mods/show-pane/`, `mods/loops-pane/` | Normal pane versions of the existing panels, sharing their views through symlinks |
 | `mods/tabs-show/panel-actions.js` | Shared Move to pane action and keyboard-focus handling |

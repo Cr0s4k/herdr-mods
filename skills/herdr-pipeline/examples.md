@@ -168,3 +168,19 @@ Add a project skill at .claude/skills/demo/SKILL.md. Symlink .agents/skills/demo
 - how to stop everything it started.
 Follow the skill yourself once, from this worktree, and fix what doesn't work before you finish. Keep it short: steps and commands, no background.
 ````
+
+## Notes left on lines of a diff, sent from the Git dialog
+
+````text
+I read the changes in this folder and left 2 notes on lines of the diff. Each one names the file and line, quotes the line, then says what I want.
+
+1. src/theme.js:42
+   > const stored = localStorage.theme;
+   Read it through settings.js like the other preferences.
+
+2. src/theme.js:57 (a removed line, numbered as before the change)
+   > applyTheme(system());
+   Why did this go? The first paint needs it.
+
+Address every note. Where you disagree with one or can't do it, leave that code as it is and say why. When you are done, say in one line per note what you did.
+````

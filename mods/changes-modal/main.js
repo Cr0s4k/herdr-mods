@@ -1,12 +1,14 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
+import { spaces, panes, focused, agents, exec, hc, appHome, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageCompare } from "./images.js";
 import { branchState, remoteGit } from "./sync.js";
 import { History, commitHeader } from "./history.js";
 import { Motions, target, viewTop, changeStarts } from "./vim.js";
+import { NOTES, scopeOf, anchorOf, notesOf, counts, saveNote, dropNotes, withNotes, noteList, countLabel, targets } from "./notes.js";
+import { loadProcedures, procedure } from "./procedures.js";
 
 // The panels share data in one VM, but their host tasks belong to separate copies.
 const scans = globalThis[Symbol.for("herdr.repoStatus.v2")] ??= new Map();
@@ -435,7 +437,126 @@ export default class Changes extends View {
     this.vim = new Motions(); this.scroll = VirtualListScrollHandle.new(); this.fileScroll = VirtualListScrollHandle.new(); this.bodyHeight = 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
+    this.scope = scopeOf(this.base, this.head);
+    this.noteInput = InputState.new({ placeholder: "What should the agent change here?" });
+    this.noteInput.on("submit", (_e, cx) => this.keepNote(cx));
     this.show(this.index, cx);
+  }
+
+  fileNotes() {
+    return this.loadingDiff || this.pictures ? [] : notesOf(shared(NOTES), this.root, this.on, this.scope, this.open);
+  }
+
+  shown(split) {
+    if (split && !this.split) this.split = splitRows(this.rows);
+    const base = split ? this.split : this.rows, notes = this.fileNotes(), sig = JSON.stringify(notes);
+    if (this.drawn?.base !== base || this.drawn.sig !== sig) this.drawn = { base, sig, rows: withNotes(base, notes) };
+    return this.drawn.rows;
+  }
+
+  noteOn(row) {
+    if (row?.kind === "note") return row.note;
+    const a = anchorOf(row);
+    return a ? this.fileNotes().find((n) => n.side === a.side && n.line === a.line) ?? null : null;
+  }
+
+  startNote(row, cx) {
+    const note = this.noteOn(row), a = note ?? anchorOf(row);
+    if (!a) return;
+    this.noting = { side: a.side, line: a.line, code: a.code };
+    this.noteStatus = null; this.clearing = false;
+    this.noteInput.set_value(note?.text ?? "");
+    this.noteInput.focus();
+    cx.notify();
+  }
+
+  endNote(cx) {
+    this.noting = null;
+    this.handle.focus();
+    cx.notify();
+  }
+
+  writeNote(at, text) {
+    setShared(NOTES, saveNote(shared(NOTES), this.root, this.on, { scope: this.scope, path: this.open, ...at, text }));
+  }
+
+  keepNote(cx) {
+    if (this.noting) this.writeNote(this.noting, this.noteInput.value());
+    this.endNote(cx);
+  }
+
+  removeNote(row, cx) {
+    const note = this.noteOn(row);
+    if (!note) return;
+    this.writeNote({ side: note.side, line: note.line }, "");
+    cx.notify();
+  }
+
+  noteTarget() {
+    const list = targets(agents(), panes(), this.root, this.on, focused()?.terminal ?? null);
+    return { list, agent: list.find((a) => a.address === this.picked) ?? list[0] ?? null };
+  }
+
+  // Sends every note of this checkout as one message, or copies that message when there is no agent to take it.
+  deliver(copy, cx) {
+    const root = this.root, on = this.on, notes = notesOf(shared(NOTES), root, on), agent = copy ? null : this.noteTarget().agent;
+    if (!notes.length || this.delivering) return;
+    this.clearing = false;
+    if (!copy && !agent) { this.noteStatus = { text: "No agent is working in this folder. Copy the notes instead.", bad: true }; return cx.notify(); }
+    this.delivering = true; this.noteStatus = { text: copy ? "Copying…" : `Sending to ${agent.program.name}…` };
+    cx.spawn(async (cx) => {
+      try {
+        await loadProcedures((path) => readTextFile(`${appHome()}/${path}`));
+        const text = procedure("review-notes", { count: countLabel(notes.length), notes: noteList(notes) });
+        if (copy) cx.write_to_clipboard(text);
+        else {
+          const sent = await hc(["send", agent.address, text]);
+          if (sent.code !== 0) throw new Error(`${agent.program.name} did not take the notes${agent.status === "blocked" ? ": it is waiting for an answer in its terminal" : ""}. They are kept here.`);
+          setShared(NOTES, dropNotes(shared(NOTES), root, on, notes));
+        }
+        this.noteStatus = { text: copy ? `Copied ${countLabel(notes.length)}. They stay here until you clear them.` : `Sent ${countLabel(notes.length)} to ${agent.program.name}` };
+      } catch (e) { this.noteStatus = { text: String(e?.message ?? e), bad: true }; }
+      finally { this.delivering = false; cx.notify(); }
+    });
+    cx.notify();
+  }
+
+  clearNotes(cx) {
+    if (this.clearing) { setShared(NOTES, dropNotes(shared(NOTES), this.root, this.on)); this.noteStatus = null; }
+    this.clearing = !this.clearing;
+    cx.notify();
+  }
+
+  noteRow({ note, lost }, t, here, size) {
+    return h_flex().w_full().h(rowHeight(size)).flex_none().relative().gap(8).pl(this.margin(size) + 22).pr(12).items_center().bg(t.accent + "14")
+      .when(here, (e) => e.child(this.cursorMark(t)))
+      .child(div().flex_none().px(5).rounded(4).bg(t.accent + "33").text_color(t.accent).child("note"))
+      .child(div().flex_1().min_w(0).truncate().child(lost ? `${note.text}  ·  line ${note.line} is no longer in this diff` : note.text));
+  }
+
+  notesBar(total, t) {
+    const { list, agent } = this.noteTarget(), status = this.noteStatus, busy = Boolean(this.delivering);
+    const next = (cx) => { this.picked = list[(list.indexOf(agent) + 1) % list.length].address; cx.notify(); };
+    return h_flex().h(40).flex_none().px(16).gap(8).items_center().border_b(1).border_color(t.border).bg(t.raised).text_size(12)
+      .when(total > 0, (e) => e.child(div().flex_none().font_semibold().child(`${countLabel(total)} for the agent`)))
+      .child(div().flex_1().min_w(0).truncate().text_color(status?.bad ? t.ansi1 : t.muted).child(status?.text ?? (total > 0 && !agent ? "No agent is working in this folder" : "")))
+      .when(total > 0 && Boolean(agent), (e) => e
+        .child(div().id("cm-notes-agent").flex_none().max_w(280).truncate().text_color(t.muted)
+          .when(list.length > 1, (e) => e.cursor_pointer().tooltip("Send to another agent in this folder").on_click((_e, cx) => next(cx)))
+          .child(`${list.length > 1 ? "⇄ " : ""}${agent?.program.name}${agent?.tab_name ? ` · ${agent.tab_name}` : ""}`))
+        .child(this.button("cm-notes-send", busy ? "Sending…" : "Send  ⌘↵", (cx) => this.deliver(false, cx), true, t, "Send every note to this agent as one message")))
+      .when(total > 0, (e) => e
+        .child(this.button("cm-notes-copy", "Copy", (cx) => this.deliver(true, cx), false, t, "Copy the message instead of sending it"))
+        .child(this.button("cm-notes-clear", this.clearing ? "Clear them all?" : "Clear", (cx) => this.clearNotes(cx), false, t, "Remove every note without sending")));
+  }
+
+  noteEditor(name, t) {
+    const n = this.noting;
+    return h_flex().h(44).flex_none().px(16).gap(10).items_center().border_t(1).border_color(t.border).text_size(12)
+      .child(div().flex_none().text_color(t.muted).child(`Note on ${name}:${n.line}${n.side === "old" ? " (removed)" : ""}`))
+      .child(div().id("cm-note-input").flex_1().min_w(0).h(30).px(10).flex().items_center().rounded(7).border_1().border_color(t.accent)
+        .child(Input.new(this.noteInput).h_full().text_size(12).text_color(t.foreground)))
+      .child(div().flex_none().text_size(11).text_color(t.muted).child("↵ save   Esc cancel   empty removes"));
   }
 
   show(index, cx) {
@@ -483,7 +604,9 @@ export default class Changes extends View {
 
   margin(size) { return Math.max(40, this.gutter(size)); }
 
-  row({ kind, number, text, spans }, t, here, size) {
+  row(r, t, here, size) {
+    if (r.kind === "note") return this.noteRow(r, t, here, size);
+    const { kind, number, text, spans } = r;
     if (kind === "@") return div().w_full().px(12).h(rowHeight(size)).flex_none().relative().flex().items_center().truncate().bg(t.raised).text_color(t.muted)
       .when(here, (e) => e.child(this.cursorMark(t))).child(text);
     return h_flex().w_full().h(rowHeight(size)).flex_none().relative().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
@@ -516,6 +639,7 @@ export default class Changes extends View {
     if (!total) return;
     const top = Math.min(this.top, total - 1), at = Math.max(top, Math.min(top + page, this.cursor));
     const changed = rows.map((r) => split ? r.left?.kind === "-" || r.right?.kind === "+" : r.kind === "-" || r.kind === "+");
+    rows.forEach((r, i) => { if (r.kind === "note" && i) changed[i] = changed[i - 1]; });
     const to = target(motion, count, at, total, page, changeStarts(changed)), next = viewTop(motion, at, to, top, page, total);
     if (next > top) this.scroll.scroll_to_item(Math.min(total - 1, next + page - 1));
     else if (next < top) this.scroll.scroll_to_item(next);
@@ -524,21 +648,16 @@ export default class Changes extends View {
   }
 
   setSplit(on, cx) {
-    const split = this.split ?? splitRows(this.rows);
-    if (on) {
-      const r = this.rows[this.cursor];
-      this.cursor = Math.max(0, split.findIndex((s) => s === r || s.left === r || s.right === r));
-    } else {
-      const s = split[this.cursor];
-      this.cursor = s ? Math.max(0, this.rows.indexOf(s.right ?? s.left ?? s)) : 0;
-    }
-    this.split = split;
+    const r = this.shown(!on)[this.cursor], to = this.shown(on), line = r && "left" in r ? r.right ?? r.left : r;
+    const same = (s) => r.kind === "note" ? s.kind === "note" && s.note.side === r.note.side && s.note.line === r.note.line
+      : on ? s === r || s.left === r || s.right === r : s === line;
+    this.cursor = r ? Math.max(0, to.findIndex(same)) : 0;
     this.scroll.scroll_to_item(this.cursor);
     setShared(SPLIT, on);
     cx.notify();
   }
 
-  fileRow(f, current, t) {
+  fileRow(f, current, t, noted = 0) {
     const parts = f.path.split("/"), name = parts.pop();
     return h_flex().w_full().h(28).flex_none().px(10).gap(6).items_center().cursor_pointer().text_size(12)
       .when(current, (e) => e.bg(t.selected)).when(!current, (e) => e.hover((s) => s.bg(t.hover)))
@@ -546,14 +665,20 @@ export default class Changes extends View {
       .child(fileIcon(f.path, {}, t))
       .child(div().min_w(0).truncate().when(current, (e) => e.font_semibold()).child(name))
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(parts.join("/")))
+      .when(noted > 0, (e) => e.child(this.noteCount(noted, t)))
       .when(f.add > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${f.add}`)))
       .when(f.del > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
   }
 
+  noteCount(n, t) {
+    return div().flex_none().px(5).rounded(4).bg(t.accent + "33").text_size(11).text_color(t.accent).child(countLabel(n));
+  }
+
   fileList(t) {
+    const noted = counts(shared(NOTES), this.root, this.on, this.scope);
     return div().w(ASIDE).h_full().flex_none().relative().py(6).border_r(1).border_color(t.border)
       .child(v_virtual_list("changes-modal-files", this.files.length, 28, (i) => String(i),
-        (range) => this.files.slice(range.start, range.end).map((f, k) => this.fileRow(f, range.start + k === this.index, t)))
+        (range) => this.files.slice(range.start, range.end).map((f, k) => this.fileRow(f, range.start + k === this.index, t, noted[f.path])))
         .track_scroll(this.fileScroll).size_full().on_item_click((i, cx) => this.show(Number(i), cx)))
       .child(Scrollbar.vertical("changes-modal-files").viewport_from_layout().absolute().inset_0());
   }
@@ -581,15 +706,22 @@ export default class Changes extends View {
   renderViewer(cx) {
     const t = theme(), file = this.files[this.index], split = shared(SPLIT) !== false;
     if (!file) return div().size_full().bg(t.background);
-    if (split && !this.split) this.split = splitRows(this.rows);
-    const rows = split ? this.split : this.rows, cursor = Math.min(this.cursor, Math.max(0, rows.length - 1));
+    const rows = this.shown(split), cursor = Math.min(this.cursor, Math.max(0, rows.length - 1));
+    const total = notesOf(shared(NOTES), this.root, this.on).length, plain = (e) => !e.modifiers?.control && !e.modifiers?.platform && !e.modifiers?.alt;
     const parts = file.path.split("/"), name = parts.pop(), aside = this.files.length > 1;
     const step = (d, cx) => this.show(this.index + d, cx);
     return v_flex().id("changes-viewer").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_key_down((e, cx) => {
+        if (this.noting) {
+          if (e.key === "escape") { this.endNote(cx); cx.stop_propagation(); }
+          return;
+        }
         const motion = this.pictures ? null : this.vim.read(e);
         if (motion?.motion) this.go(motion, rows, split, cx);
         else if (motion) cx.notify();
+        else if (e.key === "enter" && e.modifiers?.platform) this.deliver(false, cx);
+        else if (e.key === "c" && plain(e) && !this.pictures) this.startNote(rows[cursor], cx);
+        else if (e.key === "x" && plain(e) && !this.pictures) this.removeNote(rows[cursor], cx);
         else if (["down", "right"].includes(e.key)) step(1, cx);
         else if (["up", "left"].includes(e.key)) step(-1, cx);
         else if (e.key === "s" && !this.pictures) this.setSplit(!split, cx);
@@ -614,14 +746,16 @@ export default class Changes extends View {
         .child(this.button("cm-next", "↓", (cx) => step(1, cx), false, t, "Next file"))
         .child(div().w(8))
         .child(this.button("cm-close", "✕", () => closeOverlay(props().overlay), false, t, "Close")))
+      .when(total > 0 || Boolean(this.noteStatus), (e) => e.child(this.notesBar(total, t)))
       .child(div().flex().flex_1().min_h(0)
         .when(aside, (e) => e.child(this.fileList(t)))
         .child(v_flex().flex_1().min_w(0).h_full()
           .when(Boolean(this.pictures), (e) => e.child(imageCompare(this.pictures.before, this.pictures.after, t, aside ? ASIDE : 0)))
           .when(!this.pictures, (e) => e.child(this.diff(rows, split, cursor, t)))))
+      .when(Boolean(this.noting), (e) => e.child(this.noteEditor(name, t)))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child("↑ ↓ file")
-        .when(!this.pictures, (e) => e.child("j k line, 10j").child("⌃D ⌃U half page").child("gg G top, bottom").child("]c [c change").child("S split / unified"))
+        .when(!this.pictures, (e) => e.child("j k line, 10j").child("⌃D ⌃U half page").child("gg G top, bottom").child("]c [c change").child("S split / unified").child("C note, X removes it"))
         .child("Esc close")
         .child(div().flex_1())
         .when(Boolean(this.vim.typed), (e) => e.child(div().text_color(t.foreground).child(this.vim.typed))));
@@ -658,6 +792,7 @@ export default class Changes extends View {
     else this.refreshIfDue(cx);
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
+    const noted = this.root ? counts(shared(NOTES), this.root, this.on ?? null, "") : {};
     return v_flex().id("changes").size_full().min_h(0).overflow_hidden().bg(t.background)
       .when(!this.embedded, el => el.rounded(10).border_1().border_color(t.border))
       .text_color(t.foreground).text_size(13).track_focus(this.handle)
@@ -680,6 +815,7 @@ export default class Changes extends View {
           .child(div().w(14).text_size(11).text_color(statusColor(f.status, t)).child(f.status))
           .child(fileIcon(f.path, {}, t))
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.muted).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
+          .when(noted[f.path] > 0, (e) => e.child(this.noteCount(noted[f.path], t)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
       })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.muted).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
         .child(Scrollbar.vertical("changes-list").absolute().inset_0())))
