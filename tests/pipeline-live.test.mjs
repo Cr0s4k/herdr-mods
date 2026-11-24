@@ -2384,3 +2384,20 @@ test("an open PR's agent can be asked to rebase, fix failing checks or address a
   const asked = reduce(state, { type: "reopen", id: "T-1", ask: "review", repo: state.tasks[0].repos[0] }, 0);
   assert.deepEqual([row(asked, "T-1").reopenAsk.kind, row(asked, "T-1").rebaseAsked], ["review", undefined]);
 });
+
+test("who merges is one answer that sets how work lands, guessed from the repository's merged pull requests", () => {
+  let state = createLive(context, 0);
+  assert.equal(model.flowOf(state), "solo");
+  state = reduce(state, { type: "flow", value: "team" }, 0);
+  assert.deepEqual([state.delivery, state.draftPr, state.prApproval, state.autoRebase, model.flowOf(state)], ["pr", true, true, true, "team"]);
+  assert.equal(reduce(state, { type: "flow", value: "team" }, 0), state);
+  assert.equal(model.flowOf(reduce(state, { type: "draftPr" }, 0)), "mixed", "changing one of its rows is your own mix");
+  state = reduce(state, { type: "flow", value: "solo" }, 0);
+  assert.deepEqual([state.delivery, state.draftPr, state.prApproval, state.autoRebase], ["merge", false, false, false]);
+  const pr = (login, reviewDecision = "") => ({ author: { login }, reviewDecision });
+  assert.equal(model.guessFlow(null), null);
+  assert.deepEqual(model.guessFlow([]), { flow: "solo", why: "no pull request was ever merged here" });
+  assert.deepEqual(model.guessFlow([pr("me"), pr("me", "APPROVED"), pr("me", "APPROVED"), pr("me")]), { flow: "team", why: "2 of its last 4 merged pull requests were approved first" });
+  assert.equal(model.guessFlow([pr("me"), pr("ana"), pr("me")]).why, "2 people opened its last 3 merged pull requests");
+  assert.equal(model.guessFlow([pr("me"), pr("me"), pr("me")]), null, "pull requests one person merges unreviewed say nothing either way");
+});

@@ -78,6 +78,18 @@ export const agentResume = agent => [...agent.run, ...(AGENT_OPTIONS[agent.key]?
 export const prAgent = task => task.status !== "pr" ? null : { working: "Agent working", input: "Agent needs you", gone: "Agent closed" }[task.agentState] ?? null;
 // The first of a task's open pull requests that can't merge for conflicts, as [repository, pull request].
 export const prConflict = task => Object.entries(task.prs ?? {}).find(([, pr]) => !pr.merged && (pr.status?.mergeable === "CONFLICTING" || pr.status?.mergeState === "DIRTY")) ?? null;
+// The two usual answers to "who merges this?", as the settings each one means. A pipeline set any other way is `mixed`.
+export const FLOWS = { solo: { delivery: "merge", draftPr: false, prApproval: false, autoRebase: false }, team: { delivery: "pr", draftPr: true, prApproval: true, autoRebase: true } };
+export const flowOf = state => state.delivery !== "pr" ? "solo" : state.draftPr && state.prApproval ? "team" : "mixed";
+// Guessed from the repository's last merged pull requests (`gh pr list --state merged --json reviewDecision,author`), like the Linear team from its branch names.
+export function guessFlow(merged) {
+  if (!Array.isArray(merged)) return null;
+  const count = merged.length, approved = merged.filter(pr => pr?.reviewDecision === "APPROVED").length, people = new Set(merged.map(pr => pr?.author?.login).filter(Boolean)).size;
+  if (count < 3) return { flow: "solo", why: count ? `only ${count} pull request${count === 1 ? " was" : "s were"} ever merged here` : "no pull request was ever merged here" };
+  if (approved) return { flow: "team", why: `${approved} of its last ${count} merged pull requests were approved first` };
+  if (people > 1) return { flow: "team", why: `${people} people opened its last ${count} merged pull requests` };
+  return null;
+}
 // What an open pull request's agent can be asked to do about it, most pressing first: `rebase`, `checks`, `review`.
 export function prAsks(pr) {
   const status = pr?.status;
@@ -1316,6 +1328,13 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || !task) return state;
       if (task.status === "input" && task.reason === "trust") { task.status = "working"; task.reason = null; }
       event(next, `${task.id} · trusted its new worktree${action.manual ? "" : " automatically"}.`, task.id);
+      break;
+    }
+    case "flow": {
+      const flow = FLOWS[action.value];
+      if (!next.live || !flow || flowOf(next) === action.value) return state;
+      Object.assign(next, flow);
+      event(next, action.value === "team" ? "A team reviews: work opens draft pull requests that wait for an approval, and rebases when one conflicts." : "Just you: finished work merges locally.");
       break;
     }
     case "deliver": {

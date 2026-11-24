@@ -41,6 +41,14 @@ takes about 20 seconds and costs about a cent. The card goes away with **Done** 
 **Start pipeline**; **Show setup** (Settings, General) brings it back, also on a pipeline made
 before the card existed.
 
+The card's first row asks **Who merges**. **Just me** merges finished work locally. **A team
+reviews** (on a GitHub repository) opens draft pull requests that count as ready only once
+approved, and has a conflicting one's agent rebase by itself. Each answer sets those rows at
+once, and they stay yours to change one by one afterwards (the row then reads "Your own mix").
+On GitHub the card looks at the repository's last twenty merged pull requests and says what it
+looks like when that differs from the current choice: a team's when any was approved first or
+several people opened them, your own when fewer than three were ever merged.
+
 Settings belong to the project, not the space: the agent and its model, checks, Prepare, Try
 it, delivery, After merge, repositories, ticket updates, the Linear team and project, agent
 instructions and Show the change. A change in one space reaches every space open on the same
@@ -300,9 +308,13 @@ nothing to finish.
    draft, or as an ordinary one where the repository's plan has no drafts; **Mark ready** and
    **Back to draft** in the inspector change it without opening GitHub. The card stays on the
    pull request while its agent goes on: it adds **Agent working** or **Agent needs you**, and
-   a pull request that conflicts with its base has **Ask the agent to rebase**, which tells the
+   what the pull request needs can be handed to its agent: **Ask the agent to fix the checks**
+   when checks fail (it reads the failing logs with `gh`), **Ask the agent to address the
+   review** when changes were requested or a reviewer left comments (it changes the code and
+   posts no replies), and, when the pull request conflicts with its base, **Ask the agent to
+   rebase**, which tells the
    agent to rebase onto the base branch, resolve the conflicts and push (with the agent's tab
-   closed it reads **Reopen agent to rebase**, and the request is the reopened
+   closed each reads **Reopen agent to …**, and the request is the reopened
    agent's first message). When the agent's tab was closed the inspector also offers **Reopen agent**, which starts the same
    agent in the worktree continuing its last conversation there (`claude --continue`,
    `codex resume --last`, `opencode --continue`). The task finishes when the PR is merged (then cleans up as above), or returns to

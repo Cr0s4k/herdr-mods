@@ -1944,3 +1944,20 @@ test("the setup card and Delivery settings set how pull requests open and when t
   flip(view, "pr-approval");
   assert.equal(view.state().prApproval, false);
 });
+
+test("the setup card asks who merges, sets the rows that follow from it, and says what the repository looks like", () => {
+  const view = setupLive();
+  assert.match(text(find(view.render(cx), "setup-flow")), /Just you: finished work merges locally/);
+  assert.equal(find(view.render(cx), "setup-team-use"), undefined, "a team needs GitHub");
+  view.github = true;
+  view.flowGuess = { flow: "team", why: "18 of its last 20 merged pull requests were approved first" };
+  assert.match(text(find(view.render(cx), "setup-flow")), /This looks like a repository a team reviews: 18 of its last 20 merged pull requests were approved first\./);
+  click(view, "setup-team-use");
+  assert.deepEqual([view.state().delivery, view.state().draftPr, view.state().prApproval, view.state().autoRebase], ["pr", true, true, true]);
+  const card = text(find(view.render(cx), "setup-flow"));
+  assert.match(card, /A team on GitHub: draft pull requests that wait for an approval/);
+  assert.doesNotMatch(card, /This looks like/, "a guess that agrees says nothing");
+  view.open("settings", cx, "delivery");
+  flip(view, "auto-rebase");
+  assert.equal(view.state().autoRebase, false);
+});

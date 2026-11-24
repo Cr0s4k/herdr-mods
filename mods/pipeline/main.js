@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch, TextView } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, flowOf, guessFlow, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { loadProcedures, procedure } from "./procedures.js";
@@ -299,6 +299,10 @@ export default class Pipeline extends View {
         this.demoSkill = demo ? demo.code === 0 : null;
         const hub = await exec("sh", ["-c", GITHUB], { cwd: this.repo.root, on }).catch(() => null);
         this.github = hub?.code === 0;
+        if (this.github && this.state()?.setup) {
+          const merged = await exec("gh", ["pr", "list", "--state", "merged", "--limit", "20", "--json", "reviewDecision,author"], { cwd: this.repo.root, on, timeout: 20000 }).catch(() => null);
+          try { this.flowGuess = merged?.code === 0 ? guessFlow(JSON.parse(merged.stdout)) : null; } catch { this.flowGuess = null; }
+        }
       }
       this.loadUpdateStates(cx);
       if (this.repo?.root && this.state()?.setup && !this.state()?.linear?.team) try {
@@ -1318,7 +1322,12 @@ export default class Pipeline extends View {
     const ok = () => icon("check", 13).text_color(t.ansi2), todo = () => dot(t.ansi3, 7), plain = () => dot(t.muted, 5);
     const tracker = state.linear?.team || this.teamGuess ? "linear" : this.ticketProvider(state), moves = state.ticketUpdates?.[tracker], readonly = tracker === "linear" && this.linearWrite === false && Boolean(updatesLabel(moves)), guess = guessUpdates(this.updateStates[tracker].states), watchGuess = guessWatch(this.updateStates[tracker].states);
     const demoQueued = state.tasks.some(task => task.title === DEMO_TITLE), prepareHint = this.prepareSuggestions[0], checkHint = this.checkSuggestions[0], tryHint = this.trySuggestions[0], afterHint = this.afterSuggestions[0], watched = Object.entries(state.watching ?? {}).filter(([, watch]) => watch);
+    const flow = flowOf(state), hint = this.flowGuess && this.flowGuess.flow !== flow ? { reason: `This looks like ${this.flowGuess.flow === "team" ? "a repository a team reviews" : "a repository you merge yourself"}: ${this.flowGuess.why}.` } : null;
     const rows = [
+      row("flow", "Who merges", flow === "mixed" ? todo : ok, { solo: "Just you: finished work merges locally", team: "A team on GitHub: draft pull requests that wait for an approval", mixed: "Your own mix of the settings below" }[flow], [
+        ...(flow !== "solo" ? [use("solo", "Just me", cx => this.act({ type: "flow", value: "solo" }, cx), "Finished work merges into your branch locally, once you approve it")] : []),
+        ...(flow !== "team" && this.github ? [use("team", "A team reviews", cx => this.act({ type: "flow", value: "team" }, cx),
+          "Finished work opens a draft pull request, counts as ready to merge only once approved, and its agent rebases when it conflicts")] : [])], hint),
       row("helper", "AI helper", canAsk ? () => icon("sparkles", 13).text_color(t.accent) : todo,
         canAsk ? job.by : `Needs ${PLANNERS[job.agent]} installed`, [change("helper", "planner")]),
       row("agent", "Agent", this.agentChoices.length ? ok : todo,
