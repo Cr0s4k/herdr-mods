@@ -189,6 +189,9 @@ export default class Pipeline extends View {
     this.prepareInput.on("submit", (_e, cx) => this.savePrepare(cx));
     this.teamGuess = null; this.asked = null; this.prepareSuggestions = []; this.demoSkill = null; this.linearWrite = null;
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
+    this.rename = InputState.new({ placeholder: "Title" });
+    this.rename.on("blur", (_e, cx) => this.saveDetails(cx));
+    this.rename.on("submit", (_e, cx) => { this.saveDetails(cx); this.details.focus(); });
     this.details.on("submit", (e, cx) => { if (e?.secondary) this.queueDraft(cx); });
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
@@ -230,7 +233,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.rename.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   // A log of what was pressed, kept on this computer only, to see later which parts of Pipeline are used. No titles or text go in it.
@@ -376,6 +379,7 @@ export default class Pipeline extends View {
   saveDetails(cx) {
     const task = this.state()?.tasks.find(task => task.id === this.detailsFor);
     if (task && this.details.value() !== (task.description ?? "")) this.act({ type: "describe", id: task.id, text: this.details.value() }, cx);
+    if (task && this.rename.value().trim() && this.rename.value().trim() !== task.title) this.act({ type: "retitle", id: task.id, text: this.rename.value() }, cx);
   }
   peekAt(task, cx) {
     const trees = workspacesOf(task), key = `${task.id}:${task.status}:${task.terminal}:${task.tried ?? ""}:${trees.map(ws => ws.root).join(",")}`;
@@ -750,7 +754,7 @@ export default class Pipeline extends View {
     if (task) this.track("inspect", { task: id, status: task.status });
     this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null; this.imageNote = null;
     this.detailsFor = task?.status === "queued" && this.state()?.live ? id : null;
-    if (this.detailsFor) { this.details.set_value(task.description ?? ""); this.taskModelInput.set_value(task.tune?.model ?? ""); }
+    if (this.detailsFor) { this.details.set_value(task.description ?? ""); this.rename.set_value(task.title); this.taskModelInput.set_value(task.tune?.model ?? ""); }
     cx.notify();
   }
   nextQuestion(cx) {
@@ -2097,7 +2101,9 @@ export default class Pipeline extends View {
     this.peekAt(task, cx);
     const trees = workspacesOf(task), several = task.repos.length > 1, target = targetOf(task) ?? this.repo?.branch ?? "your branch";
     const branch = (trees[0] ?? Object.values(task.planned ?? {})[0])?.branch;
-    body.child(this.copyable(`title-${task.id}`, task.title).text_size(18).font_semibold().line_height(1.3));
+    if (task.status === "queued" && this.detailsFor === task.id) body.child(Input.new(this.rename).id(`pipeline-rename-${task.id}`).w_full().h(36).px(9).rounded(6).border_1().border_color(t.border).bg(t.input)
+      .text_size(15).font_semibold().accessibility_label("Task title"));
+    else body.child(this.copyable(`title-${task.id}`, task.title).text_size(18).font_semibold().line_height(1.3));
     body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : task.draft ? "Draft" : adoptStep(task) ?? labelFor(state, task.status)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.agent) body.child(div().id(`pipeline-agent-line-${task.id}`).w_full().min_w(0).text_size(12).line_height(1.45).text_color(t.muted).child(`${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`));
@@ -2127,7 +2133,7 @@ export default class Pipeline extends View {
     if (task.status === "queued") {
       body.child(this.heading("Details for the agent"));
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
-      body.child(this.label("The title and these details are the agent's first message. Saved when you leave the field.", t));
+      body.child(this.label("The title and these details are the agent's first message. Each is saved when you leave its field.", t));
       this.imagesDetail(body, task, t);
       if (task.draft) body.child(h_flex().gap(8).items_center()
         .child(this.button(`queue-${task.id}`, "Queue it", cx => this.queueDraft(cx), t, { icon: "plus", primary: true, hint: `Add it to the queue as it is now (${chord()} in the details)` }))

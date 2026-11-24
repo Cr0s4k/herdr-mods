@@ -1059,6 +1059,12 @@ export function reduce(state, action, now = Date.now()) {
       event(next, `${task.id} joined the queue.`, task.id);
       break;
     }
+    case "retitle": {
+      const task = row(action.id), title = String(action.text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      if (!next.live || task?.status !== "queued" || !title || title === task.title) return state;
+      task.title = title;
+      break;
+    }
     case "describe": {
       const task = row(action.id);
       if (!next.live || task?.status !== "queued") return state;

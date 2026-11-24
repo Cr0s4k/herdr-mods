@@ -453,6 +453,14 @@ test("a typed task added with details stays a draft, with its inspector open, un
   assert.deepEqual([task.status, task.draft, view.selected, view.detailsFor, view.title.value()], ["queued", true, "T-1", "T-1", ""]);
   assert.match(text(find(view.render(cx), "card-T-1") ?? view.render(cx)), /Draft/);
   assert.equal(find(view.render(cx), "first-T-1"), undefined, "a draft has no place in the order yet");
+  assert.equal(view.rename.value(), "Add a dark mode toggle");
+  view.rename.set_value("  Add a dark   mode switch ");
+  view.rename.emit("blur", cx);
+  assert.equal(row(view, "T-1").title, "Add a dark mode switch");
+  view.rename.set_value(" ");
+  view.rename.emit("blur", cx);
+  assert.equal(row(view, "T-1").title, "Add a dark mode switch", "an empty title changes nothing");
+  view.rename.set_value("Add a dark mode switch");
   view.details.set_value("Follow the system preference first.");
   view.details.emit("submit", cx);
   assert.equal(row(view, "T-1").draft, true, "Enter alone is a new line");
