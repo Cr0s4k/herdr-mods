@@ -40,6 +40,7 @@ Like Vim, a number before a key repeats it: `10j` moves ten lines down.
 | `gg` / `G` | to the top / bottom; `42G` to line 42 |
 | `]c` / `[c` | to the next / previous change (Git only) |
 | `C` / `X` | add or edit a note on the line / remove it (Git only; see [Notes for the agent](#notes-for-the-agent)) |
+| `V` | pick lines from here, for one note on all of them (Git only) |
 | ↑ / ↓ | to the next / previous file |
 
 - In a diff the line under the cursor is marked; clicking a line moves it there. The view
@@ -54,9 +55,13 @@ Like Vim, a number before a key repeats it: `10j` moves ten lines down.
 While you read a diff, leave notes on its lines and send them all to the agent as one message,
 instead of describing each place in its terminal.
 
-- **`C`** on the line under the cursor opens a one-line note. Enter saves it, Esc cancels. The
-  note sits under its line; `C` there edits it and **`X`** removes it. Saving it empty removes
-  it too.
+- **`C`** on the line under the cursor opens a note. Enter saves it, ⇧Enter starts a new line
+  in it, Esc cancels. The note sits under its line; `C` there edits it and **`X`** removes it.
+  Saving it empty removes it too.
+- For a note on several lines, press **`V`**, move to the last one (`j`, `3j`, `]c`…) and press
+  `C`: the picked lines are tinted, and the note says `note on 21-24` and sits under the last.
+  `V` again or Esc drops the pick. The lines are the ones on the side of the row you end on:
+  end on a removed line to note removed lines. The message quotes up to twelve of them.
 - Notes stay while you step through the files, close the dialog and come back: the file list
   and the Changes tab show how many each file has. A note follows its line when the file
   changes; when the line leaves the diff, the note moves to the top and says so.

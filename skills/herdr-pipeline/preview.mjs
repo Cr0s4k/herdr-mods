@@ -16,6 +16,7 @@ const issue = { identifier: "ENG-42", title: task.title, url: ticket.url, status
 const notes = [
   { scope: "", path: "src/theme.js", side: "new", line: 42, code: "  const stored = localStorage.theme;", text: "Read it through settings.js like the other preferences." },
   { scope: "", path: "src/theme.js", side: "old", line: 57, code: "  applyTheme(system());", text: "Why did this go? The first paint needs it." },
+  { scope: "", path: "src/toggle.js", side: "new", line: 8, to: 10, code: "export function toggle() {", quote: ["export function toggle() {", "  document.body.classList.toggle(\"dark\");", "}"], text: "Go through setTheme() so the choice is saved.\nKeep the export's name." },
 ];
 const everything = { instructions: "Write commits in English.", evidence: true, tryout: "npm run dev", port: 4242,
   implementer: { label: "Codex · gpt-5", command: 'codex exec --sandbox workspace-write -m gpt-5 "$(cat "$(git rev-parse --git-path herdr-brief.md)")"' } };

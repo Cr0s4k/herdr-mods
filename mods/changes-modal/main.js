@@ -1,5 +1,5 @@
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
 import { spaces, panes, focused, agents, exec, hc, appHome, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
 import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
@@ -7,7 +7,7 @@ import { isImage, stageImage, imageCompare } from "./images.js";
 import { branchState, remoteGit } from "./sync.js";
 import { History, commitHeader } from "./history.js";
 import { Motions, target, viewTop, changeStarts } from "./vim.js";
-import { NOTES, scopeOf, anchorOf, notesOf, counts, saveNote, dropNotes, withNotes, noteList, countLabel, targets } from "./notes.js";
+import { NOTES, scopeOf, anchorOf, notesOf, counts, saveNote, dropNotes, withNotes, rangeOf, linesOf, noteList, countLabel, targets } from "./notes.js";
 import { loadProcedures, procedure } from "./procedures.js";
 
 // The panels share data in one VM, but their host tasks belong to separate copies.
@@ -438,7 +438,8 @@ export default class Changes extends View {
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.scope = scopeOf(this.base, this.head);
-    this.noteInput = InputState.new({ placeholder: "What should the agent change here?" });
+    this.noteInput = TextareaState.new({ placeholder: "What should the agent change here?", rows: 1 });
+    this.noteInput.set_auto_grow(1, 8);
     this.noteInput.on("submit", (_e, cx) => this.keepNote(cx));
     this.show(this.index, cx);
   }
@@ -460,11 +461,13 @@ export default class Changes extends View {
     return a ? this.fileNotes().find((n) => n.side === a.side && n.line === a.line) ?? null : null;
   }
 
-  startNote(row, cx) {
-    const note = this.noteOn(row), a = note ?? anchorOf(row);
+  // With lines picked (V), the note is on all of them; otherwise on the cursor's line, or the note already there.
+  startNote(rows, cursor, cx) {
+    const row = rows[cursor], picked = this.mark === null || this.mark === undefined ? null : rows.slice(Math.min(this.mark, cursor), Math.max(this.mark, cursor) + 1);
+    const note = picked ? null : this.noteOn(row), a = note ?? (picked ? rangeOf(picked, row) : anchorOf(row));
     if (!a) return;
-    this.noting = { side: a.side, line: a.line, code: a.code };
-    this.noteStatus = null; this.clearing = false;
+    this.noting = { side: a.side, line: a.line, code: a.code, ...(a.to ? { to: a.to, quote: a.quote } : {}) };
+    this.mark = null; this.noteStatus = null; this.clearing = false;
     this.noteInput.set_value(note?.text ?? "");
     this.noteInput.focus();
     cx.notify();
@@ -527,11 +530,12 @@ export default class Changes extends View {
     cx.notify();
   }
 
-  noteRow({ note, lost }, t, here, size) {
+  noteRow({ note, part, text, lost }, t, here, size) {
+    const label = lost ? `line ${note.line} left this diff` : note.to > note.line ? `note on ${linesOf(note)}` : "note";
     return h_flex().w_full().h(rowHeight(size)).flex_none().relative().gap(8).pl(this.margin(size) + 22).pr(12).items_center().bg(t.accent + "14")
       .when(here, (e) => e.child(this.cursorMark(t)))
-      .child(div().flex_none().px(5).rounded(4).bg(t.accent + "33").text_color(t.accent).child("note"))
-      .child(div().flex_1().min_w(0).truncate().child(lost ? `${note.text}  ·  line ${note.line} is no longer in this diff` : note.text));
+      .child(div().flex_none().px(5).rounded(4).when(part === 0, (e) => e.bg(t.accent + "33")).text_color(part === 0 ? t.accent : t.accent + "00").child(label))
+      .child(div().flex_1().min_w(0).truncate().child(text));
   }
 
   notesBar(total, t) {
@@ -552,18 +556,19 @@ export default class Changes extends View {
 
   noteEditor(name, t) {
     const n = this.noting;
-    return h_flex().h(44).flex_none().px(16).gap(10).items_center().border_t(1).border_color(t.border).text_size(12)
-      .child(div().flex_none().text_color(t.muted).child(`Note on ${name}:${n.line}${n.side === "old" ? " (removed)" : ""}`))
-      .child(div().id("cm-note-input").flex_1().min_w(0).h(30).px(10).flex().items_center().rounded(7).border_1().border_color(t.accent)
-        .child(Input.new(this.noteInput).h_full().text_size(12).text_color(t.foreground)))
-      .child(div().flex_none().text_size(11).text_color(t.muted).child("↵ save   Esc cancel   empty removes"));
+    return h_flex().flex_none().px(16).py(8).gap(10).items_start().border_t(1).border_color(t.border).text_size(12)
+      .child(div().flex_none().h(30).flex().items_center().text_color(t.muted).child(`Note on ${name}:${linesOf(n)}${n.side === "old" ? " (removed)" : ""}`))
+      .child(div().id("cm-note-input").flex_1().min_w(0).px(10).py(5).rounded(7).border_1().border_color(t.accent)
+        .child(Textarea.new(this.noteInput).w_full().text_size(12).text_color(t.foreground)))
+      .child(div().flex_none().h(30).flex().items_center().text_size(11).text_color(t.muted).child("↵ save   ⇧↵ new line   Esc cancel   empty removes"));
   }
 
   show(index, cx) {
     if (index < 0 || index >= this.files.length) return;
     const file = this.files[index], context = this.context = { key: key() };
     this.index = index; this.open = file.path; this.setLines([]); this.split = null; this.loadingDiff = true; this.pictures = null;
-    this.cursor = 0; this.top = 0; this.scroll.scroll_to_item(0); this.fileScroll.scroll_to_item(index);
+    if (this.noting) this.handle.focus();
+    this.cursor = 0; this.top = 0; this.mark = null; this.noting = null; this.scroll.scroll_to_item(0); this.fileScroll.scroll_to_item(index);
     if (isImage(file.path) && !this.on) {
       cx.spawn(async (cx) => {
         const stage = (rev) => stageImage(this.root, file.path, rev).catch(() => null);
@@ -604,12 +609,17 @@ export default class Changes extends View {
 
   margin(size) { return Math.max(40, this.gutter(size)); }
 
-  row(r, t, here, size) {
+  pickedMark(t) {
+    return div().absolute().inset_0().bg(t.accent + "26");
+  }
+
+  row(r, t, here, size, picked = false) {
     if (r.kind === "note") return this.noteRow(r, t, here, size);
     const { kind, number, text, spans } = r;
     if (kind === "@") return div().w_full().px(12).h(rowHeight(size)).flex_none().relative().flex().items_center().truncate().bg(t.raised).text_color(t.muted)
       .when(here, (e) => e.child(this.cursorMark(t))).child(text);
     return h_flex().w_full().h(rowHeight(size)).flex_none().relative().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
+      .when(picked, (e) => e.child(this.pickedMark(t)))
       .when(here, (e) => e.child(this.cursorMark(t)))
       .child(div().w(this.margin(size)).flex_none().text_right().text_color(here ? t.foreground : t.dim).child(number === undefined ? "" : String(number)))
       .child(div().w(10).flex_none().text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.dim).child(kind === " " ? "" : kind))
@@ -625,12 +635,13 @@ export default class Changes extends View {
         .child(this.code(side.text, side.spans, t)));
   }
 
-  splitRow(r, t, here, size) {
-    if (!("left" in r)) return this.row(r, t, here, size);
+  splitRow(r, t, here, size, picked = false) {
+    if (!("left" in r)) return this.row(r, t, here, size, picked);
     return h_flex().w_full().h(rowHeight(size)).flex_none().relative()
       .child(this.half(r.left, t, here, size))
       .child(div().w(1).h_full().flex_none().bg(t.border))
       .child(this.half(r.right, t, here, size))
+      .when(picked, (e) => e.child(this.pickedMark(t)))
       .when(here, (e) => e.child(this.cursorMark(t)));
   }
 
@@ -649,7 +660,8 @@ export default class Changes extends View {
 
   setSplit(on, cx) {
     const r = this.shown(!on)[this.cursor], to = this.shown(on), line = r && "left" in r ? r.right ?? r.left : r;
-    const same = (s) => r.kind === "note" ? s.kind === "note" && s.note.side === r.note.side && s.note.line === r.note.line
+    this.mark = null;
+    const same = (s) => r.kind === "note" ? s.kind === "note" && s.note.side === r.note.side && s.note.line === r.note.line && s.part === r.part
       : on ? s === r || s.left === r || s.right === r : s === line;
     this.cursor = r ? Math.max(0, to.findIndex(same)) : 0;
     this.scroll.scroll_to_item(this.cursor);
@@ -713,14 +725,19 @@ export default class Changes extends View {
     return v_flex().id("changes-viewer").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_key_down((e, cx) => {
         if (this.noting) {
-          if (e.key === "escape") { this.endNote(cx); cx.stop_propagation(); }
-          return;
+          if (e.key === "escape") this.endNote(cx);
+          else if (e.key === "enter" && e.modifiers?.shift) { this.noteInput.replace("\n"); cx.notify(); }
+          else if (e.key === "enter") this.keepNote(cx);
+          else return;
+          return cx.stop_propagation();
         }
         const motion = this.pictures ? null : this.vim.read(e);
         if (motion?.motion) this.go(motion, rows, split, cx);
         else if (motion) cx.notify();
         else if (e.key === "enter" && e.modifiers?.platform) this.deliver(false, cx);
-        else if (e.key === "c" && plain(e) && !this.pictures) this.startNote(rows[cursor], cx);
+        else if (e.key === "c" && plain(e) && !this.pictures) this.startNote(rows, cursor, cx);
+        else if (e.key === "v" && plain(e) && !this.pictures) { this.mark = this.mark === null || this.mark === undefined ? cursor : null; cx.notify(); }
+        else if (e.key === "escape" && this.mark !== null && this.mark !== undefined) { this.mark = null; cx.notify(); }
         else if (e.key === "x" && plain(e) && !this.pictures) this.removeNote(rows[cursor], cx);
         else if (["down", "right"].includes(e.key)) step(1, cx);
         else if (["up", "left"].includes(e.key)) step(-1, cx);
@@ -755,7 +772,7 @@ export default class Changes extends View {
       .when(Boolean(this.noting), (e) => e.child(this.noteEditor(name, t)))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
         .child("↑ ↓ file")
-        .when(!this.pictures, (e) => e.child("j k line, 10j").child("⌃D ⌃U half page").child("gg G top, bottom").child("]c [c change").child("S split / unified").child("C note, X removes it"))
+        .when(!this.pictures, (e) => e.child("j k line, 10j").child("⌃D ⌃U half page").child("gg G top, bottom").child("]c [c change").child("S split / unified").child("C note, X removes it").child("V picks lines"))
         .child("Esc close")
         .child(div().flex_1())
         .when(Boolean(this.vim.typed), (e) => e.child(div().text_color(t.foreground).child(this.vim.typed))));
@@ -765,13 +782,14 @@ export default class Changes extends View {
     const size = settings().font_size;
     const list = (draw) => v_virtual_list("changes-modal-diff", rows.length, rowHeight(size), (i) => String(i), (range) => {
       this.top = range.start;
-      return rows.slice(range.start, range.end).map((r, k) => draw(r, range.start + k === cursor));
+      const from = this.mark ?? -1, low = Math.min(from, cursor), high = Math.max(from, cursor);
+      return rows.slice(range.start, range.end).map((r, k) => draw(r, range.start + k === cursor, from >= 0 && range.start + k >= low && range.start + k <= high));
     }).track_scroll(this.scroll).size_full().on_item_click((i, cx) => { this.cursor = Number(i); cx.notify(); });
     return div().id("changes-modal-body").flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(size)
       .on_size_change((size) => { this.bodyHeight = size.height; })
-      .when(split, (e) => e.child(list((r, here) => this.splitRow(r, t, here, size))))
+      .when(split, (e) => e.child(list((r, here, picked) => this.splitRow(r, t, here, size, picked))))
       .when(!split, (e) => e.child(div().id("changes-modal-x").size_full().overflow_x_scrollbar()
-        .child(div().w_full().min_w(Math.max(300, this.longest * charWidth(size) + this.margin(size) + 50)).h_full().child(list((r, here) => this.row(r, t, here, size))))))
+        .child(div().w_full().min_w(Math.max(300, this.longest * charWidth(size) + this.margin(size) + 50)).h_full().child(list((r, here, picked) => this.row(r, t, here, size, picked))))))
       .child(Scrollbar.vertical("changes-modal-diff").viewport_from_layout().absolute().inset_0())
       .when(this.loadingDiff, (e) => e.child(div().absolute().top(8).px(16).text_size(12).text_color(t.muted).child("Loading…")));
   }

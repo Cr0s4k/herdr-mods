@@ -172,7 +172,7 @@ Follow the skill yourself once, from this worktree, and fix what doesn't work be
 ## Notes left on lines of a diff, sent from the Git dialog
 
 ````text
-I read the changes in this folder and left 2 notes on lines of the diff. Each one names the file and line, quotes the line, then says what I want.
+I read the changes in this folder and left 3 notes on lines of the diff. Each one names the file and line, quotes the line, then says what I want.
 
 1. src/theme.js:42
    > const stored = localStorage.theme;
@@ -181,6 +181,13 @@ I read the changes in this folder and left 2 notes on lines of the diff. Each on
 2. src/theme.js:57 (a removed line, numbered as before the change)
    > applyTheme(system());
    Why did this go? The first paint needs it.
+
+3. src/toggle.js:8-10
+   > export function toggle() {
+   >   document.body.classList.toggle("dark");
+   > }
+   Go through setTheme() so the choice is saved.
+   Keep the export's name.
 
 Address every note. Where you disagree with one or can't do it, leave that code as it is and say why. When you are done, say in one line per note what you did.
 ````

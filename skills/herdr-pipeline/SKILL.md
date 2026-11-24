@@ -41,7 +41,7 @@ One file each in `procedures/`. `{{name}}` marks a value the mod fills in.
 | adopt-moved.md | the converted work went to a new agent | `task`, `folder`: its worktree |
 | ticket-launch.md | a ticket started from the Linear or Plane panel, after the ticket itself | `ticket`: ticket.md |
 | demo-task.md | the setup card's task that writes a run-and-show skill | nothing |
-| review-notes.md | **Send** in the Git dialog, after notes were left on lines of a diff (to an agent working in that folder, Pipeline's or not) | `count`: how many notes; `notes`: the numbered notes, each with its file and line, the line quoted, and what the person wrote |
+| review-notes.md | **Send** in the Git dialog, after notes were left on lines of a diff (to an agent working in that folder, Pipeline's or not) | `count`: how many notes; `notes`: the numbered notes, each with its file and line or lines, those lines quoted, and what the person wrote |
 
 ## Changing one
 

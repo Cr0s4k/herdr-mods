@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { lstat, readlink } from "node:fs/promises";
 import test from "node:test";
-import { repoKey, scopeOf, anchorOf, notesOf, counts, saveNote, dropNotes, place, withNotes, noteList, countLabel, targets } from "../mods/changes-modal/notes.js";
+import { repoKey, scopeOf, anchorOf, notesOf, counts, saveNote, dropNotes, place, withNotes, rangeOf, linesOf, noteList, countLabel, targets } from "../mods/changes-modal/notes.js";
 
 const rows = [
   { kind: "@", text: "@@ -1,3 +1,3 @@" },
@@ -77,6 +77,35 @@ test("notes are drawn under their line, lost ones first, and no notes means the 
   assert.equal(withNotes(rows, []), rows);
   const drawn = withNotes(rows, [note(), note({ line: 99, code: "nowhere", text: "Gone" })]);
   assert.deepEqual(drawn.map(r => r.kind === "note" ? `note:${r.note.text}${r.lost ? ":lost" : ""}` : r.kind), ["note:Gone:lost", "@", " ", "-", "+", "note:Rename it", " "]);
+});
+
+test("picked lines make one note on the side of the cursor's row, drawn under the last of them", () => {
+  const more = [...rows.slice(0, 4), { kind: "+", number: 3, text: "  new three" }, { kind: " ", number: 4, text: "four" }, { kind: "@", text: "@@ -9 +10 @@" }, { kind: " ", number: 10, text: "ten" }];
+  assert.deepEqual(rangeOf(more.slice(3, 6), more[5]), { side: "new", line: 2, code: "new two", to: 4, quote: ["new two", "  new three", "four"] });
+  assert.deepEqual(rangeOf(more.slice(2, 4), more[2]), { side: "old", line: 2, code: "old two" });
+  assert.deepEqual(rangeOf([split[1], split[2]], split[2]), { side: "new", line: 1, code: "one", to: 2, quote: ["one", "new two"] });
+  assert.equal(rangeOf([more[0]], more[0]), null);
+  const ranged = note({ to: 4, quote: ["new two", "  new three", "four"] });
+  assert.deepEqual(withNotes(more, [ranged]).map(r => r.kind), ["@", " ", "-", "+", "+", " ", "note", "@", " "]);
+  assert.deepEqual(withNotes(more, [note({ to: 99 })]).map(r => r.kind), ["@", " ", "-", "+", "+", " ", "note", "@", " "]);
+  assert.equal(linesOf(ranged), "2-4");
+  assert.equal(linesOf(note()), "2");
+});
+
+test("a note of several lines takes a row each, and a long one is folded", () => {
+  const drawn = withNotes(rows, [note({ text: "First\nSecond" })]).filter(r => r.kind === "note");
+  assert.deepEqual(drawn.map(r => [r.part, r.text]), [[0, "First"], [1, "Second"]]);
+  const long = withNotes(rows, [note({ text: Array.from({ length: 12 }, (_, i) => `l${i}`).join("\n") })]).filter(r => r.kind === "note");
+  assert.equal(long.length, 8);
+  assert.equal(long[7].text, "… 5 more lines");
+  assert.equal(saveNote({}, "/repo", null, note({ text: "\n a\n\nb \n" }), 1)[repoKey("/repo", null)][0].text, "a\n\nb");
+});
+
+test("the message quotes every picked line and keeps a note's own lines", () => {
+  assert.equal(noteList([note({ to: 4, quote: ["new two", "  new three", "four"], text: "Split this.\n\nKeep the name." }), note({ side: "old", line: 5, to: 30, code: "a", quote: ["a", "", "b"], text: "Why?" })]), [
+    "1. a.js:2-4\n   > new two\n   >   new three\n   > four\n   Split this.\n\n   Keep the name.",
+    "2. a.js:5-30 (removed lines, numbered as before the change)\n   > a\n   >\n   > b\n   > …\n   Why?",
+  ].join("\n\n"));
 });
 
 test("the message lists notes by file and line, quotes the line and says when it was removed or in a commit", () => {

@@ -46,10 +46,12 @@ export function dropNotes(store, root, on, sent = null) {
   return next;
 }
 
+const sides = row => row && "left" in row ? [anchorOf(row.right), row.left?.kind === "-" ? anchorOf(row.left) : null] : [anchorOf(row)];
+
 // Each note's row in the diff as it is now: its line, else the nearest line that still reads the same,
 // else that line number with new text. -1 when the diff no longer has it.
 export function place(notes, rows) {
-  const anchors = rows.map(row => row && "left" in row ? [anchorOf(row.right), row.left?.kind === "-" ? anchorOf(row.left) : null] : [anchorOf(row)]);
+  const anchors = rows.map(sides);
   return notes.map(note => {
     let near = -1, gap = Infinity, edited = -1;
     for (let i = 0; i < anchors.length; i++) {
@@ -63,23 +65,61 @@ export function place(notes, rows) {
   });
 }
 
-// The rows to draw: each note right under its line, and the ones whose line is gone first.
+// The last row of a note on several lines, from the row its first line is on, within the same hunk.
+function lastRow(rows, from, note) {
+  if (!(note.to > note.line)) return from;
+  const first = sides(rows[from]).find(a => a?.side === note.side), end = note.to + (first ? first.line - note.line : 0);
+  let last = from;
+  for (let i = from + 1; i < rows.length && rows[i].kind !== "@"; i++) {
+    const a = sides(rows[i]).find(a => a?.side === note.side);
+    if (a && a.line > end) break;
+    if (a) last = i;
+  }
+  return last;
+}
+
+export const SHOWN = 8;
+
+// A note's rows: one per line it was written on, the rest folded into the last.
+function noteRows(note, lost) {
+  const lines = note.text.split("\n"), shown = lines.length > SHOWN ? [...lines.slice(0, SHOWN - 1), `… ${lines.length - SHOWN + 1} more lines`] : lines;
+  return shown.map((text, part) => ({ kind: "note", note, part, text, ...(lost ? { lost: true } : {}) }));
+}
+
+// The rows to draw: each note right under its line or its last line, and the ones whose line is gone first.
 export function withNotes(rows, notes) {
   if (!notes.length) return rows;
   const at = place(notes, rows), under = new Map(), out = [];
   notes.forEach((note, k) => {
-    if (at[k] < 0) out.push({ kind: "note", note, lost: true });
-    else under.set(at[k], [...(under.get(at[k]) ?? []), { kind: "note", note }]);
+    if (at[k] < 0) return out.push(...noteRows(note, true));
+    const last = lastRow(rows, at[k], note);
+    under.set(last, [...(under.get(last) ?? []), ...noteRows(note, false)]);
   });
   rows.forEach((row, i) => { out.push(row); if (under.has(i)) out.push(...under.get(i)); });
   return out;
 }
 
-const where = (n) => `${n.path}:${n.line}${n.side === "old" ? " (a removed line, numbered as before the change)" : ""}${n.scope.includes("..") ? ` (in commit ${n.scope.split("..")[1].slice(0, 9)})` : ""}`;
+// The note for the rows picked, on the side of the row the cursor is on: its first and last line, and what they read.
+export function rangeOf(rows, cursorRow) {
+  const side = anchorOf(cursorRow)?.side ?? rows.flatMap(sides).find(Boolean)?.side;
+  const picked = rows.filter(r => r.kind !== "note").map(r => sides(r).find(a => a?.side === side)).filter(Boolean);
+  if (!picked.length) return null;
+  const first = picked[0], last = picked[picked.length - 1];
+  return { side, line: first.line, code: first.code, ...(last.line > first.line ? { to: last.line, quote: picked.slice(0, QUOTED).map(a => a.code) } : {}) };
+}
+
+const QUOTED = 12;
+export const linesOf = n => n.to > n.line ? `${n.line}-${n.to}` : String(n.line);
+
+const where = (n) => `${n.path}:${linesOf(n)}${n.side === "old" ? ` (${n.to > n.line ? "removed lines" : "a removed line"}, numbered as before the change)` : ""}${n.scope.includes("..") ? ` (in commit ${n.scope.split("..")[1].slice(0, 9)})` : ""}`;
 
 export function noteList(notes) {
   const sorted = [...notes].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line);
-  return sorted.map((n, i) => [`${i + 1}. ${where(n)}`, ...(n.code?.trim() ? [`   > ${n.code.trim().slice(0, 200)}`] : []), `   ${n.text}`].join("\n")).join("\n\n");
+  return sorted.map((n, i) => {
+    const quoted = n.quote ? n.quote.map(line => `   > ${line.trimEnd().slice(0, 200)}`.trimEnd()) : n.code?.trim() ? [`   > ${n.code.trim().slice(0, 200)}`] : [];
+    const cut = n.to - n.line + 1 > (n.quote?.length ?? 1) ? ["   > …"] : [];
+    return [`${i + 1}. ${where(n)}`, ...quoted, ...cut, ...n.text.split("\n").map(line => `   ${line}`.trimEnd())].join("\n");
+  }).join("\n\n");
 }
 
 export const countLabel = (n) => `${n} note${n === 1 ? "" : "s"}`;
