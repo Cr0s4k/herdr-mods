@@ -235,16 +235,17 @@ nothing to finish.
    **Show the change** there asks each agent for screenshots of the screens it changes, before
    it changes anything and again when done, saved in Git's own folder (never committed) in
    pairs like `01-before-login.png` and `01-after-login.png`, and to present them on one
-   private page published with Claude Code's Artifact tool: each pair side by side, what
-   changed, and how to try it locally. **Open walkthrough** under **Before and after** in the
+   page: each pair side by side, what changed, and how to try it locally. Claude Code publishes
+   it privately with its Artifact tool; an agent without it (OpenCode, Codex) uses a docstash
+   document when it has the docstash tools. **Open walkthrough** under **Before and after** in the
    inspector opens that page; the screenshots are listed below it and open in the Show panel.
-   An agent without an Artifact tool leaves the page out, and the inspector says so. The setup
+   An agent with neither leaves the page out, and the inspector says so. The setup
    card has a **Screenshots** row that turns it on. A task that started without it has **Ask
    for screenshots** in its inspector, which sends its agent the same request (with "before"
    taken from the commit its branch started from); with screenshots but no page it reads **Ask
-   for the walkthrough page**. With pull requests, **Add the screenshots to the pull request**
-   (Settings, Delivery, off by default) pushes them to a `pipeline-evidence` branch on `origin`
-   and adds a **Before and after** table to the description. How to start the app and which
+   for the walkthrough page**. With pull requests, **Link the walkthrough page in the pull request**
+   (Settings, Delivery, off by default) adds one line to the description linking that page;
+   the screenshots themselves never go to the repository. How to start the app and which
    screens matter belongs in the repository's `AGENTS.md` or a skill. When the repository has
    neither, the setup card's Screenshots row offers **Queue: write how to run it**: a task
    whose agent writes `.claude/skills/demo/SKILL.md` (start it from a fresh worktree, sign in
@@ -289,7 +290,13 @@ nothing to finish.
    puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
    **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by
    branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
-   merge state. The task finishes when the PR is merged (then cleans up as above), or returns to
+   merge state. With **Open them as drafts** (Settings, Delivery) each pull request opens as a
+   draft, or as an ordinary one where the repository's plan has no drafts; **Mark ready** and
+   **Back to draft** in the inspector change it without opening GitHub. The card stays on the
+   pull request while its agent goes on: it adds **Agent working** or **Agent needs you**, and
+   when the agent's tab was closed the inspector offers **Reopen agent**, which starts the same
+   agent in the worktree continuing its last conversation there (`claude --continue`,
+   `codex resume --last`, `opencode --continue`). The task finishes when the PR is merged (then cleans up as above), or returns to
    review if the PR is closed. Needs `gh`, signed in, and a GitHub
    `origin`. An interrupted push or PR is safe to repeat: an open PR is reused. Turn on
    **Open pull requests automatically** to skip the approval: work that finishes with passing

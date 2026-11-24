@@ -18,6 +18,21 @@ async function python(file, context, payload, timeout = 120000) {
   return response.data;
 }
 
+function openAgent(context, opening, name, space) {
+  const before = focused(), inSpace = space && spaces().some(row => row.id === space);
+  if (inSpace) run("tab.new", { ...opening, space, name });
+  else run("space.new", { ...opening, machine: context.on || "", tab: name });
+  // Keep the person's place while agents open in the background.
+  try {
+    if (before?.space && spaces().some(row => row.id === before.space)) {
+      run("space.select", { id: before.space });
+      if (before.tab) run("tab.select", { id: before.tab });
+      if (before.pane) run("pane.focus", { pane: before.pane });
+    }
+  } catch { /* The agent started even if the previous view disappeared. */ }
+  return inSpace ? "tab" : "space";
+}
+
 export const liveHost = {
   shared, setShared, agents, terminals, panes, run, now: () => Date.now(),
   announce: (_id, notice) => { if (!watching()) notify({ title: notice.title, body: notice.body, level: notice.level, action: { name: "tabs-show.pipeline" } }); },
@@ -53,25 +68,13 @@ export const liveHost = {
   },
   keys: async (terminal, keys) => { const result = await hc(["keys", terminal, ...keys]); if (result.code !== 0) throw new Error(result.stderr); },
   start(context, task, workspaces, agent, space, delivery, extras) {
-    const before = focused(), inSpace = space && spaces().some(row => row.id === space);
-    const opening = { folder: workspaces[0].cwd, ...agentOpening(agent, prompt(task, workspaces, delivery, extras)) };
-    if (inSpace) run("tab.new", { ...opening, space, name: task.id });
-    else run("space.new", { ...opening, machine: context.on || "", tab: task.id });
-    const own = inSpace ? "tab" : "space";
-    // Keep the person's place while agents open in the background.
-    try {
-      if (before?.space && spaces().some(row => row.id === before.space)) {
-        run("space.select", { id: before.space });
-        if (before.tab) run("tab.select", { id: before.tab });
-        if (before.pane) run("pane.focus", { pane: before.pane });
-      }
-    } catch { /* The agent started even if the previous view disappeared. */ }
-    return own;
+    return openAgent(context, { folder: workspaces[0].cwd, ...agentOpening(agent, prompt(task, workspaces, delivery, extras)) }, task.id, space);
   },
+  resume: (context, task, ws, argv, space) => openAgent(context, { folder: ws.cwd, argv }, task.id, space),
   tryout: (context, task, ws, command, cx) => openTry({ run, panes, spaces, focused }, context, task, ws, command, cx, true),
   async locate(context, workspace, cx, previous) {
     for (let i = 0; i < 60; i++) {
-      const pane = panes().find(row => row.terminal && row.terminal !== previous && row.cwd === workspace.cwd);
+      const pane = panes().find(row => row.terminal && ![previous].flat().includes(row.terminal) && row.cwd === workspace.cwd);
       const owner = pane && spaces().find(space => space.tabs.some(tab => tab.id === pane.tab));
       if (owner) return { space: owner.id, tab: pane.tab, terminal: pane.terminal };
       await cx.sleep(100);

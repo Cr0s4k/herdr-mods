@@ -23,12 +23,12 @@ export const LIVE_LABELS = { ...LABELS, routing: "Starting agent", working: "Wor
 export const labelFor = (state, status) => (state.live ? LIVE_LABELS : LABELS)[status];
 export const AGENT_OPTIONS = {
   claude: { models: ["fable", "opus", "sonnet", "haiku"], efforts: ["low", "medium", "high", "xhigh", "max"],
-    flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`) },
+    flags: ({ model, effort }) => [...(model ? ["--model", model] : []), ...(effort ? ["--effort", effort] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`), resume: ["--continue"] },
   codex: { models: [], efforts: ["low", "medium", "high", "xhigh", "max"], open: true,
-    flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`) },
+    flags: ({ model, effort }) => [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])], dirs: paths => paths.map(path => `--add-dir=${path}`), resume: ["resume", "--last"] },
   // OpenCode's interface takes no model flag, and its shared background server ignores a session's environment: a private server reads the model from it.
   // It also reads a last argument as its folder, so the first message goes in a flag.
-  opencode: { models: [], efforts: [], open: true, exact: true, prompt: "--prompt=", flags: () => [], dirs: () => [],
+  opencode: { models: [], efforts: [], open: true, exact: true, prompt: "--prompt=", flags: () => [], dirs: () => [], resume: ["--continue"],
     wrap: (run, { model, effort }) => model ? ["env", `OPENCODE_CONFIG_CONTENT=${JSON.stringify({ model: effort ? `${model}#${effort}` : model })}`, ...run, "--standalone"] : run },
 };
 const effortFits = (options, effort) => options.efforts.includes(effort) || Boolean(options.open && /^[a-z]{1,20}$/.test(effort ?? ""));
@@ -72,6 +72,10 @@ export const agentRun = (state, agent, extra = [], task = null) => {
   return [...(options?.wrap ? options.wrap(agent.run, tune) : agent.run), ...(options?.flags(tune) ?? []), ...(extra.length ? options?.dirs(extra) ?? [] : [])];
 };
 export const agentOpening = (agent, text) => AGENT_OPTIONS[agent.key]?.prompt ? { argv: [...agent.run, AGENT_OPTIONS[agent.key].prompt + text] } : { argv: agent.run, task: text };
+// The agent again in a folder it worked in, continuing its last conversation there.
+export const agentResume = agent => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.resume ?? [])];
+// What the agent of a task with an open pull request does: the card stays on the pull request, so this is said beside it.
+export const prAgent = task => task.status !== "pr" ? null : { working: "Agent working", input: "Agent needs you", gone: "Agent closed" }[task.agentState] ?? null;
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
@@ -289,7 +293,7 @@ export function prChecklist(pr, target = "the base branch") {
     : status.passed ? { value: `All ${status.passed} passed`, tone: "ready" } : { value: "None reported", tone: "ready" };
   const review = { APPROVED: { value: "Approved", tone: "ready" }, CHANGES_REQUESTED: { value: "Changes requested", tone: "blocked" },
     REVIEW_REQUIRED: { value: "Required, not given yet", tone: "wait" } }[status.review] ?? { value: "Not required", tone: "ready" };
-  const merge = status.draft ? { value: "Draft. Mark it ready for review on GitHub", tone: "wait" }
+  const merge = status.draft ? { value: "Draft. Mark it ready when it should be reviewed", tone: "wait" }
     : status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY" ? { value: `Conflicts with ${target}`, tone: "blocked" }
     : status.mergeState === "BEHIND" ? { value: `Behind ${target}. Update the branch`, tone: "wait" }
     : status.mergeState === "BLOCKED" ? { value: "Blocked until branch rules are met", tone: "wait" }
@@ -549,7 +553,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "autoTrust", "quiet", "planner", "implementer"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "autoTrust", "quiet", "planner", "implementer"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -1235,7 +1239,8 @@ export function reduce(state, action, now = Date.now()) {
     case "autoTrust": if (!next.live) return state; next.autoTrust = !next.autoTrust; break;
     case "tryAuto": if (!next.live) return state; next.tryAuto = !next.tryAuto; event(next, next.tryAuto ? "Try it starts when work is ready for review." : "Try it starts when you ask."); break;
     case "evidence": if (!next.live) return state; next.evidence = !next.evidence; event(next, next.evidence ? "Agents are asked for before and after screenshots." : "Agents are no longer asked for screenshots."); break;
-    case "evidencePr": if (!next.live) return state; next.evidencePr = !next.evidencePr; event(next, next.evidencePr ? "Screenshots are added to pull requests." : "Screenshots stay out of pull requests."); break;
+    case "evidencePr": if (!next.live) return state; next.evidencePr = !next.evidencePr; event(next, next.evidencePr ? "Pull requests link the walkthrough page." : "Pull requests don't link the walkthrough page."); break;
+    case "draftPr": if (!next.live) return state; next.draftPr = !next.draftPr; event(next, next.draftPr ? "Pull requests open as drafts." : "Pull requests open ready for review."); break;
     case "prepare": {
       if (!next.live) return state;
       const command = String(action.command ?? "").trim().slice(0, 500) || null;
@@ -1346,6 +1351,47 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "pr" || !pr || pr.url !== action.url || !action.status) return state;
       if (JSON.stringify(pr.status ?? null) === JSON.stringify(action.status)) return state;
       task.prs = { ...task.prs, [action.repo]: { ...pr, status: action.status } };
+      break;
+    }
+    case "agentSeen": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "pr" || (task.agentState ?? null) === (action.state ?? null)) return state;
+      task.agentState = action.state ?? null;
+      if (action.state === "working") event(next, `${task.id} · its agent is working again on the open pull request.`, task.id);
+      break;
+    }
+    case "reopen": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "pr" || task.reopen || !workspacesOf(task).length) return state;
+      Object.assign(task, { reopen: true, reopenError: null });
+      break;
+    }
+    case "reopened": {
+      const task = row(action.id);
+      if (!next.live || !task?.reopen) return state;
+      Object.assign(task, { reopen: false, reopenError: null, agentState: null, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? task.agent });
+      event(next, `${task.id} · ${action.agent ?? "its agent"} reopened in its worktree, continuing its last conversation.`, task.id);
+      break;
+    }
+    case "reopenFailed": {
+      const task = row(action.id);
+      if (!next.live || !task?.reopen) return state;
+      Object.assign(task, { reopen: false, reopenError: action.error });
+      break;
+    }
+    case "prReady": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr || pr.merged || pr.readying) return state;
+      task.prs = { ...task.prs, [action.repo]: { ...pr, readying: action.undo ? "draft" : "ready", readyError: null } };
+      break;
+    }
+    case "prReadied": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || !pr || pr.url !== action.url || !pr.readying) return state;
+      const { readying, ...rest } = pr;
+      task.prs = { ...task.prs, [action.repo]: { ...rest, ...(action.status ? { status: action.status } : {}), readyError: action.error ?? null } };
+      event(next, action.error ? `${task.id} · #${pr.number} could not be ${readying === "draft" ? "made a draft" : "marked ready"}. ${action.error}`
+        : `${task.id} · #${pr.number} ${readying === "draft" ? "is a draft again" : "is ready for review"}.`, task.id);
       break;
     }
     case "prMerged": {

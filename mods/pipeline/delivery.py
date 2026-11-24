@@ -7,7 +7,6 @@ import subprocess
 import sys
 
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-EVIDENCE_BRANCH = "pipeline-evidence"
 
 
 def git(cwd, *args, optional=False):
@@ -202,11 +201,12 @@ def publish(payload):
     where = worktree if worktree.is_dir() else top
     body = written(worktree) or payload.get("body") or title
     if payload.get("evidence"):
-        try:
-            body += evidence_section(top, where, worktree, branch)
-        except (subprocess.CalledProcessError, ValueError, OSError):
-            pass
-    created = gh(where, "pr", "create", "--head", branch, "--base", payload["target"], "--title", title, "--body", body)
+        body += walkthrough_link(worktree)
+    create = ["pr", "create", "--head", branch, "--base", payload["target"], "--title", title, "--body", body]
+    created = gh(where, *create, *(["--draft"] if payload.get("draft") else []))
+    # A plan without draft pull requests refuses them; an ordinary one is better than none.
+    if created.returncode and payload.get("draft") and "draft" in created.stderr.lower() and "already exists" not in created.stderr:
+        created = gh(where, *create)
     found = pull_request(created.stdout)
     if created.returncode and "already exists" in created.stderr:
         found = pull_request(created.stderr) or pull_request(gh(where, "pr", "view", branch, "--json", "url", "--jq", ".url").stdout)
@@ -254,58 +254,15 @@ def evidence(worktree):
         return None
     files = sorted(str(file) for file in folder.iterdir() if file.suffix.lower() in IMAGES and file.is_file() and file.stat().st_size <= 5_000_000)[:24]
     try:
-        url = (folder / "walkthrough.url").read_text().strip().split()[0]
+        url = re.sub(r"^(https?://)app\.(docstash\.ai/)", r"\1\2", (folder / "walkthrough.url").read_text().strip().split()[0])
     except (OSError, IndexError):
         url = None
     return {"files": files, "url": url} if files or url else None
 
 
-def pairs(files):
-    rows = {}
-    for file in files:
-        name = Path(file).stem
-        side = "before" if re.search(r"(^|[-_ ])before([-_ ]|$)", name, re.I) else "after" if re.search(r"(^|[-_ ])after([-_ ]|$)", name, re.I) else "other"
-        key = re.sub(r"(^|[-_ ])(before|after)(?=[-_ ]|$)", "", name, flags=re.I).strip("-_ ") or name
-        rows.setdefault(key, {})[side] = file
-    return rows
-
-
-# GitHub has no command to upload an image into a description, so the screenshots go to a branch of their own and are embedded by commit.
-def evidence_section(top, where, worktree, branch):
+def walkthrough_link(worktree):
     found = evidence(worktree)
-    if not found or not found["files"]:
-        return ""
-    slug = gh(where, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").stdout.strip()
-    if not slug:
-        return ""
-    names, lines = {}, []
-    for index, file in enumerate(found["files"]):
-        blob = git(top, "hash-object", "-w", file)
-        names[file] = "%02d-%s" % (index + 1, re.sub(r"[^A-Za-z0-9._-]+", "-", Path(file).name))
-        lines.append("100644 blob %s\t%s" % (blob, names[file]))
-    tree = subprocess.run(["git", "-C", str(top), "mktree"], input="\n".join(lines) + "\n", text=True, capture_output=True, check=True).stdout.strip()
-    for _ in range(2):
-        fetched = subprocess.run(["git", "-C", str(top), "fetch", "-q", "origin", EVIDENCE_BRANCH], capture_output=True, text=True)
-        parent = git(top, "rev-parse", "FETCH_HEAD") if fetched.returncode == 0 else None
-        commit = git(top, "commit-tree", tree, *(["-p", parent] if parent else []), "-m", "Screenshots for " + branch)
-        pushed = subprocess.run(["git", "-C", str(top), "push", "-q", "origin", commit + ":refs/heads/" + EVIDENCE_BRANCH], capture_output=True, text=True)
-        if pushed.returncode == 0:
-            break
-    else:
-        return ""
-    link = lambda file: "![%s](https://github.com/%s/blob/%s/%s?raw=true)" % (Path(file).stem, slug, commit, names[file])
-    rows, table, loose = pairs(found["files"]), [], []
-    for key, row in rows.items():
-        if "before" in row and "after" in row:
-            table.append("| %s | %s |" % (link(row["before"]), link(row["after"])))
-        else:
-            loose.extend(link(file) for file in row.values())
-    text = "\n\n## Before and after\n"
-    if table:
-        text += "\n| Before | After |\n| --- | --- |\n" + "\n".join(table) + "\n"
-    if loose:
-        text += "\n" + "\n\n".join(loose) + "\n"
-    return text
+    return "\n\n[Before and after walkthrough](%s)" % found["url"] if found and found["url"] else ""
 
 
 FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
@@ -340,6 +297,13 @@ def pr_state(payload):
               "mergeState": pr.get("mergeStateStatus") or "UNKNOWN", "review": pr.get("reviewDecision") or None,
               **checks(pr.get("statusCheckRollup"))}
     return {"state": pr.get("state", "OPEN"), "status": status}
+
+
+def pr_ready(payload):
+    changed = gh(payload["root"], "pr", "ready", payload["url"], *(["--undo"] if payload.get("undo") else []))
+    if changed.returncode:
+        raise ValueError(changed.stderr.strip() or "GitHub didn't change the pull request.")
+    return pr_state(payload)
 
 
 # A pull request someone opened by hand on the task's branch. An older one from a branch that had the same name doesn't count.
@@ -498,7 +462,7 @@ def adopt_move(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_ready": pr_ready, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
                       "adopt_ask": adopt_ask, "adopt_read": adopt_read, "adopt_move": adopt_move}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")

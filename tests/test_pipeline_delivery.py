@@ -310,28 +310,43 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual([Path(file).name for file in found["files"]], ["01-after-login.png", "01-before-login.png"])
         self.assertEqual(found["url"], "https://claude.ai/artifact/abc")
         self.assertEqual(self.git(self.tree, "status", "--porcelain"), "", "nothing of it can be committed")
-        rows = delivery.pairs(found["files"])
-        self.assertEqual({key: sorted(row) for key, row in rows.items()}, {"01-login": ["after", "before"]})
+        (folder / "walkthrough.url").write_text("https://app.docstash.ai/d/abc\n")
+        self.assertEqual(delivery.summary({"worktree": str(self.tree)})["evidence"]["url"], "https://docstash.ai/d/abc")
 
-    def test_publish_adds_before_and_after_screenshots_from_a_branch_of_their_own_only_when_asked(self):
+    def test_publish_links_the_walkthrough_page_only_when_asked_and_pushes_no_screenshots(self):
         remote = self.with_origin()
-        log = self.stub_gh('case "$1" in repo) echo "me/project";; *) echo "https://github.com/me/project/pull/12";; esac\n')
+        log = self.stub_gh('echo "https://github.com/me/project/pull/12"\n')
         folder = self.evidence_folder()
-        for name in ("01-before-login.png", "01-after-login.png", "02-after-menu.png"):
-            (folder / name).write_bytes(name.encode())
+        (folder / "01-before-login.png").write_bytes(b"x")
+        (folder / "walkthrough.url").write_text("https://claude.ai/artifact/abc\n")
         self.agent_commits()
         delivery.publish(self.payload("publish", target="main", body="Details"))
-        self.assertNotIn("Before and after", log.read_text())
+        self.assertNotIn("walkthrough", log.read_text())
+        delivery.publish(self.payload("publish", target="main", body="Details", evidence=True))
+        self.assertIn("--body Details\n\n[Before and after walkthrough](https://claude.ai/artifact/abc)\n", log.read_text())
         self.assertIsNone(self.git_optional(remote, "rev-parse", "--verify", "-q", "pipeline-evidence"))
-        delivery.publish(self.payload("publish", target="main", body="Details", evidence=True))
-        commit = self.git(remote, "rev-parse", "pipeline-evidence")
-        self.assertEqual(self.git(remote, "ls-tree", "--name-only", commit).split("\n"), ["01-01-after-login.png", "02-01-before-login.png", "03-02-after-menu.png"])
-        body = log.read_text()
-        self.assertIn("## Before and after\n\n| Before | After |\n| --- | --- |\n| ![01-before-login](https://github.com/me/project/blob/%s/02-01-before-login.png?raw=true) | ![01-after-login]" % commit, body)
-        self.assertIn("![02-after-menu](https://github.com/me/project/blob/%s/03-02-after-menu.png?raw=true)" % commit, body)
-        delivery.publish(self.payload("publish", target="main", body="Details", evidence=True))
-        self.assertEqual(self.git(remote, "rev-parse", "pipeline-evidence^"), commit, "later screenshots are added after the earlier ones")
-        self.assertNotIn("notes.txt", self.git(remote, "ls-tree", "-r", "--name-only", "pipeline-evidence"), "the task's own files stay on its branch")
+
+    def test_publish_opens_a_draft_when_asked_and_an_ordinary_one_where_drafts_are_refused(self):
+        self.with_origin()
+        log = self.stub_gh('echo "https://github.com/me/project/pull/12"\n')
+        self.agent_commits()
+        delivery.publish(self.payload("publish", target="main", body="Details"))
+        self.assertNotIn("--draft", log.read_text())
+        delivery.publish(self.payload("publish", target="main", body="Details", draft=True))
+        self.assertIn("--draft", log.read_text())
+        log = self.stub_gh('case "$*" in *--draft*) echo "Draft pull requests are not supported in this repository" >&2; exit 1;; *) echo "https://github.com/me/project/pull/13";; esac\n')
+        self.assertEqual(delivery.publish(self.payload("publish", target="main", body="Details", draft=True))["number"], 13)
+
+    def test_a_pull_request_is_marked_ready_or_draft_again_and_read_back(self):
+        log = self.stub_gh('case "$2" in ready) ;; *) echo \'{"state":"OPEN","isDraft":false,"statusCheckRollup":[]}\';; esac\n')
+        url = "https://github.com/me/project/pull/12"
+        self.assertFalse(delivery.pr_ready({"root": str(self.repo), "url": url})["status"]["draft"])
+        self.assertIn("pr ready " + url + "\n", log.read_text())
+        delivery.pr_ready({"root": str(self.repo), "url": url, "undo": True})
+        self.assertIn("pr ready " + url + " --undo", log.read_text())
+        self.stub_gh('echo "no permission" >&2; exit 1\n')
+        with self.assertRaisesRegex(ValueError, "no permission"):
+            delivery.pr_ready({"root": str(self.repo), "url": url})
 
     def test_publishing_again_reuses_the_open_pull_request(self):
         self.with_origin()

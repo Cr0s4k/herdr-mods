@@ -838,6 +838,15 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.match(text(find(waiting, "card-T-2")), /Checks failing · 1/);
   assert.match(text(find(waiting, "pr-checks-T-2")), /1 failing: test/);
   assert.match(text(find(waiting, "pr-review-T-2")), /Required, not given yet/);
+  assert.ok(find(waiting, "pr-ready-T-2").nodes.includes("Back to draft"));
+  view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
+    status: { draft: true, mergeable: "MERGEABLE", mergeState: "DRAFT", review: null, failed: 0, failing: [], pending: 0, passed: 2 } }, cx);
+  assert.ok(find(view.render(cx), "pr-ready-T-2").nodes.includes("Mark ready"));
+  click(view, "pr-ready-T-2");
+  assert.equal(row(view, "T-2").prs.shop.readying, "ready");
+  assert.ok(find(view.render(cx), "pr-ready-T-2").nodes.includes("Asking GitHub…"));
+  view.act({ type: "prReadied", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
+    status: { draft: false, mergeable: "MERGEABLE", mergeState: "BLOCKED", review: "REVIEW_REQUIRED", failed: 1, failing: ["test"], pending: 0, passed: 2 } }, cx);
   assert.match(text(find(waiting, "pr-merge-T-2")), /Blocked until branch rules are met/);
   click(view, "pr-list");
   assert.equal(view.drawer, "prs");

@@ -1,4 +1,4 @@
-import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
+import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 import { procedure } from "./procedures.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
@@ -158,6 +158,15 @@ export function observe(task, host) {
   const status = agent?.status === "working" ? "working" : agent?.status === "blocked" ? "input"
     : ["done", "idle"].includes(agent?.status) && task.worked && ["working", "input"].includes(task.status) ? "review" : null;
   return status && (status !== task.status || (status === "working" && !task.worked)) ? { status } : null;
+}
+
+// A task with an open pull request keeps its card; what its agent does since is told beside it.
+export function agentSeen(task, host) {
+  if (task.status !== "pr" || task.discard || task.reopen || !workspacesOf(task).length) return undefined;
+  const agent = host.agents().find(row => row.address === task.terminal);
+  const alive = agent || host.terminals().some(row => row.address === task.terminal && row.state === "live") || host.panes().some(row => row.terminal === task.terminal);
+  const seen = !alive ? "gone" : agent?.status === "working" ? "working" : agent?.status === "blocked" ? "input" : null;
+  return seen === (task.agentState ?? null) ? undefined : seen;
 }
 
 export const worktreesOf = task => Object.entries({ ...task.planned, ...task.workspaces }).map(([name, ws]) => ({ name, ...ws }));
@@ -323,6 +332,39 @@ export class LiveRunner {
     });
   }
 
+  reopenAgent(id, state, task, cx) {
+    const key = `reopen/${id}/${task.id}`, host = this.host;
+    if (this.polling.has(key)) return;
+    this.polling.add(key);
+    cx.spawn(async cx => {
+      try {
+        const ws = workspacesOf(task)[0], known = await host.knownAgents(state.context);
+        const agent = known.find(row => row.installed && row.name === task.agent) ?? known.find(row => row.installed && row.key === state.agent?.key) ?? known.find(row => row.installed);
+        if (!agent) throw new Error("No coding agent is installed on that machine.");
+        const before = host.panes().map(row => row.terminal).filter(Boolean);
+        const own = host.resume(state.context, task, ws, agentResume(agent), state.space ?? task.space);
+        const opened = await host.locate(state.context, ws, cx, before);
+        if (!opened) throw new Error("Its agent was asked to start, but its terminal never appeared.");
+        this.apply(id, { type: "reopened", id: task.id, ...opened, own, agent: agent.name });
+      } catch (error) { this.apply(id, { type: "reopenFailed", id: task.id, error: error?.message || String(error) }); }
+      finally { this.polling.delete(key); }
+    });
+  }
+
+  readyPullRequest(id, state, task, repo, cx) {
+    const pr = task.prs[repo], key = `ready/${id}/${task.id}/${repo}`;
+    if (this.polling.has(key)) return;
+    this.polling.add(key);
+    cx.spawn(async () => {
+      const source = task.workspaces?.[repo]?.source ?? state.context.cwd;
+      try {
+        const { status } = await this.host.delivery({ cwd: source, on: state.context.on }, { op: "pr_ready", root: source, url: pr.url, undo: pr.readying === "draft" });
+        this.apply(id, { type: "prReadied", id: task.id, repo, url: pr.url, status });
+      } catch (error) { this.apply(id, { type: "prReadied", id: task.id, repo, url: pr.url, error: String(error?.message ?? error) }); }
+      finally { this.polling.delete(key); }
+    });
+  }
+
   // A pull request opened by hand on a task's branch is found here, so the task follows it like one Pipeline opened.
   watchBranch(id, state, task, cx) {
     const key = `find/${id}/${task.id}`, now = this.host.now(), workspaces = workspacesOf(task).filter(ws => !task.prs?.[ws.name]);
@@ -356,6 +398,7 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) if (state.planning?.status === "running") this.apply(id, { type: "planFailed", key: state.planning.key, error: "Herdr restarted while the planner was planning." });
     // A restart cannot prove whether a start command reached the core. Never replay it.
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
+      if (task.reopen) this.apply(id, { type: "reopenFailed", id: task.id, error: "Herdr restarted while its agent was reopening. Check for its tab before trying again." });
       if (task.status === "routing" && task.launch === "starting") this.apply(id, { type: "launchFailed", id: task.id,
         error: "Herdr restarted while its agent was starting. Check for its space, then retry or discard." });
       else if (task.status === "routing" && task.launch) this.apply(id, { type: "launch", id: task.id, phase: null });
@@ -469,11 +512,14 @@ export class LiveRunner {
       const change = observe(task, this.host);
       if (change) this.apply(id, { type: "observe", id: task.id, ...change });
       else this.watchStartup(id, task, cx);
+      const seen = agentSeen(task, this.host);
+      if (seen !== undefined) this.apply(id, { type: "agentSeen", id: task.id, state: seen });
+      if (task.reopen) this.reopenAgent(id, state, task, cx);
     }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) { this.askAdopted(id, state, task, cx); this.watchStall(id, task, cx); this.countUsage(id, state, task, cx); this.readSummary(id, state, task, cx); }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
-      if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) this.watchPullRequest(id, state, task, repo, cx);
+      if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) { if (pr.readying) this.readyPullRequest(id, state, task, repo, cx); else this.watchPullRequest(id, state, task, repo, cx); }
       if (["review", "input", "failed"].includes(task.status) && !task.discard) this.watchBranch(id, state, task, cx);
     }
     for (const [id, state] of this.pipelines()) this.updateTickets(id, state, cx);
@@ -815,7 +861,7 @@ export class LiveRunner {
     for (const ws of workspaces.filter(ws => !task.prs?.[ws.name]?.merged)) {
       try {
         const pr = await this.host.delivery({ cwd: ws.source, on: state.context.on }, { op: "publish", root: ws.source, worktree: ws.root, branch: ws.branch, base: ws.base, target: ws.target,
-          title, body, commit: Boolean(task.commit), ...(several ? { optional: true } : {}), ...(state.evidence && state.evidencePr ? { evidence: true } : {}) });
+          title, body, commit: Boolean(task.commit), ...(several ? { optional: true } : {}), ...(state.evidence && state.evidencePr ? { evidence: true } : {}), ...(state.draftPr ? { draft: true } : {}) });
         if (!pr.skipped) opened[ws.name] = { url: pr.url, number: pr.number };
       } catch (error) {
         const message = error?.message || String(error);

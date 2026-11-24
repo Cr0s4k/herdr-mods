@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { loadProcedures, procedure } from "./procedures.js";
@@ -81,7 +81,7 @@ function cardStatus(state, task) {
   if (state.live && task.status === "review" && task.unchanged && !task.error) return "No file changes";
   if (state.live && task.status === "review") return task.error ? "Not merged · see why" : task.checked === "passed" ? "Checks passed" : task.checked === "failed" ? "Checks failing" : "Ready for review";
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
-  if (state.live && task.status === "pr") return prNeeds(task).label;
+  if (state.live && task.status === "pr") return [prNeeds(task).label, task.agentState !== "gone" && prAgent(task)].filter(Boolean).join(" · ");
   if (state.live && task.status === "merging" && task.unchanged) return "Closing";
   if (state.live && task.status === "done" && task.unchanged) return "Done · no changes";
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
@@ -1798,7 +1798,9 @@ export default class Pipeline extends View {
         Boolean(state.autoPr), cx => this.act({ type: "autoPr" }, cx), t));
       else body.child(this.switchRow("auto-merge", "Merge automatically", state.autoMerge ? "As soon as the agent finishes and checks pass, without waiting for you" : "Each merge waits for you",
         Boolean(state.autoMerge), cx => this.act({ type: "autoMerge" }, cx), t));
-      if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Add the screenshots to the pull request", "Pushes them to a pipeline-evidence branch on origin and adds a Before and after section to the description",
+      if (state.delivery === "pr") body.child(this.switchRow("draft-pr", "Open them as drafts", state.draftPr ? "Each one opens as a draft; mark it ready from its task" : "Each one opens ready for review",
+        Boolean(state.draftPr), cx => this.act({ type: "draftPr" }, cx), t));
+      if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Link the walkthrough page in the pull request", "Adds one line to the description linking the before and after page. The screenshots themselves stay out of the repository",
         Boolean(state.evidencePr), cx => this.act({ type: "evidencePr" }, cx), t));
       if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
         Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
@@ -2121,6 +2123,12 @@ export default class Pipeline extends View {
       if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));
     }
     if (task.status === "pr" && task.prs) {
+      if (task.agentState === "gone" || task.reopen) {
+        body.child(this.label(`Its agent's tab is closed, so nobody is there to fix what the pull request needs. Its worktree${several ? "s are" : " is"} still here.`, t));
+        if (task.reopenError) body.child(div().id(`pipeline-reopen-error-${task.id}`).text_size(12).line_height(1.45).text_color(t.blocked).child(task.reopenError));
+        body.child(this.button(`reopen-${task.id}`, task.reopen ? "Reopening…" : "Reopen agent", cx => this.act({ type: "reopen", id: task.id }, cx), t,
+          { icon: "reset", disabled: Boolean(task.reopen), hint: `Starts ${task.agent ?? "its agent"} again in the worktree, continuing its last conversation there` }));
+      } else if (prAgent(task)) body.child(this.label(`${prAgent(task)} in its worktree. The card stays here until the pull request merges or closes.`, t));
       for (const [name, pr] of Object.entries(task.prs)) {
         const prTarget = task.workspaces?.[name]?.target, need = prNeed(pr, prTarget), suffix = several ? `-${name}` : "", prefix = several ? `${name} · ` : "";
         body.child(this.heading(pr.merged ? `${prefix}Pull request #${pr.number} · Merged` : pr.status ? `${prefix}Pull request #${pr.number} · ${need.label}` : `${prefix}Pull request #${pr.number}`));
@@ -2129,7 +2137,13 @@ export default class Pipeline extends View {
           .child(dot(toneColor(item.tone, t)).mt(6))
           .child(div().w(54).flex_none().text_color(t.muted).child(item.name))
           .child(div().flex_1().min_w(0).text_color(item.tone === "blocked" ? t.blocked : t.foreground).child(item.value)));
-        body.child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several, hint: pr.url }));
+        if (pr.readyError) body.child(div().id(`pipeline-pr-ready-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.readyError));
+        const draft = Boolean(pr.status?.draft);
+        body.child(h_flex().gap(8).flex_wrap()
+          .child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several && !draft, hint: pr.url }))
+          .when(!pr.merged && Boolean(pr.status), el => el.child(this.button(`pr-ready-${task.id}${suffix}`, pr.readying ? "Asking GitHub…" : draft ? "Mark ready" : "Back to draft",
+            cx => this.act({ type: "prReady", id: task.id, repo: name, undo: !draft }, cx), t,
+            { icon: draft ? "check" : null, primary: draft && !pr.readying, disabled: Boolean(pr.readying), hint: draft ? "Marks it ready for review on GitHub (gh pr ready)" : "Makes it a draft again on GitHub (gh pr ready --undo)" }))));
       }
       body.child(this.label(several ? "Pipeline asks GitHub about each one once a minute. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
         : "Pipeline asks GitHub once a minute. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
