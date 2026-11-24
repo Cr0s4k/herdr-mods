@@ -397,8 +397,15 @@ export default class Spaces extends View {
         exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
       );
       const name = repoName(repo);
+      // A rebase detaches HEAD; the branch it is rebasing is the one to show.
+      let detached = "(detached)";
+      if (branch.code !== 0) {
+        const moving = await exec("sh", ["-c", 'd=$(git rev-parse --git-dir) && cat "$d/rebase-merge/head-name" "$d/rebase-apply/head-name" 2>/dev/null | head -1'], { cwd, on }).catch(() => null);
+        const held = moving?.stdout?.trim().replace(/^refs\/heads\//, "");
+        if (held) detached = `${held} · rebasing`;
+      }
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
-      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), top, linked: repo !== `${top}/.git` };
+      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : detached, ahead, behind, repo: JSON.stringify([on, repo]), top, linked: repo !== `${top}/.git` };
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {

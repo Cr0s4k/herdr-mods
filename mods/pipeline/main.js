@@ -83,7 +83,7 @@ function cardStatus(state, task) {
   if (state.live && task.status === "review" && task.unchanged && !task.error) return "No file changes";
   if (state.live && task.status === "review") return task.error ? "Not merged · see why" : task.checked === "passed" ? "Checks passed" : task.checked === "failed" ? "Checks failing" : "Ready for review";
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
-  if (state.live && task.status === "pr") return [prNeeds(task).label, task.agentState !== "gone" && prAgent(task)].filter(Boolean).join(" · ");
+  if (state.live && task.status === "pr") return [task.agentState !== "gone" && prAgent(task), prNeeds(task).label].filter(Boolean).join(" · ");
   if (state.live && task.status === "merging" && task.unchanged) return "Closing";
   if (state.live && task.status === "done" && task.unchanged) return "Done · no changes";
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
