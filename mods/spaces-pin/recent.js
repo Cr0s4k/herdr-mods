@@ -10,11 +10,26 @@ export function ago(at, now = Date.now()) {
   return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.round(minutes / 60)}h` : `${Math.round(minutes / 1440)}d`;
 }
 
-// An open agent is in a conversation already: for each one, its kind's newest conversation in its folder is left out.
-export function closedSessions(sessions, agents) {
-  const open = {}, key = (agent, cwd) => `${agent}\n${cwd ?? ""}`;
-  for (const a of agents) open[key(a.program?.key, a.cwd)] = (open[key(a.program?.key, a.cwd)] ?? 0) + 1;
-  return sessions.filter(session => !(open[key(session.agent, session.cwd)]-- > 0));
+const inTerminal = (session, t) => Boolean(t) && t.state === "live" && ((Boolean(session.pid) && t.foreground?.pid === session.pid) || (t.foreground?.argv ?? []).includes(session.id));
+
+// The terminal a conversation is open in: the one running its Claude Code process, or an agent started with its id.
+export function openIn(session, terminals, on) {
+  const machine = address => address.includes("/") ? address.split("/")[0] : null;
+  return terminals.find(t => machine(t.address) === (on ?? null) && inTerminal(session, t))?.address ?? null;
+}
+
+// An open agent is in a conversation already, and that one is left out: the one its terminal has open when that is known,
+// else its kind's newest in its folder. Claude Code's are known whenever the reader says which process holds each.
+export function closedSessions(sessions, agents, terminals = []) {
+  const taken = new Set(), guess = {}, key = (agent, cwd) => `${agent}\n${cwd ?? ""}`;
+  const known = sessions.some(session => session.agent === "claude" && "pid" in session);
+  for (const a of agents) {
+    const terminal = a.address ? terminals.find(t => t.address === a.address) : null;
+    const exact = sessions.find(session => !taken.has(session) && inTerminal(session, terminal));
+    if (exact) taken.add(exact);
+    else if (!(known && terminal && a.program?.key === "claude")) guess[key(a.program?.key, a.cwd)] = (guess[key(a.program?.key, a.cwd)] ?? 0) + 1;
+  }
+  return sessions.filter(session => !taken.has(session) && !(guess[key(session.agent, session.cwd)]-- > 0));
 }
 
 export function recentHeader(s, open, t, { prefix = "", ring = false, toggle }) {

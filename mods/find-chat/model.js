@@ -21,13 +21,6 @@ export function runs(text, words) {
   return out;
 }
 
-// The terminal a conversation is open in: the one running its Claude Code process, or an agent started with its id.
-export function openIn(session, terminals, on) {
-  const machine = address => address.includes("/") ? address.split("/")[0] : null;
-  return terminals.find(t => t.state === "live" && machine(t.address) === (on ?? null)
-    && ((session.pid && t.foreground?.pid === session.pid) || (t.foreground?.argv ?? []).includes(session.id)))?.address ?? null;
-}
-
 // A conversation resumes in the space opened on its folder, else in the one on screen.
 export function spaceFor(spaces, session, on) {
   const here = spaces.filter(s => (s.machine ?? null) === (on ?? null));

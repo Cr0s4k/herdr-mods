@@ -60,6 +60,7 @@ def claude_title(file):
 
 def claude(cwd, limit, home=None):
     base = Path(home or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    running = claude_open(base) if (base / "sessions").is_dir() else None
     folder = base / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
     files = sorted(folder.glob("*.jsonl"), key=lambda file: file.stat().st_mtime, reverse=True) if folder.is_dir() else []
     found = []
@@ -68,7 +69,8 @@ def claude(cwd, limit, home=None):
             break
         title = claude_title(file)
         if title:
-            found.append({"agent": "claude", "id": file.stem, "title": title, "at": int(file.stat().st_mtime * 1000), "cwd": cwd})
+            found.append({"agent": "claude", "id": file.stem, "title": title, "at": int(file.stat().st_mtime * 1000), "cwd": cwd,
+                          **({} if running is None else {"pid": running.get(file.stem)})})
     return found
 
 

@@ -3,8 +3,8 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { spaces, panes, focused, terminals, exec, run, theme, props, closeOverlay, checking, readTextFile, appHome, knownAgents } from "herdr";
 import { track } from "./usage.js";
-import { resumeArgs, ago } from "./recent.js";
-import { NAMES, terms, runs, spaceFor, openIn } from "./model.js";
+import { resumeArgs, ago, openIn } from "./recent.js";
+import { NAMES, terms, runs, spaceFor } from "./model.js";
 
 const ROW = 48, ROWS = 9, LIMIT = 40;
 

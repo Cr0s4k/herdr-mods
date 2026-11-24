@@ -6,7 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, readTextFile, appHome, knownAgents } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, readTextFile, appHome, knownAgents, terminals } from "herdr";
 import { track } from "./usage.js";
 import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
@@ -799,8 +799,8 @@ export default class Spaces extends View {
   recentItems(w, t, parent, prefix = "") {
     if (shared("features")?.recent === false) return [];
     const open = this.recentOpen.has(w.id), key = `recent:${w.id}`, cwd = this.recent[w.id]?.cwd;
-    const here = this.agents.list.filter(a => a.space === w.id).map(a => ({ program: a.program, cwd: this.panes.find(p => p.pane === a.pane)?.cwd ?? cwd }));
-    const rows = open ? closedSessions(this.recent[w.id]?.rows ?? [], here).slice(0, 8) : [];
+    const here = this.agents.list.filter(a => a.space === w.id).map(a => ({ address: a.address, program: a.program, cwd: this.panes.find(p => p.pane === a.pane)?.cwd ?? cwd }));
+    const rows = open ? closedSessions(this.recent[w.id]?.rows ?? [], here, terminals()).slice(0, 8) : [];
     return [
       { id: `${prefix}recent-branch-${w.id}`, view: () => recentHeader(w, open, t, { prefix, toggle: cx => this.toggleRecent(w, cx), ring: this.navigable(key, { kind: "recent", w, parent, act: cx => this.toggleRecent(w, cx) }) }) },
       ...rows.map(session => ({ id: `${prefix}session-branch-${session.id}`, view: () => sessionRow(w, session, t, { prefix, pic: this.agents.pic(this.known?.[session.agent], t), resume: cx => this.resume(w, session, cx),

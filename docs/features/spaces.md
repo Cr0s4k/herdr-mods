@@ -24,8 +24,9 @@ the space's folder that no open agent is in: Claude Code's, Codex's and OpenCode
 first, each with its agent's icon, its title and how long ago it was last used. Click one to resume it in a new
 tab of that space (`claude --resume`, `codex resume`, `opencode --session`). The list is read
 when you unfold it and again once a minute while it stays open; which spaces have it unfolded
-survives restarts. An open agent hides its kind's newest conversation, since it is probably in
-it. Conversations held in the repository's other worktrees that still exist (a Pipeline
+survives restarts. An open agent's own conversation is left out: for Claude Code that is the one its process has
+open, and for a Codex or OpenCode agent started by resuming, that conversation. Any other open
+agent hides its kind's newest conversation in its folder, since it is probably in it. Conversations held in the repository's other worktrees that still exist (a Pipeline
 task's, for one) are listed too, with a branch mark; such a one resumes in its own worktree.
 A worktree that was removed takes its conversations out of the list. **Needs you** and the narrow sidebar
 leave the row out.

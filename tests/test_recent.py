@@ -134,6 +134,8 @@ class RecentTest(unittest.TestCase):
         (self.home / "sessions/41.json").write_text(json.dumps({"pid": 41, "sessionId": "a"}))
         (self.home / "sessions/42.json").write_text("not json")
         self.assertEqual([(row["id"], row.get("pid")) for row in self.search("")["data"]], [("b", None), ("a", 41)])
+        listed = recent.recent(CWD, 8, self.home, self.home, self.home / "none.db", {})
+        self.assertEqual([(row["id"], row["pid"]) for row in listed], [("b", None), ("a", 41)])
 
     def test_a_search_out_of_time_says_it_stopped_early(self):
         self.claude("a.jsonl", lines({"type": "user", "message": {"content": "Fix the login"}}), 200)

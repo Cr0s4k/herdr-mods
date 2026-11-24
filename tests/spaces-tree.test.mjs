@@ -67,7 +67,7 @@ const recent = await import("data:text/javascript," + encodeURIComponent(source)
 Object.assign(globalThis.__spacesNative, recent, { readTextFile: async () => "script", appHome: () => "/home", knownAgents: async () => world.known ?? [] });
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, terminals, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -832,4 +832,33 @@ test("a conversation held in one of the repository's worktrees is marked and res
   await Promise.all(jobs);
   assert.deepEqual(world.calls, [["tab.new", { space: "app", folder: "/wt/t-1", argv: ["claude", "--resume", "w1"], name: "Rebase PR 12" }]]);
   localStorage.setItem("spaces.recent", "[]");
+});
+
+test("a conversation is open where its process runs or where an agent was started with its id", () => {
+  const terminals = [
+    { address: "t1", state: "live", foreground: { pid: 10, argv: ["claude"] } },
+    { address: "t2", state: "live", foreground: { pid: 11, argv: ["codex", "resume", "cx1"] } },
+    { address: "t3", state: "finished", foreground: { pid: 12, argv: ["claude", "--resume", "old"] } },
+    { address: "mini/t4", state: "live", foreground: { pid: 10, argv: ["claude"] } },
+    { address: "t5", state: "live" },
+  ];
+  assert.equal(recent.openIn({ id: "a", pid: 10 }, terminals, null), "t1");
+  assert.equal(recent.openIn({ id: "cx1" }, terminals, null), "t2");
+  assert.equal(recent.openIn({ id: "old", pid: 12 }, terminals, null), null);
+  assert.equal(recent.openIn({ id: "a", pid: 10 }, terminals, "mini"), "mini/t4");
+  assert.equal(recent.openIn({ id: "b" }, terminals, null), null);
+});
+
+test("an open agent hides the conversation its terminal has open; without that knowledge, its kind's newest in its folder", () => {
+  const sessions = [{ agent: "claude", id: "new", pid: null }, { agent: "claude", id: "mine", pid: 10 }, { agent: "codex", id: "cx2" }, { agent: "codex", id: "cx1" }];
+  const terminals = [{ address: "t1", state: "live", foreground: { pid: 10, argv: ["claude"] } }, { address: "t2", state: "live", foreground: { pid: 11, argv: ["codex", "resume", "cx1"] } },
+    { address: "t3", state: "live", foreground: { pid: 12, argv: ["claude"] } }, { address: "t4", state: "live", foreground: { pid: 13, argv: ["codex"] } }];
+  const agent = (address, key) => ({ address, program: { key } });
+  const left = (agents, rows = sessions, terms = terminals) => recent.closedSessions(rows, agents, terms).map(row => row.id);
+  assert.deepEqual(left([agent("t1", "claude")]), ["new", "cx2", "cx1"], "its own conversation, not the newest");
+  assert.deepEqual(left([agent("t3", "claude")]), ["new", "mine", "cx2", "cx1"], "a Claude Code in a conversation that isn't listed hides nothing");
+  assert.deepEqual(left([agent("t2", "codex")]), ["new", "mine", "cx2"], "a resumed Codex is known by its id");
+  assert.deepEqual(left([agent("t4", "codex")]), ["new", "mine", "cx1"], "another Codex is still a guess");
+  assert.deepEqual(left([agent("t3", "claude")], [{ agent: "claude", id: "a" }, { agent: "claude", id: "b" }]), ["b"], "without process knowledge Claude Code is a guess too");
+  assert.deepEqual(left([agent("t1", "claude")], sessions, []), ["mine", "cx2", "cx1"], "and without terminals");
 });
