@@ -1927,3 +1927,18 @@ test("what is pressed is noted in a local log, without titles, unless the log is
   assert.equal(world.tracked.length, 4);
   delete world.data.features;
 });
+
+test("the setup card and Delivery settings set how pull requests open and when they count as ready", () => {
+  const view = setupLive();
+  assert.equal(find(view.render(cx), "setup-prs"), undefined, "nothing to choose while merging locally");
+  view.act({ type: "deliver", value: "pr" }, cx);
+  assert.match(text(find(view.render(cx), "setup-prs")), /Open ready for review · ready to merge when GitHub says so/);
+  click(view, "setup-draft-use");
+  click(view, "setup-approval-use");
+  assert.deepEqual([view.state().draftPr, view.state().prApproval], [true, true]);
+  assert.match(text(find(view.render(cx), "setup-prs")), /Open as drafts · ready to merge once approved/);
+  assert.equal(find(view.render(cx), "setup-draft-use"), undefined);
+  view.open("settings", cx, "delivery");
+  flip(view, "pr-approval");
+  assert.equal(view.state().prApproval, false);
+});

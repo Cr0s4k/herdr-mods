@@ -83,7 +83,7 @@ function cardStatus(state, task) {
   if (state.live && task.status === "review" && task.unchanged && !task.error) return "No file changes";
   if (state.live && task.status === "review") return task.error ? "Not merged · see why" : task.checked === "passed" ? "Checks passed" : task.checked === "failed" ? "Checks failing" : "Ready for review";
   if (state.live && task.status === "failed" && task.reason === "checks") return "Checks failed";
-  if (state.live && task.status === "pr") return [task.agentState !== "gone" && prAgent(task), prNeeds(task).label].filter(Boolean).join(" · ");
+  if (state.live && task.status === "pr") return [task.agentState !== "gone" && prAgent(task), prNeeds(task, state).label].filter(Boolean).join(" · ");
   if (state.live && task.status === "merging" && task.unchanged) return "Closing";
   if (state.live && task.status === "done" && task.unchanged) return "Done · no changes";
   if (state.live && task.status === "merging" && state.delivery === "pr") return task.repos.length > 1 ? "Opening PRs" : "Opening PR";
@@ -1339,6 +1339,11 @@ export default class Pipeline extends View {
         ...(state.delivery !== "pr" && this.github ? [use("pr", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx),
           "This repository is on GitHub and gh is installed, so finished work can open a pull request instead")] : []),
         change("delivery", "delivery")], chose("delivery", state.delivery)),
+      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval ? ok : plain,
+        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}`, [
+        ...(!state.draftPr ? [use("draft", "Open as drafts", cx => this.act({ type: "draftPr" }, cx), "Each pull request opens as a draft; mark it ready from its task when it should be reviewed")] : []),
+        ...(!state.prApproval ? [use("approval", "Wait for an approval", cx => this.act({ type: "prApproval" }, cx), "A pull request counts as ready to merge only once someone approved it, even where GitHub requires no review")] : []),
+        change("prs", "delivery")])]),
       ...(state.delivery === "pr" ? [] : [row("after", "After merge", state.afterMerge ? ok : plain, state.afterMerge ?? "Nothing to run", [
         ...(!state.afterMerge && afterHint ? [use("after", `Use ${afterHint}`, cx => { this.afterInput.set_value(afterHint); this.act({ type: "afterMerge", command: afterHint }, cx); },
           "Found in this repository. Runs in your project folder after each merge, so merged work is installed")] : []),
@@ -1425,8 +1430,8 @@ export default class Pipeline extends View {
             ? h_flex().id(`pipeline-pr-agent-${task.id}`).gap(6).items_center().min_w(0).text_size(11)
               .child(agent === "input" ? div().px(6).h(18).flex_none().rounded(4).bg(t.blocked + "26").text_color(t.blocked).font_semibold().flex().items_center().child("Needs you")
                 : div().flex_none().font_medium().text_color(t.accent).child("Agent working"))
-              .child(div().flex_1().min_w(0).truncate().text_color(toneColor(prNeeds(task).tone, t)).child(prNeeds(task).label))
-            : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task).tone, t) : t.muted).truncate()
+              .child(div().flex_1().min_w(0).truncate().text_color(toneColor(prNeeds(task, state).tone, t)).child(prNeeds(task, state).label))
+            : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task, state).tone, t) : t.muted).truncate()
               .when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
@@ -1842,6 +1847,8 @@ export default class Pipeline extends View {
         Boolean(state.autoMerge), cx => this.act({ type: "autoMerge" }, cx), t));
       if (state.delivery === "pr") body.child(this.switchRow("draft-pr", "Open them as drafts", state.draftPr ? "Each one opens as a draft; mark it ready from its task" : "Each one opens ready for review",
         Boolean(state.draftPr), cx => this.act({ type: "draftPr" }, cx), t));
+      if (state.delivery === "pr") body.child(this.switchRow("pr-approval", "Wait for an approval", state.prApproval ? "A pull request is ready to merge only once someone approved it" : "A pull request is ready to merge when GitHub says so, approved or not",
+        Boolean(state.prApproval), cx => this.act({ type: "prApproval" }, cx), t));
       if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Link the walkthrough page in the pull request", "Adds one line to the description linking the before and after page. The screenshots themselves stay out of the repository",
         Boolean(state.evidencePr), cx => this.act({ type: "evidencePr" }, cx), t));
       if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
@@ -2212,10 +2219,10 @@ export default class Pipeline extends View {
   // An open pull request comes first in its task: what it waits for, and what can be done about it from here.
   prDetail(body, state, task, t, several) {
     for (const [name, pr] of Object.entries(task.prs)) {
-      const prTarget = task.workspaces?.[name]?.target, need = prNeed(pr, prTarget), suffix = several ? `-${name}` : "", prefix = several ? `${name} · ` : "";
+      const prTarget = task.workspaces?.[name]?.target, need = prNeed(pr, prTarget, state), suffix = several ? `-${name}` : "", prefix = several ? `${name} · ` : "";
       body.child(this.heading(pr.merged ? `${prefix}Pull request #${pr.number} · Merged` : pr.status ? `${prefix}Pull request #${pr.number} · ${need.label}` : `${prefix}Pull request #${pr.number}`));
       if (!pr.merged && !pr.status) body.child(this.label("Asking GitHub what it waits for…", t));
-      if (!pr.merged) for (const item of prChecklist(pr, prTarget)) body.child(h_flex().id(`pipeline-pr-${item.name.toLowerCase()}-${task.id}${suffix}`).gap(8).items_start().text_size(12).line_height(1.45)
+      if (!pr.merged) for (const item of prChecklist(pr, prTarget, state)) body.child(h_flex().id(`pipeline-pr-${item.name.toLowerCase()}-${task.id}${suffix}`).gap(8).items_start().text_size(12).line_height(1.45)
         .child(dot(toneColor(item.tone, t)).mt(6))
         .child(div().w(54).flex_none().text_color(t.muted).child(item.name))
         .child(div().flex_1().min_w(0).text_color(item.tone === "blocked" ? t.blocked : t.foreground).child(item.value)));

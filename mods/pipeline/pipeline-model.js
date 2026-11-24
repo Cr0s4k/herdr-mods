@@ -263,7 +263,8 @@ export const workspacesOf = task => task.repos.filter(name => task.workspaces?.[
 export const targetOf = task => (workspacesOf(task)[0] ?? Object.values(task.planned ?? {})[0])?.target;
 export const prList = prs => Object.entries(prs ?? {}).map(([name, pr]) => `${name} #${pr.number}`).join(", ");
 // Ranked by how much it needs someone: the lowest rank across a task's pull requests goes on its card.
-export function prNeed(pr, target = "the base branch") {
+// `rules` is the pipeline: with `prApproval`, a pull request nobody approved still waits, even where GitHub asks for no review.
+export function prNeed(pr, target = "the base branch", rules = null) {
   const status = pr?.status;
   if (!status) return { label: `PR #${pr?.number} open`, tone: "wait", rank: 9 };
   if (status.draft) return { label: "Draft · mark it ready", tone: "wait", rank: 0 };
@@ -271,22 +272,22 @@ export function prNeed(pr, target = "the base branch") {
   if (status.failed) return { label: `Checks failing · ${status.failed}`, tone: "blocked", rank: 2 };
   if (status.review === "CHANGES_REQUESTED") return { label: "Changes requested", tone: "blocked", rank: 3 };
   if (status.pending) return { label: `Checks running · ${status.pending}`, tone: "wait", rank: 4 };
-  if (status.review === "REVIEW_REQUIRED") return { label: "Waiting for review", tone: "wait", rank: 5 };
+  if (status.review === "REVIEW_REQUIRED" || (rules?.prApproval && status.review !== "APPROVED")) return { label: "Waiting for review", tone: "wait", rank: 5 };
   if (status.mergeState === "BEHIND") return { label: `Behind ${target}`, tone: "wait", rank: 6 };
   if (status.mergeState === "BLOCKED") return { label: "Blocked by branch rules", tone: "wait", rank: 7 };
   if (status.mergeState === "UNKNOWN") return { label: "GitHub is checking it", tone: "wait", rank: 8 };
   return { label: "Ready to merge", tone: "ready", rank: 10 };
 }
-export function prNeeds(task) {
+export function prNeeds(task, rules = null) {
   const open = Object.entries(task.prs ?? {}).filter(([, pr]) => !pr.merged)
-    .map(([name, pr]) => ({ name, ...prNeed(pr, task.workspaces?.[name]?.target) }));
+    .map(([name, pr]) => ({ name, ...prNeed(pr, task.workspaces?.[name]?.target, rules) }));
   if (!open.length) return { label: "Merged on GitHub", tone: "ready" };
   const top = open.reduce((best, need) => need.rank < best.rank ? need : best);
   if (task.repos.length < 2 || top.tone === "ready") return { label: top.label, tone: top.tone };
   if (open.length > 1 && open.every(need => need.rank === 9)) return { label: `${open.length} PRs open`, tone: "wait" };
   return { label: `${top.name} · ${top.label}`, tone: top.tone };
 }
-export function prChecklist(pr, target = "the base branch") {
+export function prChecklist(pr, target = "the base branch", rules = null) {
   const status = pr?.status;
   if (!status) return [];
   const failing = status.failing?.length ? `: ${status.failing.join(", ")}` : "";
@@ -294,7 +295,7 @@ export function prChecklist(pr, target = "the base branch") {
     : status.pending ? { value: `${status.pending} running${status.passed ? `, ${status.passed} passed` : ""}`, tone: "wait" }
     : status.passed ? { value: `All ${status.passed} passed`, tone: "ready" } : { value: "None reported", tone: "ready" };
   const review = { APPROVED: { value: "Approved", tone: "ready" }, CHANGES_REQUESTED: { value: "Changes requested", tone: "blocked" },
-    REVIEW_REQUIRED: { value: "Required, not given yet", tone: "wait" } }[status.review] ?? { value: "Not required", tone: "ready" };
+    REVIEW_REQUIRED: { value: "Required, not given yet", tone: "wait" } }[status.review] ?? (rules?.prApproval ? { value: "Not approved yet", tone: "wait" } : { value: "Not required", tone: "ready" });
   const merge = status.draft ? { value: "Draft. Mark it ready when it should be reviewed", tone: "wait" }
     : status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY" ? { value: `Conflicts with ${target}`, tone: "blocked" }
     : status.mergeState === "BEHIND" ? { value: `Behind ${target}. Update the branch`, tone: "wait" }
@@ -319,7 +320,7 @@ export function liveNotices(before, after) {
     else if (task.status === "done" && old.status === "pr") say("merged on GitHub", task.title, "success");
     else if (task.status === "done" && old.status === "merging" && after.autoMerge) say(task.unchanged ? "done" : "merged", task.title, "success");
     else if (task.status === "pr" && old.status === "pr") {
-      const need = prNeeds(task), last = prNeeds(old);
+      const need = prNeeds(task, after), last = prNeeds(old, before);
       if (need.label !== last.label && need.tone !== "wait" && need.tone !== last.tone) say(`pull request · ${need.label.toLowerCase()}`, task.title, need.tone === "ready" ? "success" : "warning");
     }
   }
@@ -555,7 +556,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "autoTrust", "quiet", "planner", "implementer"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "autoTrust", "quiet", "planner", "implementer"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -1263,6 +1264,7 @@ export function reduce(state, action, now = Date.now()) {
     case "tryAuto": if (!next.live) return state; next.tryAuto = !next.tryAuto; event(next, next.tryAuto ? "Try it starts when work is ready for review." : "Try it starts when you ask."); break;
     case "evidence": if (!next.live) return state; next.evidence = !next.evidence; event(next, next.evidence ? "Agents are asked for before and after screenshots." : "Agents are no longer asked for screenshots."); break;
     case "evidencePr": if (!next.live) return state; next.evidencePr = !next.evidencePr; event(next, next.evidencePr ? "Pull requests link the walkthrough page." : "Pull requests don't link the walkthrough page."); break;
+    case "prApproval": if (!next.live) return state; next.prApproval = !next.prApproval; event(next, next.prApproval ? "Pull requests count as ready only once approved." : "Pull requests are ready when GitHub says so."); break;
     case "draftPr": if (!next.live) return state; next.draftPr = !next.draftPr; event(next, next.draftPr ? "Pull requests open as drafts." : "Pull requests open ready for review."); break;
     case "prepare": {
       if (!next.live) return state;

@@ -290,7 +290,10 @@ nothing to finish.
    puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
    **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by
    branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
-   merge state. With **Open them as drafts** (Settings, Delivery) each pull request opens as a
+   merge state. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
+   reads **Waiting for review** rather than **Ready to merge**, even where GitHub requires no
+   review. The setup card's **Pull requests** row offers both this and drafts when a folder is
+   first set up, and every pipeline of the folder shares them. With **Open them as drafts** (Settings, Delivery) each pull request opens as a
    draft, or as an ordinary one where the repository's plan has no drafts; **Mark ready** and
    **Back to draft** in the inspector change it without opening GitHub. The card stays on the
    pull request while its agent goes on: it adds **Agent working** or **Agent needs you**, and

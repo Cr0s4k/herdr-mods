@@ -2320,3 +2320,17 @@ test("stale saves are pruned: idle examples, pipelines of folders that are gone,
   assert.equal(waiting, all["live:kept"].tasks[1], "unfinished work keeps everything");
   assert.equal(model.prune(next, now, { gone, open: new Set(["s2"]) }), next, "nothing left to drop leaves the store alone");
 });
+
+test("with Wait for an approval, a pull request nobody approved waits for review even where GitHub requires none", () => {
+  const clean = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 9 };
+  const task = { repos: ["shop"], prs: { shop: { number: 3, status: clean } }, workspaces: { shop: { target: "main" } } };
+  assert.deepEqual(model.prNeeds(task), { label: "Ready to merge", tone: "ready" });
+  assert.deepEqual(model.prNeeds(task, { prApproval: true }), { label: "Waiting for review", tone: "wait" });
+  assert.equal(model.prChecklist(task.prs.shop, "main", { prApproval: true }).find(row => row.name === "Review").value, "Not approved yet");
+  const approved = { ...task, prs: { shop: { number: 3, status: { ...clean, review: "APPROVED" } } } };
+  assert.equal(model.prNeeds(approved, { prApproval: true }).label, "Ready to merge");
+  assert.equal(model.prNeeds({ ...task, prs: { shop: { number: 3, status: { ...clean, failed: 1 } } } }, { prApproval: true }).label, "Checks failing · 1", "what blocks it still comes first");
+  let state = reduce(createLive(context, 0), { type: "prApproval" }, 0);
+  assert.equal(state.prApproval, true);
+  assert.ok(model.PROJECT_SETTINGS.includes("prApproval") && model.PROJECT_SETTINGS.includes("draftPr"), "the folder's pipelines share both");
+});
