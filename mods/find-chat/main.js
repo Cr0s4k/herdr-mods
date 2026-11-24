@@ -1,9 +1,9 @@
 // Find a past Claude Code, Codex or OpenCode conversation by what was said in it, and resume it in a new tab.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, exec, run, theme, props, closeOverlay, checking, readTextFile, appHome, knownAgents } from "herdr";
+import { spaces, panes, focused, terminals, exec, run, theme, props, closeOverlay, checking, readTextFile, appHome, knownAgents } from "herdr";
 import { resumeArgs, ago } from "./recent.js";
-import { NAMES, terms, runs, spaceFor } from "./model.js";
+import { NAMES, terms, runs, spaceFor, openIn } from "./model.js";
 
 const ROW = 48, ROWS = 9, LIMIT = 40;
 
@@ -80,6 +80,8 @@ export default class FindChat extends View {
   resume(index, cx) {
     const session = this.results[index], on = this.on;
     if (!session || this.resuming) return;
+    const open = openIn(session, terminals(), on);
+    if (open) { run("agent.focus", { terminal: open }); return this.close(); }
     if (session.gone) { this.note = `Its folder is gone, so it can't be resumed: ${session.cwd}`; return cx.notify(); }
     this.resuming = true;
     cx.spawn(async (cx) => {
@@ -103,7 +105,7 @@ export default class FindChat extends View {
   }
 
   row(s, i, t) {
-    const where = s.branch ?? s.folder ?? null;
+    const where = s.branch ?? s.folder ?? null, open = Boolean(openIn(s, terminals(), this.on));
     const second = s.snippet ? `${s.who === "you" ? "You" : NAMES[s.agent]}: ${s.snippet}` : s.gone ? `${s.cwd} is gone` : s.cwd;
     return v_flex().id(`fc-${s.agent}-${s.id}`).h(ROW).flex_none().px(10).justify_center().gap(2).rounded(6).cursor_pointer()
       .when(i === this.at, el => el.bg(t.selected)).when(i !== this.at, el => el.hover(st => st.bg(t.hover)))
@@ -113,6 +115,7 @@ export default class FindChat extends View {
         .child(h_flex().flex_1().min_w(0).overflow_hidden().text_size(13).children(marked(s.title, this.words, t.foreground, t)))
         .when(Boolean(where), el => el.child(h_flex().flex_none().max_w(220).gap(4).items_center().text_size(11).text_color(t.muted)
           .when(Boolean(s.branch), el => el.child(svg("mods/workspace-chrome/branch.svg").size(11).flex_none())).child(div().min_w(0).truncate().child(where))))
+        .when(open, el => el.child(div().flex_none().px(5).rounded(4).bg(t.accent + "33").text_size(11).text_color(t.accent).child("open")))
         .child(div().flex_none().text_size(11).text_color(t.muted).child(NAMES[s.agent]))
         .child(div().flex_none().w(26).text_right().text_size(11).text_color(t.dim ?? t.muted).child(ago(s.at))))
       .child(h_flex().min_w(0).overflow_hidden().text_size(12).children(marked(second, s.snippet ? this.words : [], t.muted, t)));
@@ -120,6 +123,7 @@ export default class FindChat extends View {
 
   render() {
     const t = theme(), typed = terms(this.input.value()).length > 0, n = this.results.length;
+    const picked = this.results[this.at], going = picked && openIn(picked, terminals(), this.on);
     const note = this.note ?? this.error ?? (this.loading && !n ? (typed ? "Searching…" : "Reading conversations…") : !n ? (typed ? "Nothing said matches" : "No conversations here yet") : null);
     const count = `${n === LIMIT ? `latest ${n}` : n} conversation${n === 1 ? "" : "s"}${this.loading && n ? " · searching…" : this.cut ? " · stopped early, add a word" : ""}`;
     return v_flex().id("find-chat").track_focus(this.handle).w_full().min_h(0).p(12).gap(8).bg(t.popover).text_size(13).text_color(t.foreground)
@@ -143,7 +147,7 @@ export default class FindChat extends View {
         .children(this.results.map((s, i) => this.row(s, i, t)))))
       .when(Boolean(note), el => el.child(div().px(10).py(6).text_size(12).text_color(this.note || this.error ? t.blocked : t.muted).child(note)))
       .child(h_flex().flex_none().px(4).gap(14).items_center().text_size(11).text_color(t.muted)
-        .child("↑↓ select").child("↵ resume in a new tab").child(`⇥ ${this.everywhere ? "this repository" : "everywhere"}`).child("esc close")
+        .child("↑↓ select").child(going ? "↵ go to its tab" : "↵ resume in a new tab").child(`⇥ ${this.everywhere ? "this repository" : "everywhere"}`).child("esc close")
         .child(div().flex_1())
         .child(count));
   }

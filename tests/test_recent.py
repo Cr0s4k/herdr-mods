@@ -127,6 +127,14 @@ class RecentTest(unittest.TestCase):
         everywhere = self.search("price cache", database=database, everywhere=True)["data"]
         self.assertEqual(sorted(row["id"] for row in everywhere), ["cx1", "cx2", "ses_1", "ses_3"])
 
+    def test_a_conversation_a_running_claude_is_in_carries_its_process(self):
+        self.claude("a.jsonl", lines({"type": "user", "message": {"content": "Fix the login"}}), 200)
+        self.claude("b.jsonl", lines({"type": "user", "message": {"content": "Sort the list"}}), 300)
+        (self.home / "sessions").mkdir()
+        (self.home / "sessions/41.json").write_text(json.dumps({"pid": 41, "sessionId": "a"}))
+        (self.home / "sessions/42.json").write_text("not json")
+        self.assertEqual([(row["id"], row.get("pid")) for row in self.search("")["data"]], [("b", None), ("a", 41)])
+
     def test_a_search_out_of_time_says_it_stopped_early(self):
         self.claude("a.jsonl", lines({"type": "user", "message": {"content": "Fix the login"}}), 200)
         self.assertEqual(self.search("login", budget=-1), {"data": [], "cut": True})

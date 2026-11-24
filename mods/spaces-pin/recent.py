@@ -210,6 +210,19 @@ def claude_cwd(file):
     return next((row["cwd"] for row in rows(head) if isinstance(row.get("cwd"), str)), None)
 
 
+def claude_open(home):
+    """The conversation each running Claude Code is in, by its process: {conversation: pid}."""
+    found = {}
+    for file in (home / "sessions").glob("*.json"):
+        try:
+            row = json.loads(file.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(row, dict) and isinstance(row.get("sessionId"), str) and isinstance(row.get("pid"), int):
+            found[row["sessionId"]] = row["pid"]
+    return found
+
+
 def newest(files, limit=FILES):
     def changed(file):
         try:
@@ -227,7 +240,8 @@ def search(cwd, query, everywhere=False, limit=40, home=None, codex_home=None, d
     folders = [cwd, *others]
     stop, cut, found = time.monotonic() + budget, False, []
 
-    base = Path(home or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    claude_home = Path(home or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    base, running = claude_home / "projects", claude_open(claude_home)
     slugs = {re.sub(r"[^A-Za-z0-9]", "-", folder): folder for folder in folders}
     kept = [folder for folder in (base.iterdir() if base.is_dir() else []) if folder.is_dir() and (everywhere or folder.name in slugs)]
     claude_files = newest(file for folder in kept for file in folder.glob("*.jsonl"))
@@ -248,6 +262,8 @@ def search(cwd, query, everywhere=False, limit=40, home=None, codex_home=None, d
                 if agent == "claude":
                     title, folder = claude_title(file), slugs.get(file.parent.name) or claude_cwd(file)
                     session = {"agent": "claude", "id": file.stem, "title": title, "at": int(file.stat().st_mtime * 1000), "cwd": folder} if title and folder else None
+                    if session and file.stem in running:
+                        session["pid"] = running[file.stem]
                 else:
                     session = codex_session(file, None if everywhere else folders)
             except OSError:

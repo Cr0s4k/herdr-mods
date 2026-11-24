@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { lstat, readFile, readlink } from "node:fs/promises";
 import test from "node:test";
-import { terms, runs, spaceFor } from "../mods/find-chat/model.js";
+import { terms, runs, spaceFor, openIn } from "../mods/find-chat/model.js";
 
 test("searched words are marked wherever they appear, whatever their case, the longer one first", () => {
   assert.deepEqual(runs("Usage limits and usage", terms("usage LIMIT")), [
@@ -21,6 +21,21 @@ test("a conversation resumes in the space on its folder, else the one on screen,
   assert.equal(spaceFor(spaces, { cwd: "/work/shop" }, "mini"), "c");
   assert.equal(spaceFor(spaces, { cwd: "/else" }, "mini"), "b");
   assert.equal(spaceFor([], { cwd: "/else" }, null), null);
+});
+
+test("a conversation is open where its process runs or where an agent was started with its id", () => {
+  const terminals = [
+    { address: "t1", state: "live", foreground: { pid: 10, argv: ["claude"] } },
+    { address: "t2", state: "live", foreground: { pid: 11, argv: ["codex", "resume", "cx1"] } },
+    { address: "t3", state: "finished", foreground: { pid: 12, argv: ["claude", "--resume", "old"] } },
+    { address: "mini/t4", state: "live", foreground: { pid: 10, argv: ["claude"] } },
+    { address: "t5", state: "live" },
+  ];
+  assert.equal(openIn({ id: "a", pid: 10 }, terminals, null), "t1");
+  assert.equal(openIn({ id: "cx1" }, terminals, null), "t2");
+  assert.equal(openIn({ id: "old", pid: 12 }, terminals, null), null);
+  assert.equal(openIn({ id: "a", pid: 10 }, terminals, "mini"), "mini/t4");
+  assert.equal(openIn({ id: "b" }, terminals, null), null);
 });
 
 test("the popup runs the Recent reader through links, has a shortcut and a key-sorted mod.json", async () => {

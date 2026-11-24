@@ -46,8 +46,10 @@ the agents said in past conversations, for the one whose title you don't remembe
 - ↑/↓ picks, Enter resumes it in a new tab, in its own folder: in the space opened on that
   folder when there is one, else in the space on screen. A conversation whose folder was
   removed is dimmed and can't be resumed. Esc closes.
-- It doesn't know which conversations are open in a tab already, so resuming one of those
-  opens it a second time.
+- A conversation that is open in a tab is marked **open**, and Enter goes to that tab instead
+  of opening it twice. It knows this for Claude Code (from the process each one runs) and for
+  a Codex or OpenCode agent that was started by resuming that conversation; another open Codex
+  or OpenCode conversation isn't marked, and Enter opens it a second time.
 - Claude Code's and Codex's conversations are read in full, the newest 600 and 400 files; a
   search that takes over eight seconds stops and says so. OpenCode's match on their titles only.
 - Install adds the key to `global` in `~/.config/herdr-app/keys.json` and never replaces a key
