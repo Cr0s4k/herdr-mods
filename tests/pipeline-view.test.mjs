@@ -38,7 +38,7 @@ globalThis.__pipelineView = {
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
   setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry, evidenceRequest: live.evidenceRequest, loadProcedures: async () => {}, procedure: live.procedure,
-  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, prConflictRequest: (number, target) => `rebase #${number} onto ${target}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
+  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, prRequest: (kind, pr, target) => `${kind} #${pr.number} onto ${target}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
   fullTickets: async (provider, issues) => { world.fullCalls = [...(world.fullCalls ?? []), [provider, issues.map(issue => issue.identifier)]];
@@ -839,14 +839,16 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.match(text(find(waiting, "pr-checks-T-2")), /1 failing: test/);
   assert.match(text(find(waiting, "pr-review-T-2")), /Required, not given yet/);
   assert.ok(find(waiting, "pr-ready-T-2").nodes.includes("Back to draft"));
-  assert.equal(find(waiting, "pr-rebase-T-2"), undefined, "no rebase is offered without conflicts");
+  assert.equal(find(waiting, "pr-ask-rebase-T-2"), undefined, "no rebase is offered without conflicts");
+  assert.match(text(find(waiting, "pr-ask-checks-T-2")), /Ask the agent to fix the checks/, "failing checks can be handed to the agent");
+  assert.equal(find(waiting, "pr-ask-review-T-2"), undefined, "a review that is only required has nothing to address yet");
   view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
     status: { draft: false, mergeable: "CONFLICTING", mergeState: "DIRTY", review: null, failed: 0, failing: [], pending: 0, passed: 2 } }, cx);
-  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Ask the agent to rebase/);
+  assert.match(text(find(view.render(cx), "pr-ask-rebase-T-2")), /Ask the agent to rebase/);
   view.act({ type: "agentSeen", id: "T-2", state: "gone" }, cx);
-  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Reopen agent to rebase/);
-  click(view, "pr-rebase-T-2");
-  assert.deepEqual([row(view, "T-2").reopen, row(view, "T-2").reopenAsk], [true, "rebase"]);
+  assert.match(text(find(view.render(cx), "pr-ask-rebase-T-2")), /Reopen agent to rebase/);
+  click(view, "pr-ask-rebase-T-2");
+  assert.deepEqual([row(view, "T-2").reopen, row(view, "T-2").reopenAsk], [true, { kind: "rebase", repo: "shop" }]);
   view.act({ type: "reopenFailed", id: "T-2", error: null }, cx);
   view.act({ type: "agentSeen", id: "T-2", state: "working" }, cx);
   assert.match(text(find(view.render(cx), "pr-agent-T-2")), /Agent working\s+Conflicts with main/, "what the agent does comes first, where a long need can't cut it off");

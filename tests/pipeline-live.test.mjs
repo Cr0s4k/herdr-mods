@@ -2369,3 +2369,18 @@ test("with Rebase on conflicts, a conflicting PR's idle agent is asked once, and
   assert.match(resumed[0].task, /conflicts with main/);
   assert.equal(row(world.state(), "T-1").terminal, "t10");
 });
+
+test("an open PR's agent can be asked to rebase, fix failing checks or address a review, most pressing first", () => {
+  const status = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, comments: 0, failed: 0, failing: [], pending: 0, passed: 3 };
+  assert.deepEqual(model.prAsks({ number: 1, status }), []);
+  assert.deepEqual(model.prAsks({ number: 1, status: { ...status, mergeState: "DIRTY", failed: 2, review: "CHANGES_REQUESTED" } }), ["rebase", "checks", "review"]);
+  assert.deepEqual(model.prAsks({ number: 1, status: { ...status, comments: 2 } }), ["review"], "comments count where no review is required");
+  assert.deepEqual(model.prAsks({ number: 1, merged: true, status: { ...status, failed: 1 } }), []);
+  assert.match(live.prRequest("checks", { number: 12, status: { failing: ["test", "lint"] } }, "main"), /Checks are failing on pull request #12 of this branch: test, lint\..*gh run view --log-failed.*push the branch/s);
+  assert.match(live.prRequest("review", { number: 12 }, "main"), /Pull request #12.*review comments.*post no comments or replies/s);
+  assert.match(live.prRequest("rebase", { number: 12 }, "main"), /conflicts with main/);
+  let state = reduce(reduce(typed("A"), { type: "deliver", value: "pr" }, 0), { type: "run" }, 0);
+  state = { ...state, tasks: state.tasks.map(task => ({ ...task, status: "pr", workspaces: { [task.repos[0]]: { root: "/wt", target: "main" } }, prs: { [task.repos[0]]: { number: 12, url: "u", status } } })) };
+  const asked = reduce(state, { type: "reopen", id: "T-1", ask: "review", repo: state.tasks[0].repos[0] }, 0);
+  assert.deepEqual([row(asked, "T-1").reopenAsk.kind, row(asked, "T-1").rebaseAsked], ["review", undefined]);
+});

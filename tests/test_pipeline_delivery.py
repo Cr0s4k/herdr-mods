@@ -440,7 +440,9 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["state"], "MERGED")
 
     def test_pull_request_status_says_what_it_waits_for(self):
-        reply = {"state": "OPEN", "isDraft": False, "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY", "reviewDecision": "CHANGES_REQUESTED",
+        reply = {"state": "OPEN", "isDraft": False, "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY", "reviewDecision": "CHANGES_REQUESTED", "author": {"login": "me"},
+                 "reviews": [{"state": "CHANGES_REQUESTED", "author": {"login": "ana"}}, {"state": "COMMENTED", "author": {"login": "bot"}},
+                             {"state": "COMMENTED", "author": {"login": "me"}}, {"state": "APPROVED", "author": {"login": "li"}}],
                  "statusCheckRollup": [
                      {"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
                      {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS"},
@@ -450,14 +452,14 @@ class DeliveryTest(unittest.TestCase):
                      {"__typename": "StatusContext", "context": "ci/deploy", "state": "PENDING"}]}
         log = self.stub_gh("cat <<'EOF'\n" + json.dumps(reply) + "\nEOF\n")
         result = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})
-        self.assertEqual(result, {"state": "OPEN", "status": {"draft": False, "mergeable": "CONFLICTING", "mergeState": "DIRTY", "review": "CHANGES_REQUESTED",
+        self.assertEqual(result, {"state": "OPEN", "status": {"draft": False, "mergeable": "CONFLICTING", "mergeState": "DIRTY", "review": "CHANGES_REQUESTED", "comments": 2,
                                                               "failed": 2, "failing": ["test", "ci/legacy"], "pending": 2, "passed": 2}})
         self.assertIn("statusCheckRollup", log.read_text())
 
     def test_pull_request_without_reviews_or_checks(self):
         self.stub_gh('echo \'{"state":"OPEN","isDraft":true,"mergeable":"UNKNOWN","mergeStateStatus":"DRAFT","reviewDecision":"","statusCheckRollup":[]}\'\n')
         status = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["status"]
-        self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "failed": 0, "failing": [], "pending": 0, "passed": 0})
+        self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "comments": 0, "failed": 0, "failing": [], "pending": 0, "passed": 0})
 
     def found(self, state, head):
         self.stub_gh("cat <<'EOF'\n" + json.dumps({"url": "https://github.com/me/project/pull/7", "number": 7, "state": state, "headRefOid": head}) + "\nEOF\n")

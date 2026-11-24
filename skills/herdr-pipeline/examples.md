@@ -98,6 +98,22 @@ Pull request #12 of this branch conflicts with main on GitHub, so it can't be me
 Fetch origin, rebase this branch onto origin/main, resolve the conflicts, make sure the work still does what the task asked, commit, push the branch with `git push --force-with-lease`, and stop.
 ````
 
+## An open pull request has failing checks
+
+````text
+Checks are failing on pull request #12 of this branch: test, lint.
+
+Read what failed (`gh pr checks 12`, then `gh run view --log-failed` for a failing run), fix the cause, make sure the work still does what the task asked, commit, push the branch, and stop.
+````
+
+## An open pull request has review comments
+
+````text
+Pull request #12 of this branch has review comments to address.
+
+Read the reviews and their comments (`gh pr view 12 --comments`, and `gh api repos/{owner}/{repo}/pulls/12/comments` for the ones on lines), make the changes they ask for, commit, push the branch, and stop. Change the code only: post no comments or replies on the pull request. Say on the summary's Unsure line what you chose not to change, and why.
+````
+
 ## Delivery found uncommitted changes
 
 ````text

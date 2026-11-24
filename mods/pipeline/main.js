@@ -1,9 +1,9 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch, TextView } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prConflict, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prConflictRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { loadProcedures, procedure } from "./procedures.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
@@ -401,11 +401,11 @@ export default class Pipeline extends View {
     openOverlay({ mod: "changes-modal", kind: "dialog", width: 0.9, height: 0.9,
       props: { root: repo.root, on: this.context.on ?? null, hasHead: true, base: repo.base, files: repo.files, index } });
   }
-  rebasePr(task, pr, target, cx) {
+  askPr(task, pr, target, kind, cx) {
     cx.spawn(async cx => {
-      const sent = await hc(["send", task.terminal, prConflictRequest(pr.number, target)]).then(result => result.code === 0, () => false);
-      if (sent) { this.rebased = task.id; this.act({ type: "rebaseAsked", id: task.id }, cx); } else this.focusAgent(task);
-      this.track("prRebase", { task: task.id });
+      const sent = await hc(["send", task.terminal, prRequest(kind, pr, target)]).then(result => result.code === 0, () => false);
+      if (sent) { this.prAsked = `${task.id}/${kind}`; if (kind === "rebase") this.act({ type: "rebaseAsked", id: task.id }, cx); } else this.focusAgent(task);
+      this.track("prAsk", { task: task.id, kind });
       cx.notify();
     });
   }
@@ -2229,15 +2229,20 @@ export default class Pipeline extends View {
         .child(dot(toneColor(item.tone, t)).mt(6))
         .child(div().w(54).flex_none().text_color(t.muted).child(item.name))
         .child(div().flex_1().min_w(0).text_color(item.tone === "blocked" ? t.blocked : t.foreground).child(item.value)));
-      const clash = !pr.merged && prConflict({ prs: { [name]: pr } }), gone = task.agentState === "gone" || !task.terminal;
-      if (clash) body.child(this.button(`pr-rebase-${task.id}${suffix}`, task.reopen ? "Reopening…" : gone ? "Reopen agent to rebase" : this.rebased === task.id ? "Asked. It rebases and pushes" : "Ask the agent to rebase",
-        cx => gone ? this.act({ type: "reopen", id: task.id, ask: "rebase" }, cx) : this.rebasePr(task, pr, prTarget, cx), t,
-        { icon: "reset", primary: !task.reopen && this.rebased !== task.id, disabled: Boolean(task.reopen) || task.agentState === "working",
-          hint: `${gone ? "Starts its agent again in the worktree, continuing its last conversation, and tells it" : "Tells its agent"} to rebase onto origin/${prTarget ?? "the base branch"}, resolve the conflicts and push` }));
+      const asks = prAsks(pr), clash = asks.includes("rebase"), gone = task.agentState === "gone" || !task.terminal;
+      const VERBS = { rebase: ["rebase", `rebase onto origin/${prTarget ?? "the base branch"}, resolve the conflicts and push`], checks: ["fix the checks", "read the failing checks, fix their cause and push"],
+        review: ["address the review", "read the review comments, make the changes and push, without replying on the pull request"] };
+      asks.forEach((kind, at) => {
+        const asked = this.prAsked === `${task.id}/${kind}`;
+        body.child(this.button(`pr-ask-${kind}-${task.id}${suffix}`, task.reopen ? "Reopening…" : gone ? `Reopen agent to ${VERBS[kind][0]}` : asked ? "Asked. It pushes when done" : `Ask the agent to ${VERBS[kind][0]}`,
+          cx => gone ? this.act({ type: "reopen", id: task.id, ask: kind, repo: name }, cx) : this.askPr(task, pr, prTarget, kind, cx), t,
+          { icon: "reset", primary: at === 0 && !task.reopen && !asked, disabled: Boolean(task.reopen) || task.agentState === "working",
+            hint: `${gone ? "Starts its agent again in the worktree, continuing its last conversation, and tells it" : "Tells its agent"} to ${VERBS[kind][1]}` }));
+      });
       if (pr.readyError) body.child(div().id(`pipeline-pr-ready-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.readyError));
       const draft = Boolean(pr.status?.draft);
       body.child(h_flex().gap(8).flex_wrap()
-        .child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several && !draft && !clash, hint: pr.url }))
+        .child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several && !draft && !asks.length, hint: pr.url }))
         .when(!pr.merged && Boolean(pr.status), el => el.child(this.button(`pr-ready-${task.id}${suffix}`, pr.readying ? "Asking GitHub…" : draft ? "Mark ready" : "Back to draft",
           cx => this.act({ type: "prReady", id: task.id, repo: name, undo: !draft }, cx), t,
           { icon: draft ? "check" : null, primary: draft && !pr.readying, disabled: Boolean(pr.readying), hint: draft ? "Marks it ready for review on GitHub (gh pr ready)" : "Makes it a draft again on GitHub (gh pr ready --undo)" }))));

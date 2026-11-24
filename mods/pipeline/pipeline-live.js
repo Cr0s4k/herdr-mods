@@ -286,6 +286,8 @@ export const screenText = text => text.replace(/\d+[a-z]*/gi, "").replace(/[^A-Z
 export const commitRequest = () => procedure("uncommitted");
 export const rebaseRequest = (target, error) => procedure("merge-refused", { target, error: error || "The branch conflicts." });
 export const prConflictRequest = (number, target) => procedure("pr-conflict", { number, target: target || "its base branch" });
+export const prRequest = (kind, pr, target) => kind === "checks" ? procedure("pr-checks", { number: pr.number, checks: (pr.status?.failing ?? []).join(", ") || "see the pull request" })
+  : kind === "review" ? procedure("pr-review", { number: pr.number }) : prConflictRequest(pr.number, target);
 export const fixRequest = (command, output) => procedure("check-failed", { command, output: output || "(no output)" });
 
 const PR_READ = 60000, PR_READ_AWAY = 600000;
@@ -353,8 +355,8 @@ export class LiveRunner {
         const agent = known.find(row => row.installed && row.name === task.agent) ?? known.find(row => row.installed && row.key === state.agent?.key) ?? known.find(row => row.installed);
         if (!agent) throw new Error("No coding agent is installed on that machine.");
         const before = host.panes().map(row => row.terminal).filter(Boolean);
-        const conflict = task.reopenAsk === "rebase" && prConflict(task), run = agentResume(agent);
-        const opening = conflict ? agentOpening({ ...agent, run }, prConflictRequest(conflict[1].number, task.workspaces?.[conflict[0]]?.target)) : { argv: run };
+        const ask = task.reopenAsk, repo = ask && (ask.repo ?? prConflict(task)?.[0] ?? Object.keys(task.prs ?? {})[0]), pr = repo && task.prs?.[repo], run = agentResume(agent);
+        const opening = pr ? agentOpening({ ...agent, run }, prRequest(ask.kind, pr, task.workspaces?.[repo]?.target)) : { argv: run };
         const own = host.resume(state.context, task, ws, opening, state.space ?? task.space);
         const opened = await host.locate(state.context, ws, cx, before);
         if (!opened) throw new Error("Its agent was asked to start, but its terminal never appeared.");

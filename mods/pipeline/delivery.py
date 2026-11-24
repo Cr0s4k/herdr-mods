@@ -288,14 +288,17 @@ def checks(rollup):
 
 
 def pr_state(payload):
-    fields = "state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup"
+    fields = "state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,author"
     viewed = gh(payload["root"], "pr", "view", payload["url"], "--json", fields)
     if viewed.returncode:
         raise ValueError(viewed.stderr.strip() or "GitHub didn't answer about the pull request.")
     pr = json.loads(viewed.stdout)
+    author = (pr.get("author") or {}).get("login")
+    # Reviews that say something, from anyone but the author: an agent can act on those even where none is required.
+    comments = sum(1 for review in pr.get("reviews") or [] if review.get("state") in ("CHANGES_REQUESTED", "COMMENTED") and (review.get("author") or {}).get("login") != author)
     status = {"draft": bool(pr.get("isDraft")), "mergeable": pr.get("mergeable") or "UNKNOWN",
               "mergeState": pr.get("mergeStateStatus") or "UNKNOWN", "review": pr.get("reviewDecision") or None,
-              **checks(pr.get("statusCheckRollup"))}
+              "comments": comments, **checks(pr.get("statusCheckRollup"))}
     return {"state": pr.get("state", "OPEN"), "status": status}
 
 
