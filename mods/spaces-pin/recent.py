@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import subprocess
 import sys
 
 CHUNK = 256_000
@@ -63,11 +64,11 @@ def claude(cwd, limit, home=None):
             break
         title = claude_title(file)
         if title:
-            found.append({"agent": "claude", "id": file.stem, "title": title, "at": int(file.stat().st_mtime * 1000)})
+            found.append({"agent": "claude", "id": file.stem, "title": title, "at": int(file.stat().st_mtime * 1000), "cwd": cwd})
     return found
 
 
-def codex_session(file, cwd):
+def codex_session(file, folders):
     with open(file, encoding="utf-8", errors="replace") as lines:
         meta, title = None, None
         for index, line in enumerate(lines):
@@ -82,47 +83,73 @@ def codex_session(file, cwd):
                 continue
             if row.get("type") == "session_meta":
                 meta = payload
-                if payload.get("cwd") != cwd:
+                if payload.get("cwd") not in folders:
                     return None
             elif row.get("type") == "response_item" and payload.get("role") == "user":
                 text = typed(payload.get("content"))
                 if text and not text.lstrip().startswith("<"):
                     title = clip(text)
                     break
-    return {"agent": "codex", "id": meta["id"], "title": title, "at": int(file.stat().st_mtime * 1000)} if meta and meta.get("id") and title else None
+    return {"agent": "codex", "id": meta["id"], "title": title, "at": int(file.stat().st_mtime * 1000), "cwd": meta["cwd"]} if meta and meta.get("id") and title else None
 
 
-def codex(cwd, limit, home=None):
+def codex(folders, limit, home=None):
     base = Path(home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     files = sorted((base / "sessions").glob("*/*/*/*.jsonl"), key=lambda file: file.stat().st_mtime, reverse=True)
     found = []
     for file in files[:400]:
         if len(found) >= limit:
             break
-        session = codex_session(file, cwd)
+        session = codex_session(file, folders)
         if session:
             found.append(session)
     return found
 
 
-def opencode(cwd, limit, database=None):
+def opencode(folders, limit, database=None):
     path = Path(database or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "opencode/opencode.db")
     if not path.is_file():
         return []
+    names = {name: folder for folder in folders for name in (folder, os.path.realpath(folder))}
     try:
         with sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=2) as connection:
             found = connection.execute(
-                "select id, title, time_updated from session_v2 where directory in (?, ?) and parent_id is null order by time_updated desc limit ?",
-                (cwd.rstrip("/"), os.path.realpath(cwd), limit)).fetchall()
+                "select id, title, time_updated, directory from session_v2 where directory in (%s) and parent_id is null order by time_updated desc limit ?" % ",".join("?" * len(names)),
+                (*names, limit)).fetchall()
     except sqlite3.Error:
         return []
-    return [{"agent": "opencode", "id": key, "title": clip(title) or "Untitled", "at": int(at or 0)} for key, title, at in found]
+    return [{"agent": "opencode", "id": key, "title": clip(title) or "Untitled", "at": int(at or 0), "cwd": names[directory]} for key, title, at, directory in found]
 
 
-def recent(cwd, limit=8, home=None, codex_home=None, database=None):
+def worktrees(cwd):
+    """The repository's other checkouts that still exist, as {folder: branch}: a conversation held in one can be resumed there."""
+    try:
+        listed = subprocess.run(["git", "-C", cwd, "worktree", "list", "--porcelain"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    found, folder = {}, None
+    for line in listed.stdout.splitlines() if listed.returncode == 0 else []:
+        if line.startswith("worktree "):
+            folder = line[9:].rstrip("/")
+            if folder != cwd and os.path.isdir(folder):
+                found[folder] = None
+            else:
+                folder = None
+        elif line.startswith("branch ") and folder:
+            found[folder] = line[7:].replace("refs/heads/", "", 1)
+    return found
+
+
+def recent(cwd, limit=8, home=None, codex_home=None, database=None, others=None):
     cwd = str(cwd).rstrip("/") or "/"
-    found = claude(cwd, limit, home) + codex(cwd, limit, codex_home) + opencode(cwd, limit, database)
-    return sorted(found, key=lambda session: session["at"], reverse=True)
+    others = worktrees(cwd) if others is None else others
+    folders = [cwd, *others]
+    found = [session for folder in folders for session in claude(folder, limit, home)] + codex(folders, limit, codex_home) + opencode(folders, limit * 2, database)
+    for session in found:
+        branch = others.get(session["cwd"])
+        if session["cwd"] != cwd:
+            session["branch"] = branch or Path(session["cwd"]).name
+    return sorted(found, key=lambda session: session["at"], reverse=True)[:limit * 3]
 
 
 def main():

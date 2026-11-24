@@ -777,7 +777,7 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       const agent = (await knownAgents({ on })).find(a => a.key === session.agent && a.installed);
       if (!agent) return;
-      run("tab.new", { space: w.id, folder: cwd, argv: resumeArgs(agent, session), name: session.title.slice(0, 28) });
+      run("tab.new", { space: w.id, folder: session.cwd ?? cwd, argv: resumeArgs(agent, session), name: session.title.slice(0, 28) });
       const had = this.recent[w.id];
       if (had) this.recent[w.id] = { ...had, rows: had.rows.filter(row => row.id !== session.id) };
       cx.notify();
@@ -788,7 +788,7 @@ export default class Spaces extends View {
   recentItems(w, t, parent, prefix = "") {
     if (shared("features")?.recent === false) return [];
     const open = this.recentOpen.has(w.id), key = `recent:${w.id}`, cwd = this.recent[w.id]?.cwd;
-    const here = this.agents.list.filter(a => a.space === w.id && this.panes.find(p => p.pane === a.pane)?.cwd === cwd);
+    const here = this.agents.list.filter(a => a.space === w.id).map(a => ({ program: a.program, cwd: this.panes.find(p => p.pane === a.pane)?.cwd ?? cwd }));
     const rows = open ? closedSessions(this.recent[w.id]?.rows ?? [], here).slice(0, 8) : [];
     return [
       { id: `${prefix}recent-branch-${w.id}`, view: () => recentHeader(w, open, t, { prefix, toggle: cx => this.toggleRecent(w, cx), ring: this.navigable(key, { kind: "recent", w, parent, act: cx => this.toggleRecent(w, cx) }) }) },

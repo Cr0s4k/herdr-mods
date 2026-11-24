@@ -781,6 +781,8 @@ test("a space lists its folder's closed conversations under Recent and resumes o
   const sessions = [{ agent: "claude", id: "c2", title: "Fix the login", at: Date.now() - 120000 }, { agent: "opencode", id: "o1", title: "Review PR 12", at: Date.now() - 7200000 },
     { agent: "claude", id: "c1", title: "Older work", at: Date.now() - 3 * 86400000 }];
   assert.deepEqual(recent.closedSessions(sessions, [{ program: { key: "claude" } }]).map(row => row.id), ["o1", "c1"], "an open agent's own conversation is left out");
+  const elsewhere = [{ agent: "claude", id: "w1", cwd: "/wt/t-1" }, { agent: "claude", id: "m1", cwd: "/work/app" }];
+  assert.deepEqual(recent.closedSessions(elsewhere, [{ program: { key: "claude" }, cwd: "/wt/t-1" }]).map(row => row.id), ["m1"], "only in the folder that agent is in");
   assert.deepEqual(recent.resumeArgs({ run: ["claude", "--yolo"] }, sessions[0]), ["claude", "--yolo", "--resume", "c2"]);
   assert.deepEqual(recent.resumeArgs({ run: ["codex"] }, { agent: "codex", id: "x" }), ["codex", "resume", "x"]);
   assert.deepEqual(recent.resumeArgs({ run: ["opencode"] }, { agent: "opencode", id: "ses_1" }), ["opencode", "--session", "ses_1"]);
@@ -809,5 +811,22 @@ test("a space lists its folder's closed conversations under Recent and resumes o
   sharedState.set("features", { recent: false });
   assert.equal(find(view.render(), "recent-app"), undefined);
   sharedState.delete("features");
+  localStorage.setItem("spaces.recent", "[]");
+});
+
+test("a conversation held in one of the repository's worktrees is marked and resumed in that worktree", async () => {
+  const view = setup();
+  const jobs = [], spawning = { ...cx, spawn: fn => jobs.push(fn(spawning)) };
+  world.exec = async () => ({ stdout: JSON.stringify({ data: [{ agent: "claude", id: "w1", title: "Rebase PR 12", at: Date.now() - 60000, cwd: "/wt/t-1", branch: "t-1-fix" }] }) });
+  world.known = [{ key: "claude", run: ["claude"], installed: true }];
+  find(view.render(), "recent-app").handlers.click({}, spawning);
+  await Promise.all(jobs);
+  const row = find(view.render(), "session-w1");
+  assert.ok(find(row, "session-branch-mark-w1"));
+  assert.match(row.styles.tooltip[0], /in the worktree of t-1-fix/);
+  world.calls = []; jobs.length = 0;
+  row.handlers.click({}, spawning);
+  await Promise.all(jobs);
+  assert.deepEqual(world.calls, [["tab.new", { space: "app", folder: "/wt/t-1", argv: ["claude", "--resume", "w1"], name: "Rebase PR 12" }]]);
   localStorage.setItem("spaces.recent", "[]");
 });

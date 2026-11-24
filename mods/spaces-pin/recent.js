@@ -10,11 +10,11 @@ export function ago(at, now = Date.now()) {
   return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.round(minutes / 60)}h` : `${Math.round(minutes / 1440)}d`;
 }
 
-// An open agent is in a conversation already: for each one, its kind's newest conversation is left out.
+// An open agent is in a conversation already: for each one, its kind's newest conversation in its folder is left out.
 export function closedSessions(sessions, agents) {
-  const open = {};
-  for (const a of agents) open[a.program?.key] = (open[a.program?.key] ?? 0) + 1;
-  return sessions.filter(session => !(open[session.agent]-- > 0));
+  const open = {}, key = (agent, cwd) => `${agent}\n${cwd ?? ""}`;
+  for (const a of agents) open[key(a.program?.key, a.cwd)] = (open[key(a.program?.key, a.cwd)] ?? 0) + 1;
+  return sessions.filter(session => !(open[key(session.agent, session.cwd)]-- > 0));
 }
 
 export function recentHeader(s, open, t, { prefix = "", ring = false, toggle }) {
@@ -31,10 +31,11 @@ export function recentHeader(s, open, t, { prefix = "", ring = false, toggle }) 
 export function sessionRow(s, session, t, { prefix = "", ring = false, resume, pic = null }) {
   return h_flex().id(`${prefix}session-${session.id}`).h(26).px(5).gap(6).min_w(0).flex_none().rounded(6).items_center()
     .cursor_pointer().hover(st => st.bg(t.hover)).role("button")
-    .accessibility_label(`Resume ${session.title}`).tooltip(`${session.title} · ${NAMES[session.agent]} · ${ago(session.at)} ago · Click to resume in a new tab`)
+    .accessibility_label(`Resume ${session.title}`).tooltip(`${session.title} · ${NAMES[session.agent]}${session.branch ? ` · in the worktree of ${session.branch}` : ""} · ${ago(session.at)} ago · Click to resume in a new tab`)
     .on_click((_e, cx) => resume(cx))
     .when(Boolean(pic), el => el.child(pic))
     .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(session.title))
+    .when(Boolean(session.branch), el => el.child(svg("mods/workspace-chrome/branch.svg").id(`${prefix}session-branch-mark-${session.id}`).size(11).flex_none().text_color(t.dim ?? t.muted)))
     .child(div().flex_none().text_size(11).text_color(t.dim ?? t.muted).child(ago(session.at)))
     .when(ring, el => el.relative().child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)));
 }
