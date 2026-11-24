@@ -51,6 +51,7 @@ class JudgeTests(unittest.TestCase):
         passed = {"passed": 2, "failed": [], "pending": 0}
         approved = {"state": "approved", "by": ["ana"], "at": "t1"}
         self.assertIsNone(watch.judge_pr(item("ready"), reading(checks=passed)))
+        self.assertIsNone(watch.judge_pr(item("ready"), reading(checks=passed, review={"state": "none", "by": [], "at": ""})))
         self.assertIsNone(watch.judge_pr(item("ready"), reading(checks=passed, review=approved, draft=True)))
         self.assertIsNone(watch.judge_pr(item("ready"), reading(checks={**passed, "pending": 1}, review=approved)))
         self.assertEqual(watch.judge_pr(item("ready"), reading(checks=passed, review=approved))["title"], "PR #12 is ready to merge")
@@ -144,6 +145,15 @@ class StoreTests(unittest.TestCase):
         watch.save({**broken, "fired": {"title": "x", "body": "", "level": "info", "at": 1}})
         self.assertEqual(watch.remove(SimpleNamespace(id=None, fired=True)), [broken["id"]])
         self.assertEqual(json.dumps(watch.load()), "[]")
+
+    def test_finished_watchers_are_dropped_a_day_after_they_fired(self):
+        self.command("false")
+        saved = watch.load()[0]
+        fired = {"title": "x", "body": "", "level": "info"}
+        watch.save({**saved, "id": "wold", "fired": {**fired, "at": watch.now() - watch.KEPT - 1000}})
+        watch.save({**saved, "id": "wnew", "fired": {**fired, "at": watch.now() - 1000}})
+        watch.tick(False, None)
+        self.assertEqual(sorted(entry["id"] for entry in watch.load()), sorted([saved["id"], "wnew"]))
 
 
 if __name__ == "__main__":

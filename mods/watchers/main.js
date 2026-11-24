@@ -1,7 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Input, InputState } from "gpui-base";
-import { spaces, panes, focused, exec, home, shared, theme, window } from "herdr";
-import { ITEMS, ERROR, UNTIL, active, bySpace, heading, origin, waitingFor, facts, ago } from "./watchers-model.js";
+import { spaces, panes, focused, agents, exec, home, shared, theme, window } from "herdr";
+import { ITEMS, ERROR, UNTIL, active, bySpace, heading, origin, waitingFor, facts, ago, tellTarget } from "./watchers-model.js";
 import { syncWatchers } from "./watchers-tracker.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 
@@ -15,11 +15,12 @@ export default class Watchers extends View {
     this.ref = InputState.new({ placeholder: "Number or link (empty: this branch's)" });
     this.name = InputState.new({ placeholder: "What you wait for, e.g. Deploy is live" });
     this.command = InputState.new({ placeholder: "curl -sf https://example.com/health" });
-    for (const input of [this.ref, this.name, this.command]) input.on("submit", (_e, cx) => this.add(cx));
+    this.then = InputState.new({ placeholder: "Then tell the agent… (optional)" });
+    for (const input of [this.ref, this.name, this.command, this.then]) input.on("submit", (_e, cx) => this.add(cx));
     cx.timer.every(30000, cx => cx.notify());
   }
 
-  close() { this.ref.release(); this.name.release(); this.command.release(); }
+  close() { this.ref.release(); this.name.release(); this.command.release(); this.then.release(); }
 
   folder() {
     const space = spaces().find(space => space.active);
@@ -27,6 +28,12 @@ export default class Watchers extends View {
     const tab = space.tabs.find(tab => tab.active)?.id, at = focused();
     const members = panes().filter(pane => pane.tab === tab && pane.cwd);
     return members.find(pane => pane.pane === at?.pane)?.cwd || members[0]?.cwd || space.folder || null;
+  }
+
+  target() {
+    const space = spaces().find(space => space.active);
+    if (!space || space.machine) return null;
+    return tellTarget(agents(), focused(), space.tabs.find(tab => tab.active)?.id);
   }
 
   job(key, args, cx, done) {
@@ -42,15 +49,19 @@ export default class Watchers extends View {
 
   add(cx) {
     const cwd = this.folder() || home();
+    const then = this.then.value().trim(), target = this.target();
+    if (then && !target) { this.problem = "No agent here to tell. Focus the agent's terminal, then add the watcher."; cx.notify(); return; }
+    const tell = then ? ["--then", then, "--terminal", target.address] : [];
     if (this.kind === "pr") {
       const ref = this.ref.value().trim();
-      this.job("add", ["pr", ...(ref ? [ref] : []), "--until", this.until, "--cwd", cwd], cx, () => { this.ref.set_value(""); this.adding = false; });
+      this.job("add", ["pr", ...(ref ? [ref] : []), "--until", this.until, "--cwd", cwd, ...tell], cx,
+        () => { this.ref.set_value(""); this.then.set_value(""); this.adding = false; });
       return;
     }
     const name = this.name.value().trim(), command = this.command.value().trim();
     if (!name || !command) { this.problem = "Give the watcher a name and a command."; cx.notify(); return; }
-    this.job("add", ["command", "--name", name, "--cwd", cwd, ...(this.mode === "changes" ? ["--changes"] : []), "--", command], cx,
-      () => { this.name.set_value(""); this.command.set_value(""); this.adding = false; });
+    this.job("add", ["command", "--name", name, "--cwd", cwd, ...tell, ...(this.mode === "changes" ? ["--changes"] : []), "--", command], cx,
+      () => { this.name.set_value(""); this.command.set_value(""); this.then.set_value(""); this.adding = false; });
   }
 
   open(url) {
@@ -62,7 +73,7 @@ export default class Watchers extends View {
     const t = theme(), items = shared(ITEMS) ?? [], now = Date.now();
     const waiting = active(items), finished = items.filter(item => item.fired);
     const groups = bySpace(items, spaces(), panes());
-    const adding = this.adding ?? !items.length, folder = this.folder();
+    const adding = this.adding ?? !items.length, folder = this.folder(), target = adding ? this.target() : null;
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action, selected = false) => Button.new(id).h(26).px(8).flex_none()
       .flex().items_center().justify_center().rounded(6).text_size(11.5)
@@ -92,6 +103,10 @@ export default class Watchers extends View {
           .child(choice("watch-mode-changes", "Output changes", "Tell me when the command prints something different", this.mode === "changes", () => { this.mode = "changes"; })))
         .child(div().text_size(11).text_color(t.muted).whitespace_normal()
           .child(`Runs with sh every minute${folder ? ` in ${folder.split("/").pop()}` : ""}, stopped after a minute.`)))
+      .child(field(this.then, "Message for the agent when it happens"))
+      .child(div().text_size(11).text_color(t.muted).whitespace_normal()
+        .child(target ? `Sent to ${target.program?.name ?? "the agent"} in this tab with the outcome, so it can carry on.`
+          : "No agent in this tab to tell. Focus an agent's terminal to send it a follow-up."))
       .child(h_flex().gap(6)
         .child(button("watch-add", this.busy.has("add") ? "Checking…" : "Watch", cx => this.add(cx)).bg(t.solid).text_color(t.solid_foreground))
         .when(Boolean(items.length), el => el.child(button("watch-cancel", "Cancel", cx => { this.adding = false; this.problem = null; cx.notify(); }))));

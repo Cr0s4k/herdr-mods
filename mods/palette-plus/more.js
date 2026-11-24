@@ -82,6 +82,7 @@ export function more() {
     }
     list.push(command("Review", "Open Changes + terminal", "tabs-show.review", "review diff git commit"));
     list.push(command("Review", "Open on GitHub", "tabs-show.github", "browser repository pull request"));
+    if (features.watchers !== false) list.push(command("Review", "Watch this branch's pull request", "tabs-show.watch-pr", "watcher notify tell me wait review approved changes requested"));
   }
 
   if (shown(root, "spaces-pin")) {

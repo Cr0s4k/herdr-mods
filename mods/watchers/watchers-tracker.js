@@ -32,6 +32,16 @@ export async function syncWatchers(args = ["tick"], options) {
   return data;
 }
 
+export async function watchBranch(context) {
+  try {
+    if (!context.cwd || context.on) throw new Error("No local project here. Open the Watchers panel and paste the pull request's link.");
+    const { added } = await syncWatchers(["pr", "--until", "review", "--cwd", context.cwd]);
+    notify({ title: `Watching PR #${added.number} for a review`, body: added.title, level: "info", action: { name: "tabs-show.watchers" } });
+  } catch (error) {
+    notify({ title: "Can't watch the pull request", body: error.message || String(error), level: "error" });
+  }
+}
+
 export class WatchersTracker {
   start(cx) {
     if (checking()) return;

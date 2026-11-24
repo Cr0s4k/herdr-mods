@@ -20,6 +20,7 @@ herdr-watch remove <id>
 ```
 
 - `--then "<message>"` sends you that message in this terminal when the wait ends, after the outcome ("PR #42 approved"). Use it only when the user asked for a follow-up, and write the message as the instruction you will need then, for example `--then "Merge PR #42 with gh pr merge --squash, then pull main."`. A pull request watcher also ends when the pull request is closed, or for `ready` when something blocks it, so word the message for either outcome.
+- `ready` always needs an approval. On a repository where nobody reviews it never comes: use `--until checks` there.
 - `--every <seconds>` changes how often it checks (default 60, at least 15). `--cwd <folder>` checks from another folder.
 - A command watcher runs the command with `sh` from the current folder, for at most a minute per check. It ends when the command exits 0, or with `--changes` when its output differs from the first run. Keep the command read-only and quick.
 - Every command prints JSON. `{"error": "… already. Nothing to wait for."}` means the wait is already over: tell the user the outcome instead.

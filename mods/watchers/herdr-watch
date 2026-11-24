@@ -14,6 +14,7 @@ from pathlib import Path
 
 UNTIL = ("review", "checks", "ready", "merged", "comment")
 PR_FIELDS = "number,title,url,state,isDraft,mergeable,reviewDecision,latestReviews,statusCheckRollup,comments,reviews"
+KEPT = 24 * 3600 * 1000
 FAILED = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 
 
@@ -86,6 +87,9 @@ def read_pr(cwd, ref):
         raise ValueError("GitHub's gh command isn't installed. Install it (brew install gh), then try again.")
     if viewed.returncode:
         problem = (viewed.stderr.strip().splitlines() or ["GitHub didn't answer about the pull request."])[-1]
+        if "not a git repository" in problem:
+            problem = (f"{Path(cwd).name} is not a Git repository. "
+                       "Open a terminal in the project first, or paste the pull request's link.")
         if "Could not resolve" in problem or "no pull requests found" in problem:
             problem = (f"No pull request {ref or 'for this branch'} in {Path(cwd).name}. "
                        "Open a terminal in its project first, or paste the pull request's link.")
@@ -127,7 +131,7 @@ def judge_pr(item, reading):
         if reading["mergeable"] == "CONFLICTING":
             return {"title": f"{name} has conflicts", "body": title, "level": "warning"}
         clear = not counts["pending"] and not counts["failed"]
-        if not reading["draft"] and seen["state"] in ("approved", "none") and clear and reading["mergeable"] == "MERGEABLE":
+        if not reading["draft"] and seen["state"] == "approved" and clear and reading["mergeable"] == "MERGEABLE":
             return {"title": f"{name} is ready to merge", "body": title, "level": "success"}
     return None
 
@@ -221,6 +225,9 @@ def tick(force, only):
         except OSError:
             return
         moment = now()
+        for item in load():
+            if item.get("fired") and moment - item["fired"].get("at", 0) > KEPT:
+                (root / f"{item['id']}.json").unlink(missing_ok=True)
         due = [item for item in load() if not item.get("fired") and (not only or item["id"] == only)
                and (force or moment - item.get("checked", 0) >= item["every"] * 1000 - 2000)]
         with ThreadPoolExecutor(max_workers=8) as pool:

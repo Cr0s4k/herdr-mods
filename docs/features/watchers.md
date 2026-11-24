@@ -11,12 +11,20 @@ app in front. Clicking the toast opens the panel. The tab shows how many are sti
   focused terminal's folder. Pick what to wait for: **Review** (approved, or changes
   requested), **Checks** (its checks finish, passing or failing), **Ready** (approved, checks
   passed and no conflicts; it also ends on what blocks it: requested changes, a failed check or
-  conflicts), **Merged**, or **Comment** (a new comment or review). Every pull request watcher
+  conflicts), **Merged**, or **Comment** (a new comment or review). **Ready** always needs an
+  approval: where nobody reviews, wait for **Checks** instead. Every pull request watcher
   also ends when the pull request merges or is closed. A review that was already there when
   the watch began isn't news; only a newer one counts.
 - **Command**: a name and a shell command, run with `sh` in that folder. It ends when the
   command **exits 0**, or when its **output changes** from the first run. Use it for anything
   else: a deploy answering, a release appearing, a file showing up.
+
+**Then tell the agent** is optional: when the wait ends, that message goes with the outcome to
+the agent in the focused terminal, or to the tab's only agent, so it can carry on ("Merge it,
+then pull main"). A plain shell never gets one.
+
+**Watch this branch's pull request** in the command palette (⇧⌘P) sets a Review watcher for
+the focused folder's branch in one step, without opening the panel.
 
 Watchers are grouped by the space whose folders hold them. The shown space's group comes first
 and is open; the others are folded to one line with their counts (click to open). A watcher of
@@ -24,7 +32,8 @@ a folder no space has open sits under that folder's name.
 
 A waiting watcher shows what it read last (review, checks, draft, conflicts, or the command's
 exit code and last line), when it was checked, **Check now** and **Stop**. Finished ones move
-to the end of their group with their outcome until you **Remove** them or **Clear finished**. A watcher that
+to the end of their group with their outcome until you **Remove** them or **Clear finished**;
+they go by themselves a day after they finished. A watcher that
 can't be read (no network, `gh` logged out) says why and keeps trying.
 
 From a terminal, and for agents through the `herdr-watch` skill:

@@ -7,7 +7,7 @@ import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
 import { LaunchTracker } from "./linear-launches.js";
 import { PipelineTracker } from "./pipeline-tracker.js";
-import { WatchersTracker } from "./watchers-tracker.js";
+import { WatchersTracker, watchBranch } from "./watchers-tracker.js";
 import { ITEMS as WATCHERS, active as watching } from "./watchers-model.js";
 import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
@@ -65,6 +65,8 @@ export default class Tabs extends View {
         else if (command === "pipeline") this.openPipeline();
         else if (command.startsWith("pipeline-")) this.pipelineCommand(command.slice("pipeline-".length), cx);
         else if ((command === "loops" || command === "skills" || command === "watchers") && shared("features")?.[command] === false) continue;
+        else if (command === "watch-pr" && shared("features")?.watchers === false) continue;
+        else if (command === "watch-pr") { track("watchers", "watch-branch"); watchBranch(repositoryContext(spaces(), panes(), focused())); }
         else if (["files", "changes", "show", "loops", "brief", "skills", "watchers", "linear", "plane"].includes(command)) this.togglePanel(command);
       }
     });

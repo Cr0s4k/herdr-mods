@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { active, bySpace, unannounced, repoOf, heading, origin, waitingFor, facts, ago } from "../mods/watchers/watchers-model.js";
+import { active, bySpace, unannounced, repoOf, heading, origin, waitingFor, facts, ago, tellTarget } from "../mods/watchers/watchers-model.js";
 
 const pr = (extra = {}) => ({ id: "w1", kind: "pr", until: "review", ref: "https://github.com/acme/site/pull/12", number: 12,
   title: "Add login", cwd: "/work/site", fired: null, ...extra });
@@ -53,4 +53,14 @@ test("watchers sit under the space that holds their folder, the shown space firs
   assert.deepEqual(groups.map(group => [group.name, group.current, group.items.map(item => item.id)]),
     [["herdr-mods", true, ["w4"]], ["Acme", false, ["w1", "w3", "w2"]], ["site", false, ["w5"]]]);
   assert.deepEqual(bySpace(undefined, spaces, panes), []);
+});
+
+test("a follow-up goes to the focused agent, or the tab's only one, never to a plain terminal", () => {
+  const claude = { address: "t1", tab: "a" }, codex = { address: "t2", tab: "a" }, other = { address: "t3", tab: "b" };
+  assert.equal(tellTarget([claude, codex, other], { terminal: "t2" }, "a"), codex);
+  assert.equal(tellTarget([claude, other], { terminal: "t9" }, "a"), claude);
+  assert.equal(tellTarget([claude, other], { terminal: null }, "a"), claude);
+  assert.equal(tellTarget([claude, codex], { terminal: "t9" }, "a"), null);
+  assert.equal(tellTarget([other], { terminal: "t3" }, "a"), null);
+  assert.equal(tellTarget(undefined, null, "a"), null);
 });

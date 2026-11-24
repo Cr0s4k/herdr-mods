@@ -54,6 +54,12 @@ export function bySpace(items, spaceList, paneList) {
     .sort((a, b) => b.current - a.current || a.name.localeCompare(b.name));
 }
 
+// A follow-up message is typed into a terminal, so only an agent gets one: the focused one, or the tab's only one.
+export function tellTarget(agentList, focus, tab) {
+  const here = (agentList ?? []).filter(agent => agent.tab === tab);
+  return here.find(agent => agent.address === focus?.terminal) ?? (here.length === 1 ? here[0] : null);
+}
+
 export const waitingFor = item => `Waiting for ${WAITS[item.until] ?? item.until}`;
 
 // [text, theme color name] lines of what was read last.
