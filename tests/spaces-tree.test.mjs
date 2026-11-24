@@ -789,12 +789,15 @@ test("a space lists its folder's closed conversations under Recent and resumes o
   assert.equal(find(root, "session-o1"), undefined, "folded until asked");
   const jobs = [], spawning = { ...cx, spawn: fn => jobs.push(fn(spawning)) };
   world.exec = async (command, args) => { world.read = [command, JSON.parse(args[2])]; return { stdout: JSON.stringify({ data: sessions }) }; };
+  world.known = [{ key: "opencode", icon: "icons/opencode.png", tint: false, run: ["opencode"], installed: true }];
   find(root, "recent-app").handlers.click({}, spawning);
   await Promise.all(jobs);
   assert.equal(world.read[0], "python3");
   assert.equal(world.read[1].cwd, view.folder(world.spaces.find(s => s.id === "app")).cwd);
   root = view.render();
   assert.match(text(find(root, "session-o1")), /Review PR 12.*2h/);
+  assert.deepEqual(find(root, "session-o1").nodes[0].styles.w, [14], "each conversation carries its agent's icon");
+  assert.equal(find(root, "session-c1").nodes.length, 2, "an agent Herdr doesn't know has none");
   world.known = [{ key: "opencode", run: ["opencode"], installed: true }];
   world.calls = []; jobs.length = 0;
   find(root, "session-o1").handlers.click({}, spawning);

@@ -68,6 +68,8 @@ export class AgentTree {
     }
   }
 
+  pic(program, t) { return icon(program, t); }
+
   descendants(address, seen = new Set()) {
     if (seen.has(address)) return [];
     seen.add(address);

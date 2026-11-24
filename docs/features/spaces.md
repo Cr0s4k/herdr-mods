@@ -21,7 +21,7 @@ address when they share a tab. **Needs you** leaves them out.
 
 **Recent** closes each space's list. Click it to unfold the last eight conversations held in
 the space's folder that no open agent is in: Claude Code's, Codex's and OpenCode's, newest
-first, each with its title and how long ago it was last used. Click one to resume it in a new
+first, each with its agent's icon, its title and how long ago it was last used. Click one to resume it in a new
 tab of that space (`claude --resume`, `codex resume`, `opencode --session`). The list is read
 when you unfold it and again once a minute while it stays open; which spaces have it unfolded
 survives restarts. An open agent hides its kind's newest conversation, since it is probably in

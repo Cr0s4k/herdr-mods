@@ -28,11 +28,12 @@ export function recentHeader(s, open, t, { prefix = "", ring = false, toggle }) 
     .when(ring, el => el.relative().child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)));
 }
 
-export function sessionRow(s, session, t, { prefix = "", ring = false, resume }) {
+export function sessionRow(s, session, t, { prefix = "", ring = false, resume, pic = null }) {
   return h_flex().id(`${prefix}session-${session.id}`).h(26).px(5).gap(6).min_w(0).flex_none().rounded(6).items_center()
     .cursor_pointer().hover(st => st.bg(t.hover)).role("button")
     .accessibility_label(`Resume ${session.title}`).tooltip(`${session.title} · ${NAMES[session.agent]} · ${ago(session.at)} ago · Click to resume in a new tab`)
     .on_click((_e, cx) => resume(cx))
+    .when(Boolean(pic), el => el.child(pic))
     .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(session.title))
     .child(div().flex_none().text_size(11).text_color(t.dim ?? t.muted).child(ago(session.at)))
     .when(ring, el => el.relative().child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)));

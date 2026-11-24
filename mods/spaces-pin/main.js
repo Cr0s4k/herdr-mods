@@ -751,6 +751,7 @@ export default class Spaces extends View {
           this.recentScript ??= await readTextFile(`${appHome()}/mods/spaces-pin/recent.py`);
           rows = JSON.parse((await exec("python3", ["-c", this.recentScript, JSON.stringify({ cwd })], { on, timeout: 15000 })).stdout).data ?? rows;
         } catch {}
+        try { this.known ??= Object.fromEntries((await knownAgents({ on })).map(agent => [agent.key, agent])); } catch {}
         this.recent[w.id] = { cwd, rows, at: Date.now(), loading: false };
         cx.notify();
       });
@@ -784,7 +785,7 @@ export default class Spaces extends View {
     const rows = open ? closedSessions(this.recent[w.id]?.rows ?? [], here).slice(0, 8) : [];
     return [
       { id: `${prefix}recent-branch-${w.id}`, view: () => recentHeader(w, open, t, { prefix, toggle: cx => this.toggleRecent(w, cx), ring: this.navigable(key, { kind: "recent", w, parent, act: cx => this.toggleRecent(w, cx) }) }) },
-      ...rows.map(session => ({ id: `${prefix}session-branch-${session.id}`, view: () => sessionRow(w, session, t, { prefix, resume: cx => this.resume(w, session, cx),
+      ...rows.map(session => ({ id: `${prefix}session-branch-${session.id}`, view: () => sessionRow(w, session, t, { prefix, pic: this.agents.pic(this.known?.[session.agent], t), resume: cx => this.resume(w, session, cx),
         ring: this.navigable(`session:${w.id}:${session.id}`, { kind: "session", w, parent, act: cx => this.resume(w, session, cx) }) }) })),
     ];
   }
