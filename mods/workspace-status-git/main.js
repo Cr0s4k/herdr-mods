@@ -1,6 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, agents, theme, run, window, keys, exec, shared } from "herdr";
+import { track } from "./usage.js";
 import { parseBranch, remoteGit } from "./sync.js";
 import { brighter } from "./ui.js";
 
@@ -31,6 +32,7 @@ export default class WorkspaceStatus extends View {
   runSync(args, label, cx) {
     const { folder, on } = where();
     if (!folder || this.syncing) return;
+    track("status-bar", "sync");
     this.syncing = label; this.error = null;
     cx.spawn(async cx => {
       try {

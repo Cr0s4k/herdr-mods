@@ -78,10 +78,16 @@ is no telemetry. Three features read credentials on your machine:
 Loops, Skills, the sidebar's Recent row and Pipeline's token counts also read your agents'
 local session files (Claude Code, Codex, OpenCode), read-only.
 
-**A local log.** Pipeline notes which of its buttons you press (the action's name, the task's
-id and status, never a title or text) in `~/.config/herdr-app/pipeline/usage.jsonl`, so you
-can see later what you use: `herdr-pipeline --usage`. It never leaves your computer. Turn it
-off under the tab bar's switches (**Pipeline usage log**), and delete the file whenever you like.
+**A local log.** The mods note what you open and press, so you can see later what you use
+and what you don't. It never leaves your computer.
+
+- The panels, popups and their main actions go in `~/.config/herdr-app/usage/mods.jsonl`: the
+  time, the feature and the action's name (`find-chat`, `resume`), never a title, path or
+  text. `herdr-usage` counts the last 14 days, most used first, and lists what was never used.
+- Pipeline notes which of its buttons you press (the action's name, the task's id and status)
+  in `~/.config/herdr-app/pipeline/usage.jsonl`: `herdr-pipeline --usage`.
+
+Turn both off under the tab bar's switches (**Usage log**), and delete the files whenever you like.
 
 **Agents act on your repositories.** Live Pipeline starts real agents, creates worktrees and
 branches, and merges or pushes when you approve (or by itself, if you turn that on). Try the
@@ -132,6 +138,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/spaces-pin/recent.py`, `recent.js` | The Recent row: reads a folder's Claude Code, Codex and OpenCode conversations and resumes one |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
+| `mods/toggles/usage.js`, `herdr-usage` | The local usage log the mods write to (linked into each as `usage.js`) and the command that counts it |
 | `mods/toggles/` | Feature toggles popup, opened from the tab bar; it sizes itself to its rows (`mods/tabs-show/toggles.js` is a symlink) |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
 | `mods/palette-plus/` | Herdr's command palette, cloned from `frame/palette`, with the mods' actions added (`more.js`) and Pipeline's tasks (`jump.js`) |

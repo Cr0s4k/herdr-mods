@@ -1,6 +1,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, Button, ScrollHandle } from "gpui-base";
 import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { track } from "./usage.js";
 import { ReviewPanes } from "./review.js";
 import { GitHubRepo, repositoryContext } from "./github.js";
 import { BriefTracker } from "./brief-tracker.js";
@@ -59,8 +60,8 @@ export default class Tabs extends View {
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
-        if (command === "review") this.review.open(cx);
-        else if (command === "github") this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
+        if (command === "review") { track("review-panes", "open"); this.review.open(cx); }
+        else if (command === "github") track("github", "open"), this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
         else if (command === "pipeline") this.openPipeline();
         else if (command.startsWith("pipeline-")) this.pipelineCommand(command.slice("pipeline-".length), cx);
         else if ((command === "loops" || command === "skills" || command === "watchers") && shared("features")?.[command] === false) continue;
@@ -72,10 +73,11 @@ export default class Tabs extends View {
   togglePanel(id) {
     const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
     if (panel && !panel.hidden && body?.active === id) run("layout.hide", { id: "panel" });
-    else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
+    else { track(id, "panel"); run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
   }
 
   openPipeline() {
+    track("pipeline", "open");
     const space = spaces().find(space => space.active);
     if (!space) return;
     const existing = panes().find(pane => pane.mod === "pipeline" && space.tabs.some(tab => tab.id === pane.tab));
@@ -220,7 +222,7 @@ export default class Tabs extends View {
       .tooltip(opening ? "Opening Changes and a terminal in this tab…" : reviewHint)
       .accessibility_label(`${reviewLabel}. ${reviewHint}`)
       .hover(s => s.bg(tab && !opening ? t.hover : t.chrome)).on_mouse_down("left", stop)
-      .on_click((_e, cx) => { if (tab && !opening) this.review.open(cx); })
+      .on_click((_e, cx) => { if (tab && !opening) { track("review-panes", "open"); this.review.open(cx); } })
       .child(svg("mods/tabs-show/review.svg").size(15)).child(reviewLabel);
     const repository = repositoryContext(spaces(), panes(), focused());
     const githubEnabled = Boolean(repository.cwd) && !this.github.opening;
@@ -230,7 +232,7 @@ export default class Tabs extends View {
       .tooltip(this.github.opening ? "Opening GitHub in Firefox…" : repository.cwd
         ? `Open this repository in a new Firefox tab\n${repository.cwd}` : "Select a project to open its GitHub repository")
       .hover(s => s.bg(githubEnabled ? t.hover : t.chrome)).on_mouse_down("left", stop)
-      .on_click((_e, cx) => this.github.open(cx, repository, w?.platform))
+      .on_click((_e, cx) => { track("github", "open"); this.github.open(cx, repository, w?.platform); })
       .child(svg("mods/tabs-show/github.svg").size(14)).child("GitHub");
     const togglesButton = Button.new("open-toggles").h(26).px(8).flex_none().flex().items_center().rounded(6)
       .text_color(t.muted).tooltip("Feature toggles").accessibility_label("Feature toggles")

@@ -2,6 +2,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, focused, exec, theme, props, closeOverlay, checking, readTextFile, appHome, shared, home } from "herdr";
+import { track } from "./usage.js";
 import { STORE, annotate, removable, suggested, tags, ago, outcome } from "./model.js";
 
 const ROW = 46;
@@ -23,6 +24,7 @@ export default class WorktreeCleanup extends View {
     this.scroll = ScrollHandle.new();
     this.rows = []; this.ticked = new Set(); this.at = 0; this.failed = {};
     if (checking()) return;
+    track("worktree-cleanup", "open");
     const { cwd, on } = location();
     this.cwd = cwd; this.on = on ?? null;
     if (!cwd) { this.error = "No folder"; return; }
@@ -67,6 +69,7 @@ export default class WorktreeCleanup extends View {
     const paths = this.shown().filter(row => this.ticked.has(row.path) && removable(row)).map(row => row.path);
     if (!paths.length || this.removing) return;
     if (!this.confirming) { this.confirming = true; return cx.notify(); }
+    track("worktree-cleanup", "remove");
     this.confirming = false; this.removing = true; this.note = null;
     cx.spawn(async (cx) => {
       try {

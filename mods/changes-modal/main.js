@@ -1,6 +1,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
 import { spaces, panes, focused, agents, exec, hc, appHome, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
+import { track } from "./usage.js";
 import { iconsReady, fileIcon, light } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageCompare } from "./images.js";
@@ -213,6 +214,7 @@ export default class Changes extends View {
   runSync(args, label, cx) {
     if (!this.root || this.syncing || this.busy) return;
     const root = this.root, on = this.on, context = this.context;
+    track("changes", "sync");
     this.syncing = label; this.note = null;
     cx.spawn(async (cx) => {
       try {
@@ -411,6 +413,7 @@ export default class Changes extends View {
   commit(cx) {
     if (!this.message.trim() || !this.root || this.busy || this.loading || this.context?.key !== key()) return;
     const root = this.root, on = this.on, context = this.context, message = this.message.trim();
+    track("changes", "commit");
     this.busy = true; this.note = null;
     cx.spawn(async (cx) => {
       try {
@@ -433,6 +436,7 @@ export default class Changes extends View {
   }
 
   initViewer(p, cx) {
+    track("changes", "diff");
     this.files = p.files ?? []; this.root = p.root; this.on = p.on; this.hasHead = p.hasHead; this.base = p.base ?? null; this.head = p.head ?? null; this.commit = p.commit ?? null; this.index = p.index ?? 0;
     this.vim = new Motions(); this.scroll = VirtualListScrollHandle.new(); this.fileScroll = VirtualListScrollHandle.new(); this.bodyHeight = 0;
     this.handle.focus();
@@ -484,7 +488,7 @@ export default class Changes extends View {
   }
 
   keepNote(cx) {
-    if (this.noting) this.writeNote(this.noting, this.noteInput.value());
+    if (this.noting) { track("notes", "write"); this.writeNote(this.noting, this.noteInput.value()); }
     this.endNote(cx);
   }
 
@@ -511,6 +515,7 @@ export default class Changes extends View {
       try {
         await loadProcedures((path) => readTextFile(`${appHome()}/${path}`));
         const text = procedure("review-notes", { count: countLabel(notes.length), notes: noteList(notes) });
+        track("notes", copy ? "copy" : "send");
         if (copy) cx.write_to_clipboard(text);
         else {
           const sent = await hc(["send", agent.address, text]);
@@ -697,7 +702,7 @@ export default class Changes extends View {
 
   select(tab, cx) {
     this.tab = tab;
-    if (tab === "history") { this.history ??= new History(this); this.history.load(cx); }
+    if (tab === "history") { track("changes", "history"); this.history ??= new History(this); this.history.load(cx); }
     cx.notify();
   }
 

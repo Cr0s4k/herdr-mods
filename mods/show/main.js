@@ -1,6 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, home, appHome, spaces, panes, agents, theme, run, props, openOverlay, closeOverlay, notify, watchFolder } from "herdr";
+import { track } from "./usage.js";
 import * as fs from "fs/promises";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { ink, spin, watchMotion } from "./ui.js";
@@ -51,6 +52,7 @@ async function sendBack(item) {
   const note = item.note?.trim() ? ` Notes: ${item.note.trim()}` : "";
   const message = `Marked-up screenshot from the Show panel: ${item.path} — read the image and fix what the markup points at.${note}` +
     ` When it's fixed, take a new screenshot of the same view and post it with: herdr-show <screenshot.png> --fixes ${item.id}`;
+  track("show", "send");
   const r = await hc(["send", target, message]);
   if (r.code !== 0) {
     notify({ title: `Couldn't send to ${target}`, body: (r.stderr || r.stdout).trim(), level: "error" });
@@ -117,6 +119,7 @@ export default class Show extends View {
   init(_props, cx) {
     watchMotion(cx);
     this.mode = props()?.editor ? "editor" : "panel";
+    if (this.mode === "editor") track("show", "edit");
     if (this.mode === "panel") bindMoveCommand(this, "show", cx, () => ({ all: this.all }));
     this.size = { width: 360, height: 600 };
     if (this.mode === "editor") return this.initEditor(cx);

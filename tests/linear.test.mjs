@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+// The mods log what is opened through ./usage.js, which these tests leave out with the other imports.
+globalThis.track = (feature, name) => (globalThis.tracked ??= []).push(`${feature}.${name}`);
+
 const contextSource = await readFile(new URL("../mods/skills/model.js", import.meta.url), "utf8");
 const context = await import("data:text/javascript," + encodeURIComponent(contextSource));
 const modelSource = (await readFile(new URL("../mods/pipeline/procedures.js", import.meta.url), "utf8")) + (await readFile(new URL("../mods/linear/model.js", import.meta.url), "utf8")).replace(/^export \{ contextFor \}.*\n/, "").replace(/^import .*;\n/m, "");

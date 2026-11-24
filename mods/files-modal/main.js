@@ -2,6 +2,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, props, openOverlay, closeOverlay, run, keys } from "herdr";
+import { track } from "./usage.js";
 import { iconsReady, fileIcon } from "./icons.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { isImage, stageImage, imageView } from "./images.js";
@@ -274,6 +275,7 @@ export default class Files extends View {
   }
 
   initViewer(p, cx) {
+    track("files", "view");
     this.files = p.files ?? []; this.index = p.index ?? 0; this.vim = new Motions(); this.codeHeight = 0;
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());

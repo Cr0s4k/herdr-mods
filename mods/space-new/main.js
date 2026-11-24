@@ -1,11 +1,13 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { home, spaces, panes, focused, run, theme, props, openOverlay, closeOverlay, shared, setShared } from "herdr";
+import { track } from "./usage.js";
 import { listProjects } from "./projects.js";
 import { ReviewPanes } from "./review.js";
 
 export default class SpaceNew extends View {
   init(_props, cx) {
+    track("space-new", "open");
     this.handle = cx.focus_handle();
     this.handle.focus();
     this.mode = props()?.projects ? "projects" : "menu";

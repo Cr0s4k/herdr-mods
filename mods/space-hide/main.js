@@ -1,10 +1,12 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState } from "gpui-base";
 import { props, spaces, theme, closeOverlay, openOverlay } from "herdr";
+import { track } from "./usage.js";
 import { hiddenSpaces, expireSpaces, hideSpace, restoreSpace, localTime, parseLocalTime, hideChoices } from "./state.js";
 
 export default class SpaceHide extends View {
   init(_props, cx) {
+    track("space-hide", "open");
     this.at = 0;
     this.handle = cx.focus_handle();
     this.handle.focus();

@@ -2,6 +2,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { spaces, panes, focused, terminals, exec, run, theme, props, closeOverlay, checking, readTextFile, appHome, knownAgents } from "herdr";
+import { track } from "./usage.js";
 import { resumeArgs, ago } from "./recent.js";
 import { NAMES, terms, runs, spaceFor, openIn } from "./model.js";
 
@@ -32,6 +33,7 @@ export default class FindChat extends View {
     this.results = []; this.at = 0; this.seq = 0; this.words = [];
     this.everywhere = localStorage.getItem("everywhere") === "1";
     if (checking()) return;
+    track("find-chat", "open");
     const { cwd, on } = location();
     this.on = on ?? null;
     if (!cwd) { this.error = "No folder"; return; }
@@ -81,7 +83,7 @@ export default class FindChat extends View {
     const session = this.results[index], on = this.on;
     if (!session || this.resuming) return;
     const open = openIn(session, terminals(), on);
-    if (open) { run("agent.focus", { terminal: open }); return this.close(); }
+    if (open) { track("find-chat", "go"); run("agent.focus", { terminal: open }); return this.close(); }
     if (session.gone) { this.note = `Its folder is gone, so it can't be resumed: ${session.cwd}`; return cx.notify(); }
     this.resuming = true;
     cx.spawn(async (cx) => {
@@ -92,6 +94,7 @@ export default class FindChat extends View {
         return cx.notify();
       }
       if (!spaces().find(s => s.id === space)?.active) run("space.select", { id: space });
+      track("find-chat", "resume");
       run("tab.new", { space, folder: session.cwd, argv: resumeArgs(agent, session), name: session.title.slice(0, 28) });
       this.close();
     });

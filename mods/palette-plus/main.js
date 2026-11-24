@@ -10,6 +10,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exists, readdir, readFile } from "fs/promises";
 import { appHome, commands, layouts, keys, run, theme, themes, settings, props, closeOverlay, openOverlay, shared, window as win } from "herdr";
+import { track } from "./usage.js";
 import { more, GROUPS as MORE } from "./more.js";
 
 // The list keeps one height while you move: rows and group titles have fixed
@@ -237,6 +238,7 @@ function fuzzy(q, text) {
 export default class Palette extends View {
   init(_props, cx) {
     this.query = "";
+    track("palette", "open");
     this.input = InputState.new({ placeholder: "Type a command…" });
     this.input.on("change", (_e, cx) => { this.query = this.input.value(); this.at = 0; cx.notify(); });
     this.input.on("submit", () => this.go(this.rows()[this.at]?.e));
@@ -265,6 +267,7 @@ export default class Palette extends View {
     this.recent = [e.id, ...this.recent.filter((r) => r !== e.id)].slice(0, 20);
     localStorage.setItem("recent", JSON.stringify(this.recent));
     this.close();
+    track("palette", "run");
     if (e.do) e.do();
     else if (e.name === "mod.clone" && !e.args.name) {
       openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: {

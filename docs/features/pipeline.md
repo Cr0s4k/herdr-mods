@@ -467,7 +467,7 @@ Pipeline notes which of its buttons you press in a file on this computer
 (`~/.config/herdr-app/pipeline/usage.jsonl`: the action, the task's id and status, never a
 title or text). `herdr-pipeline --usage` counts the last 14 days, most pressed first, and lists
 what was never pressed; `--usage 60` looks further back. The tab bar's switches turn the log
-off (**Pipeline usage log**).
+off (**Usage log**).
 
 Saved pipelines nobody can return to are cleared out a minute after Herdr starts and then
 hourly: an example pipeline left alone for a day, and a pipeline whose folder is gone with

@@ -1,5 +1,6 @@
 import { div, svg } from "gpui-kit";
 import { spaces, panes, focused, props, run, notify, nextCommand } from "herdr";
+import { track } from "./usage.js";
 
 const PANELS = {
   files: { mod: "files-pane", name: "Files" },
@@ -33,6 +34,7 @@ export function moveToPane(kind, state, cx) {
   const panel = PANELS[kind], space = spaces().find(s => s.active);
   const tab = space?.tabs.find(t => t.active)?.id;
   if (!panel || !tab || props()?.overlay) return;
+  track(kind, "pane");
   const key = `${tab}:${kind}`;
   if (opening.has(key)) return;
   const all = panes().filter(p => p.tab === tab), existing = all.find(p => p.mod === panel.mod);

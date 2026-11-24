@@ -1,6 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Button, Input, InputState, TextView, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { appHome, spaces, panes, agents, focused, props, exec, hc, readTextFile, theme, knownAgents, run, shared } from "herdr";
+import { track } from "./usage.js";
 import { moveToPaneButton, bindMoveCommand } from "./panel-actions.js";
 import { contextFor, issueKey, issueId, priorityName, statusName, assigneeName, projectName, statusColor, taskFor, targetsFor, startArgs, descriptionBlocks } from "./model.js";
 import { LAUNCHES, PENDING, worktrees, queueLaunch, updateLaunch, retryLaunch } from "./launches.js";
@@ -207,6 +208,7 @@ export default class Linear extends View {
         agent: { key: agent.key, name: agent.name, run: agent.run }, created: Date.now(),
         rows: draft.rows.map(row => ({ id: row.id, key: row.key, title: row.issue.title,
           task: taskFor(row.issue, this.note.value()), status: "queued" })) };
+      track(this.provider, "launch");
       queueLaunch(launch);
       localStorage.setItem("launchAgent", agent.key);
       this.launchId = launch.id; this.draft = null; this.selecting = false; this.picked.clear();
@@ -221,6 +223,7 @@ export default class Linear extends View {
       this.sendError = "The destination is no longer available. Go back and choose an agent again."; cx.notify(); return;
     }
     const task = taskFor(issue, this.note.value());
+    track(this.provider, "send");
     this.sending = true; this.sendError = null; cx.notify();
     cx.spawn(async cx => {
       try {

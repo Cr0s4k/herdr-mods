@@ -1,6 +1,7 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Switch } from "gpui-base";
 import { props, theme, closeOverlay, shared, setShared, layout, run } from "herdr";
+import { track } from "./usage.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -20,7 +21,7 @@ export const FEATURES = [
   ["needsYou", "Needs you", "Filter button at the top of the Spaces sidebar"],
   ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["recent", "Recent conversations", "Closed agent conversations under their space, to resume"],
-  ["usageLog", "Pipeline usage log", "Notes which Pipeline buttons you press, in a file on this computer only"],
+  ["usageLog", "Usage log", "Notes which panels, popups and Pipeline buttons you use, in files on this computer only"],
 ];
 
 const PAD = 8, HEADER = 30, ROW = 48;
@@ -31,6 +32,7 @@ export function popupSize() {
 
 export default class Toggles extends View {
   init(_props, cx) {
+    track("toggles", "open");
     this.handle = cx.focus_handle();
     this.handle.focus();
   }

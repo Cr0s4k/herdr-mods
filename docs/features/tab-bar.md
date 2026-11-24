@@ -23,7 +23,8 @@ of the mods. Everything is on until you switch it off, and changes apply at once
   shows every space.
 - **Terminals in the sidebar**: the terminals listed under their space, after its agents.
 - **Recent conversations**: the Recent row under each space, with its folder's closed conversations.
-- **Pipeline usage log**: the local note of which Pipeline buttons you press (`herdr-pipeline --usage` reads it).
+- **Usage log**: the local note of which panels, popups and actions you use (`herdr-usage` reads it) and which
+  Pipeline buttons you press (`herdr-pipeline --usage`).
 
 Switches live in Herdr's shared state (`features`), so they survive restarts. To add one,
 add a row to `FEATURES` in `mods/toggles/main.js` and check

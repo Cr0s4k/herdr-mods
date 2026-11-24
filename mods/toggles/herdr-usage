@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Count what was opened or pressed in the mods, from the log they keep on this computer. Read-only."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+FEATURES = {
+    "files": "Files panel and dialog", "changes": "Git panel and diff dialog", "notes": "Notes for the agent on a diff",
+    "show": "Show", "brief": "Since you left", "loops": "Loops", "skills": "Skills", "watchers": "Watchers",
+    "linear": "Linear panel", "plane": "Tasks (Plane) panel", "pipeline": "Pipeline", "review-panes": "Changes + terminal",
+    "github": "GitHub button", "palette": "Command palette", "find-file": "Find file", "find-chat": "Find conversation",
+    "worktree-cleanup": "Clean up worktrees", "recent": "Recent conversations in the sidebar", "spaces": "Spaces sidebar",
+    "space-new": "New space menu", "space-hide": "Hide a space", "toggles": "Feature toggles", "status-bar": "Push and pull in the status bar",
+}
+
+
+def home():
+    return Path(os.environ.get("HERDR_APP_HOME") or Path.home() / ".config/herdr-app")
+
+
+def report(days, now):
+    path = home() / "usage" / "mods.jsonl"
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        sys.exit(f"herdr-usage: nothing logged yet at {path}.")
+    counts, last, first = {}, {}, None
+    for line in lines:
+        try:
+            row = json.loads(line)
+            at, feature, name = row["at"] / 1000, str(row["feature"]), str(row["name"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if now - at > days * 86400:
+            continue
+        first = at if first is None else min(first, at)
+        counts.setdefault(feature, {})[name] = counts.get(feature, {}).get(name, 0) + 1
+        last[feature] = max(last.get(feature, 0), at)
+    if not counts:
+        sys.exit(f"herdr-usage: nothing used in the last {days} days.")
+    print(f"Used over the last {days} days (logged since {time.strftime('%Y-%m-%d', time.localtime(first))}):")
+    for feature, names in sorted(counts.items(), key=lambda item: -sum(item[1].values())):
+        parts = ", ".join(f"{name} {count}" for name, count in sorted(names.items(), key=lambda item: -item[1]))
+        print(f"{sum(names.values()):6}  {FEATURES.get(feature, feature):38} last {time.strftime('%Y-%m-%d', time.localtime(last[feature]))}  ({parts})")
+    never = [label for feature, label in FEATURES.items() if feature not in counts]
+    if never:
+        print("\nNever used: " + ", ".join(never))
+    print("\nPipeline's own buttons: herdr-pipeline --usage")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Which panels, popups and actions of the mods were used, and which never. Read-only.")
+    parser.add_argument("days", type=int, nargs="?", default=14, help="how many days to look back (14)")
+    report(parser.parse_args().days, time.time())
+
+
+if __name__ == "__main__":
+    main()

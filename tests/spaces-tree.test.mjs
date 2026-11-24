@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+// The mods log what is opened through ./usage.js, which these tests leave out with the other imports.
+globalThis.track = (feature, name) => (globalThis.tracked ??= []).push(`${feature}.${name}`);
+
 // Run the actual native views against live-data snapshots. Exercise actions
 // and async-free render paths that Herdr's initial mod check can't cover.
 const world = { spaces: [], panes: [], agents: [], terminals: [], calls: [], order: [], width: 268 };

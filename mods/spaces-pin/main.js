@@ -7,6 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, readTextFile, appHome, knownAgents } from "herdr";
+import { track } from "./usage.js";
 import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 import { ink, watchMotion } from "./ui.js";
@@ -557,6 +558,7 @@ export default class Spaces extends View {
 
   // Most recently used first, pinned ones among the pinned; spaces unused for an hour fold.
   tidy() {
+    track("spaces", "tidy");
     const now = Date.now(), sp = spaces();
     this.use(now, sp, panes());
     const quiet = quietSpaces(this.used, sp, now);
@@ -785,6 +787,7 @@ export default class Spaces extends View {
     cx.spawn(async (cx) => {
       const agent = (await knownAgents({ on })).find(a => a.key === session.agent && a.installed);
       if (!agent) return;
+      track("recent", "resume");
       run("tab.new", { space: w.id, folder: session.cwd ?? cwd, argv: resumeArgs(agent, session), name: session.title.slice(0, 28) });
       const had = this.recent[w.id];
       if (had) this.recent[w.id] = { ...had, rows: had.rows.filter(row => row.id !== session.id) };

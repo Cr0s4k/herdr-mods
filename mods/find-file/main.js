@@ -2,6 +2,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { spaces, panes, focused, exec, theme, props, openOverlay, closeOverlay, checking } from "herdr";
+import { track } from "./usage.js";
 import { iconsReady, fileIcon } from "./icons.js";
 import { prepare, rank, terms, highlights } from "./match.js";
 
@@ -59,6 +60,7 @@ export default class FindFile extends View {
     this.loading = true;
     cx.spawn(async (cx) => { await iconsReady; cx.notify(); });
     if (checking()) return;
+    track("find-file", "open");
     const { cwd, on } = location();
     this.on = on ?? null;
     if (!cwd) { this.loading = false; this.error = "No folder"; return; }
@@ -122,6 +124,7 @@ export default class FindFile extends View {
   open(index) {
     const files = this.results.map(r => r.path);
     if (!files[index]) return;
+    track("find-file", "pick");
     this.remember(files[index]);
     const marks = Object.fromEntries(Object.entries(this.marks).map(([p, m]) => [`${this.root}/${p}`, m]));
     this.close();

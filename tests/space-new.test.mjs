@@ -5,6 +5,9 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+// The mods log what is opened through ./usage.js, which these tests leave out with the other imports.
+globalThis.track = (feature, name) => (globalThis.tracked ??= []).push(`${feature}.${name}`);
+
 const world = {};
 function element() {
   let el;
