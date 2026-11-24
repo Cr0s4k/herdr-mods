@@ -292,7 +292,10 @@ nothing to finish.
    branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
    merge state. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
    reads **Waiting for review** rather than **Ready to merge**, even where GitHub requires no
-   review. The setup card's **Pull requests** row offers both this and drafts when a folder is
+   review. With **Rebase on conflicts** (Settings, Delivery) a pull request that conflicts with its base
+   has its agent rebase and push by itself: an idle agent is asked once per conflict, a working
+   one is left to finish first, and a closed one is reopened with the request. The setup card's
+   **Pull requests** row offers this, the approval rule and drafts when a folder is
    first set up, and every pipeline of the folder shares them. With **Open them as drafts** (Settings, Delivery) each pull request opens as a
    draft, or as an ordinary one where the repository's plan has no drafts; **Mark ready** and
    **Back to draft** in the inspector change it without opening GitHub. The card stays on the

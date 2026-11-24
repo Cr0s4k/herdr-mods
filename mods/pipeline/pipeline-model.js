@@ -556,7 +556,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "autoTrust", "quiet", "planner", "implementer"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "autoRebase", "autoTrust", "quiet", "planner", "implementer"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -1264,6 +1264,14 @@ export function reduce(state, action, now = Date.now()) {
     case "tryAuto": if (!next.live) return state; next.tryAuto = !next.tryAuto; event(next, next.tryAuto ? "Try it starts when work is ready for review." : "Try it starts when you ask."); break;
     case "evidence": if (!next.live) return state; next.evidence = !next.evidence; event(next, next.evidence ? "Agents are asked for before and after screenshots." : "Agents are no longer asked for screenshots."); break;
     case "evidencePr": if (!next.live) return state; next.evidencePr = !next.evidencePr; event(next, next.evidencePr ? "Pull requests link the walkthrough page." : "Pull requests don't link the walkthrough page."); break;
+    case "autoRebase": if (!next.live) return state; next.autoRebase = !next.autoRebase; event(next, next.autoRebase ? "A pull request that conflicts has its agent rebase by itself." : "A conflicting pull request waits for you to ask for a rebase."); break;
+    case "rebaseAsked": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "pr" || task.rebaseAsked) return state;
+      task.rebaseAsked = true;
+      event(next, `${task.id} · its agent was asked to rebase the conflicting pull request.`, task.id);
+      break;
+    }
     case "prApproval": if (!next.live) return state; next.prApproval = !next.prApproval; event(next, next.prApproval ? "Pull requests count as ready only once approved." : "Pull requests are ready when GitHub says so."); break;
     case "draftPr": if (!next.live) return state; next.draftPr = !next.draftPr; event(next, next.draftPr ? "Pull requests open as drafts." : "Pull requests open ready for review."); break;
     case "prepare": {
@@ -1376,6 +1384,8 @@ export function reduce(state, action, now = Date.now()) {
       if (!next.live || task?.status !== "pr" || !pr || pr.url !== action.url || !action.status) return state;
       if (JSON.stringify(pr.status ?? null) === JSON.stringify(action.status)) return state;
       task.prs = { ...task.prs, [action.repo]: { ...pr, status: action.status } };
+      // Asked once per conflict: a new one, after this one is gone, may be asked about again.
+      if (task.rebaseAsked && !prConflict(task)) delete task.rebaseAsked;
       break;
     }
     case "agentSeen": {
@@ -1388,7 +1398,7 @@ export function reduce(state, action, now = Date.now()) {
     case "reopen": {
       const task = row(action.id);
       if (!next.live || task?.status !== "pr" || task.reopen || !workspacesOf(task).length) return state;
-      Object.assign(task, { reopen: true, reopenAsk: action.ask ?? null, reopenError: null });
+      Object.assign(task, { reopen: true, reopenAsk: action.ask ?? null, reopenError: null, ...(action.ask === "rebase" ? { rebaseAsked: true } : {}) });
       break;
     }
     case "reopened": {

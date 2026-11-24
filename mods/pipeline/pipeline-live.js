@@ -333,6 +333,16 @@ export class LiveRunner {
     });
   }
 
+  // With Rebase on conflicts, a conflicting pull request's agent is asked once it is idle, and reopened for it when its tab is closed.
+  autoRebase(id, state, task) {
+    if (!state.autoRebase || task.status !== "pr" || task.rebaseAsked || task.reopen || task.discard || ["working", "input"].includes(task.agentState)) return;
+    const conflict = prConflict(task);
+    if (!conflict || !workspacesOf(task).length) return;
+    if (task.agentState === "gone" || !task.terminal) { this.apply(id, { type: "reopen", id: task.id, ask: "rebase" }); return; }
+    this.apply(id, { type: "rebaseAsked", id: task.id });
+    Promise.resolve(this.host.send?.(task.terminal, prConflictRequest(conflict[1].number, task.workspaces?.[conflict[0]]?.target))).catch(() => {});
+  }
+
   reopenAgent(id, state, task, cx) {
     const key = `reopen/${id}/${task.id}`, host = this.host;
     if (this.polling.has(key)) return;
@@ -518,6 +528,7 @@ export class LiveRunner {
       const seen = agentSeen(task, this.host);
       if (seen !== undefined) this.apply(id, { type: "agentSeen", id: task.id, state: seen });
       if (task.reopen) this.reopenAgent(id, state, task, cx);
+      else this.autoRebase(id, state, this.task(id, task.id) ?? task);
     }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) { this.askAdopted(id, state, task, cx); this.watchStall(id, task, cx); this.countUsage(id, state, task, cx); this.readSummary(id, state, task, cx); }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {

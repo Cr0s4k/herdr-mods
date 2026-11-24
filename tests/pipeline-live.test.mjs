@@ -2334,3 +2334,38 @@ test("with Wait for an approval, a pull request nobody approved waits for review
   assert.equal(state.prApproval, true);
   assert.ok(model.PROJECT_SETTINGS.includes("prApproval") && model.PROJECT_SETTINGS.includes("draftPr"), "the folder's pipelines share both");
 });
+
+test("with Rebase on conflicts, a conflicting PR's idle agent is asked once, and a closed one is reopened for it", async () => {
+  const clean = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 1 };
+  let github = { state: "OPEN", status: { ...clean, mergeable: "CONFLICTING", mergeState: "DIRTY" } };
+  const world = prHost(() => github), sent = [], resumed = [];
+  world.host.send = async (terminal, text) => { sent.push([terminal, text]); };
+  world.host.resume = (_context, task, _ws, opening) => { resumed.push(opening); return "tab"; };
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.host.locate = async () => ({ space: "s9", tab: "tb10", terminal: "t10" });
+  const terminal = row(world.state(), "T-1").terminal;
+  world.agents = [{ address: terminal, status: "working" }]; world.panes = [{ terminal }];
+  world.clock(1000); await settle(runner);
+  assert.equal(sent.length, 0, "off until switched on");
+  world.store = { [id]: reduce(world.state(), { type: "autoRebase" }, 0) };
+  await settle(runner);
+  assert.equal(sent.length, 0, "a working agent is left to finish");
+  world.agents = [{ address: terminal, status: "done" }];
+  await settle(runner); await settle(runner);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0][1], /Pull request #12 of this branch conflicts with main/);
+  await settle(runner);
+  assert.equal(sent.length, 1, "asked once per conflict");
+  github = { state: "OPEN", status: clean };
+  world.clock(70000); await settle(runner);
+  assert.equal(row(world.state(), "T-1").rebaseAsked, undefined);
+  github = { state: "OPEN", status: { ...clean, mergeable: "CONFLICTING", mergeState: "DIRTY" } };
+  world.agents = []; world.panes = [];
+  world.clock(140000); await settle(runner); await settle(runner); await settle(runner);
+  assert.equal(resumed.length, 1, "a closed agent is reopened with the request");
+  assert.match(resumed[0].task, /conflicts with main/);
+  assert.equal(row(world.state(), "T-1").terminal, "t10");
+});

@@ -404,7 +404,7 @@ export default class Pipeline extends View {
   rebasePr(task, pr, target, cx) {
     cx.spawn(async cx => {
       const sent = await hc(["send", task.terminal, prConflictRequest(pr.number, target)]).then(result => result.code === 0, () => false);
-      if (sent) this.rebased = task.id; else this.focusAgent(task);
+      if (sent) { this.rebased = task.id; this.act({ type: "rebaseAsked", id: task.id }, cx); } else this.focusAgent(task);
       this.track("prRebase", { task: task.id });
       cx.notify();
     });
@@ -1339,10 +1339,11 @@ export default class Pipeline extends View {
         ...(state.delivery !== "pr" && this.github ? [use("pr", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx),
           "This repository is on GitHub and gh is installed, so finished work can open a pull request instead")] : []),
         change("delivery", "delivery")], chose("delivery", state.delivery)),
-      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval ? ok : plain,
-        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}`, [
+      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval || state.autoRebase ? ok : plain,
+        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}${state.autoRebase ? " · rebases on conflicts" : ""}`, [
         ...(!state.draftPr ? [use("draft", "Open as drafts", cx => this.act({ type: "draftPr" }, cx), "Each pull request opens as a draft; mark it ready from its task when it should be reviewed")] : []),
         ...(!state.prApproval ? [use("approval", "Wait for an approval", cx => this.act({ type: "prApproval" }, cx), "A pull request counts as ready to merge only once someone approved it, even where GitHub requires no review")] : []),
+        ...(!state.autoRebase ? [use("rebase", "Rebase on conflicts", cx => this.act({ type: "autoRebase" }, cx), "When a pull request conflicts with its base, its agent rebases and pushes by itself")] : []),
         change("prs", "delivery")])]),
       ...(state.delivery === "pr" ? [] : [row("after", "After merge", state.afterMerge ? ok : plain, state.afterMerge ?? "Nothing to run", [
         ...(!state.afterMerge && afterHint ? [use("after", `Use ${afterHint}`, cx => { this.afterInput.set_value(afterHint); this.act({ type: "afterMerge", command: afterHint }, cx); },
@@ -1849,6 +1850,8 @@ export default class Pipeline extends View {
         Boolean(state.draftPr), cx => this.act({ type: "draftPr" }, cx), t));
       if (state.delivery === "pr") body.child(this.switchRow("pr-approval", "Wait for an approval", state.prApproval ? "A pull request is ready to merge only once someone approved it" : "A pull request is ready to merge when GitHub says so, approved or not",
         Boolean(state.prApproval), cx => this.act({ type: "prApproval" }, cx), t));
+      if (state.delivery === "pr") body.child(this.switchRow("auto-rebase", "Rebase on conflicts", state.autoRebase ? "A pull request that conflicts has its agent rebase and push by itself, reopening the agent if its tab is closed" : "A conflicting pull request waits for you to ask its agent",
+        Boolean(state.autoRebase), cx => this.act({ type: "autoRebase" }, cx), t));
       if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Link the walkthrough page in the pull request", "Adds one line to the description linking the before and after page. The screenshots themselves stay out of the repository",
         Boolean(state.evidencePr), cx => this.act({ type: "evidencePr" }, cx), t));
       if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
