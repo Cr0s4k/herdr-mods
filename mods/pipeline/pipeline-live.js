@@ -202,7 +202,7 @@ const blockerText = (state, task, blocker) => {
 };
 // What the planner agent reads: the queue, the work already started, and the rules Pipeline keeps whatever it says.
 export function planPrompt(state) {
-  const queued = state.tasks.filter(task => task.status === "queued"), started = state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
+  const queued = state.tasks.filter(task => task.status === "queued" && !task.draft), started = state.tasks.filter(task => [...ACTIVE, "review", "merging", "pr"].includes(task.status));
   const describe = task => [`- ${task.id}: ${task.title}`, `  repositories: ${task.repos.join(", ")} · priority ${task.priority}${task.ticket ? ` · ticket ${task.ticket.key}` : ""}`,
     ...(task.depends.length ? [`  the person has it wait for: ${task.depends.join(", ")}`] : []),
     ...(task.blockers?.length ? [`  blocked by in ${SOURCES[task.ticket?.provider] ?? "its tracker"}: ${task.blockers.map(blocker => blockerText(state, task, blocker)).join("; ")}`] : []),

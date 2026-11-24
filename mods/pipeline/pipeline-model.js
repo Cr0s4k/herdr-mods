@@ -228,11 +228,12 @@ export function implementerFor(state, task) {
 // A task that hands its implementation over waits on a quiet screen for longer.
 export const stallFor = task => task?.implementer ? 3 * STALL : STALL;
 export const plannerTuning = state => ({ model: state.planner?.model ?? null, effort: state.planner?.effort ?? null });
-export const planKey = state => JSON.stringify(state.tasks.filter(task => task.status === "queued").map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
-export const planned = state => state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task));
+const plannable = task => task.status === "queued" && !task.draft;
+export const planKey = state => JSON.stringify(state.tasks.filter(plannable).map(task => [task.id, planSig(task)]).sort((a, b) => a[0].localeCompare(b[0])));
+export const planned = state => state.tasks.every(task => !plannable(task) || task.plan?.sig === planSig(task));
 // A failed plan lets the tasks it was asked about start by priority; only a new or changed task asks again.
 const failedFor = state => state.planning?.status === "failed"
-  && state.tasks.every(task => task.status !== "queued" || task.plan?.sig === planSig(task) || JSON.parse(state.planning.key).some(([id, sig]) => id === task.id && sig === planSig(task)));
+  && state.tasks.every(task => !plannable(task) || task.plan?.sig === planSig(task) || JSON.parse(state.planning.key).some(([id, sig]) => id === task.id && sig === planSig(task)));
 // With the planner agent on, nothing new starts until every queued task is planned, unless planning them failed.
 export const plannerHolds = state => Boolean(state.live && state.planner?.on && !planned(state) && !failedFor(state));
 export function elapsed(ms) {
@@ -377,6 +378,7 @@ export function resetTime(at, now = Date.now()) {
 const limitName = limit => `${limit.agent}'s ${limit.name.replace(/^Weekly /, "weekly ").replace(/^Weekly$/, "weekly")} limit`;
 export const quotaHeld = (state, task = null, now = Date.now()) => state.live ? Boolean(limitHolding(state, task, now)) : state.quota - 8 < state.reserve;
 export function waitingReason(state, task, now = Date.now()) {
+  if (task.draft) return "A draft: it starts only after you queue it";
   const waits = waitsFor(state, task), tasks = waits.filter(wait => wait.kind === "task"), tickets = waits.filter(wait => wait.kind === "ticket");
   if (waits.length) return `Waiting for ${[tasks.length && `${tasks.map(wait => wait.id).join(", ")} to merge`,
     tickets.length && `${tickets.map(wait => wait.id).join(", ")} to close in ${SOURCES[task.ticket?.provider] ?? "its tracker"}`].filter(Boolean).join(" and ")}`;
@@ -459,15 +461,15 @@ function advance(state, task, now) {
 
 function explain(state, picked, now = Date.now()) {
   const said = plain(state, picked, now);
-  if (!state.live || !state.planner?.on || !state.tasks.some(task => task.status === "queued")) return said;
+  if (!state.live || !state.planner?.on || !state.tasks.some(plannable)) return said;
   const planning = state.planning;
-  if (plannerHolds(state)) return `The planner is reading ${count(state.tasks.filter(task => task.status === "queued").length, "queued task")} and the repository.${state.running ? " New agents wait for its plan." : ""}`;
+  if (plannerHolds(state)) return `The planner is reading ${count(state.tasks.filter(plannable).length, "queued task")} and the repository.${state.running ? " New agents wait for its plan." : ""}`;
   if (!planned(state) && planning?.status === "failed") return `The planner couldn't plan: ${planning.error} Tasks start by priority meanwhile.`;
   return `${planning?.summary ?? ""}${picked.length ? ` ${said}` : ""}`.trim();
 }
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 function plain(state, picked, now = Date.now()) {
-  const queued = state.tasks.filter(task => task.status === "queued");
+  const queued = state.tasks.filter(task => task.status === "queued" && !task.draft);
   const held = queued.filter(task => dependencies(state, task).length);
   const ready = queued.filter(task => !dependencies(state, task).length);
   const reviews = state.tasks.filter(needsApproval).length;
@@ -763,8 +765,8 @@ export function reduce(state, action, now = Date.now()) {
       next.created = (next.created ?? 0) + 1;
       if (next.live) {
         const id = `T-${next.created}`;
-        next.tasks.push(liveTask(next, { id, title, description }, "Typed"));
-        event(next, `${id} joined the queue${description ? " · the whole text is in its details" : ""}.`, id);
+        next.tasks.push(liveTask(next, { id, title, description, ...(action.draft ? { draft: true } : {}) }, "Typed"));
+        event(next, action.draft ? `${id} is a draft. It starts only after you queue it.` : `${id} joined the queue${description ? " · the whole text is in its details" : ""}.`, id);
         break;
       }
       const id = `NEW-${next.created}`;
@@ -992,7 +994,7 @@ export function reduce(state, action, now = Date.now()) {
     }
     case "planned": {
       if (!next.live || !next.planner?.on || next.planning?.key !== action.key || action.key !== planKey(next)) return state;
-      const queued = next.tasks.filter(task => task.status === "queued");
+      const queued = next.tasks.filter(plannable);
       const order = [...new Set((action.order ?? []).map(String))].filter(id => queued.some(task => task.id === id));
       for (const task of queued.sort(startOrder({ planner: null }))) if (!order.includes(task.id)) order.push(task.id);
       for (const task of queued) task.plan = { n: order.indexOf(task.id), reason: String(action.reasons?.[task.id] ?? "").slice(0, 300), waits: [], sig: planSig(task) };
@@ -1048,6 +1050,13 @@ export function reduce(state, action, now = Date.now()) {
       const left = (next.imageTrash ?? []).filter(folder => !(action.folders ?? []).includes(folder));
       if (left.length === (next.imageTrash ?? []).length) return state;
       next.imageTrash = left;
+      break;
+    }
+    case "queue": {
+      const task = row(action.id);
+      if (task?.status !== "queued" || !task.draft) return state;
+      delete task.draft;
+      event(next, `${task.id} joined the queue.`, task.id);
       break;
     }
     case "describe": {
@@ -1733,7 +1742,7 @@ export function reduce(state, action, now = Date.now()) {
   }
   const picked = [];
   if (next.running && !plannerHolds(next)) {
-    const candidates = next.tasks.filter(task => task.status === "queued" && dependencies(next, task).length === 0)
+    const candidates = next.tasks.filter(task => task.status === "queued" && !task.draft && dependencies(next, task).length === 0)
       .sort(startOrder(next));
     for (const task of candidates) {
       if (activeTasks(next).length >= next.parallel) break;

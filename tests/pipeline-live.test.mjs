@@ -2408,3 +2408,17 @@ test("a PR task without a terminal has no agent, whatever panes are open", () =>
   assert.equal(live.agentSeen(task, hostOf([{ pane: "p1", mod: "pipeline", terminal: null }])), "gone", "a pane that is no terminal doesn't pass for its agent");
   assert.equal(live.agentSeen({ ...task, terminal: "t1" }, hostOf([{ terminal: "t1" }])), undefined);
 });
+
+test("a draft waits out of the queue's order and the planner's reading until it is queued", () => {
+  let state = reduce(createLive(context, 0), { type: "run" }, 0);
+  state = reduce(state, { type: "create", title: "Add a dark mode toggle", draft: true }, 0);
+  state = reduce(state, { type: "tick" }, 1000);
+  const draft = state.tasks[0];
+  assert.deepEqual([draft.status, draft.draft, activeTasks(state).length], ["queued", true, 0]);
+  assert.match(model.waitingReason(state, draft), /^A draft/);
+  assert.equal(model.planKey(state), "[]");
+  assert.equal(reduce(state, { type: "queue", id: "nope" }, 2000), state);
+  state = reduce(state, { type: "queue", id: draft.id }, 2000);
+  assert.deepEqual([state.tasks[0].draft, state.tasks[0].status], [undefined, "routing"]);
+  assert.equal(reduce(state, { type: "queue", id: draft.id }, 3000), state);
+});

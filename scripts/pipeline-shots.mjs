@@ -26,6 +26,7 @@ const pr = (number, status) => ({ shop: { url: `https://github.invalid/me/shop/p
 const summary = "Changed: Settings reminder covers open and closed browsers, with a test button.\nChecked: all tests, the mirror check and the build pass.\nUnsure: delivery in Firefox could not be verified from here.";
 const TASKS = [
   ["Queued, with a long title that has to wrap over more than one line in the inspector", { status: "queued", description: "In the me page you should be able to set a notification that reminds you to report time." }],
+  ["A draft, added with Details and not queued yet", { status: "queued", draft: true, description: "Follow the system preference first, then remember the person's choice." }],
   ["Needs you in its terminal", { status: "input", workspaces: tree("input"), agent: "OpenCode", tuning: "opencode-go/deepseek-v4.1-flash · max effort" }],
   ["Ready for review, checks passed", { status: "review", workspaces: tree("review"), checked: "passed", summary, agent: "Claude Code", tuning: "opus · xhigh effort" }],
   ["Review refused for uncommitted changes", { status: "review", workspaces: tree("dirty"), error: "The task's worktree has uncommitted changes, so its agent may still be working. Ask it to commit them, or commit them anyway." }],

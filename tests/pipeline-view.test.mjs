@@ -30,7 +30,7 @@ globalThis.__pipelineView = {
   TextareaState: { new: () => globalThis.__pipelineView.InputState.new() },
   ...model, ...geometry, View: class {}, div: native, svg: native, image: native, h_flex: native, v_flex: native,
   Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) }, TextView: { markdown: (id, markdown) => native().id(id).child(markdown.replace(/  \n/g, "\n").replace(/\\(.)/g, "$1")) },
-  InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
+  InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx, event = {}) => handlers[name]?.(event, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => { world.runs.push([name, args]); world.onRun?.(name, args); },
   panes: () => world.panes ?? [], spaces: () => world.spaces ?? [],
   knownAgents: async () => [], exec: async (...args) => args[1]?.[1]?.includes("usage.jsonl") ? (world.tracked ??= []).push(JSON.parse(args[1][4])) && { code: 0, stdout: "" } : world.exec?.(...args) ?? { code: 0, stdout: "" }, focused: () => ({ space: "sp-project" }),
@@ -442,6 +442,32 @@ test("queued live task details are saved when the field loses focus", () => {
   view.details.set_value("Follow the system preference first.");
   view.details.emit("blur", cx);
   assert.equal(row(view, "T-1").description, "Follow the system preference first.");
+});
+
+test("a typed task added with details stays a draft, with its inspector open, until it is queued", () => {
+  const view = setupLive();
+  view.toggleRun(cx);
+  view.title.set_value("Add a dark mode toggle");
+  click(view, "create-draft");
+  let task = row(view, "T-1");
+  assert.deepEqual([task.status, task.draft, view.selected, view.detailsFor, view.title.value()], ["queued", true, "T-1", "T-1", ""]);
+  assert.match(text(find(view.render(cx), "card-T-1") ?? view.render(cx)), /Draft/);
+  assert.equal(find(view.render(cx), "first-T-1"), undefined, "a draft has no place in the order yet");
+  view.details.set_value("Follow the system preference first.");
+  view.details.emit("submit", cx);
+  assert.equal(row(view, "T-1").draft, true, "Enter alone is a new line");
+  view.details.emit("submit", cx, { secondary: true });
+  task = row(view, "T-1");
+  assert.deepEqual([task.draft, task.status, task.description], [undefined, "routing", "Follow the system preference first."]);
+
+  view.title.set_value("Rename the settings page");
+  view.title.emit("submit", cx, { secondary: true });
+  assert.deepEqual([row(view, "T-2").draft, view.selected], [true, "T-2"]);
+  click(view, "queue-T-2");
+  assert.equal(row(view, "T-2").draft, undefined);
+  view.title.set_value("Fix the footer");
+  view.title.emit("submit", cx);
+  assert.equal(row(view, "T-3").draft, undefined, "Enter adds it to the queue as before");
 });
 
 test("a queued live task lists its ticket blockers, picks tasks to wait for, and can start anyway", () => {

@@ -96,6 +96,8 @@ Task cards are 164 wide below 1320 px of window width, 188 up to 1500 and 212 be
 
 `task.images` (`[{path}]`, at most `IMAGES`) is set by `image` and `imageRemove` while a task is queued and has no worktree. The view copies a dropped file (`on_drop`) or the clipboard's PNG (`osascript`, macOS) into `<appHome>/pipeline-images/<random>/`, one folder per task, and refuses on a project with `context.on`. `prompt` lists the paths, and the launch adds the folder to `agentRun`'s extra directories (`--add-dir` for Claude Code and Codex). At the end of `reduce`, a folder that no unfinished task refers to any more goes into `state.imageTrash`; the runner's `forgetImages` deletes it through `host.forget` (only under `<appHome>/pipeline-images/`) and `imagesForgotten` clears it.
 
+`create` with `draft` (Details… beside Add, or the title field's submit with `secondary`) adds a live typed task with `task.draft`: still `queued`, so the queued inspector edits it, but the dispatch loop, `planKey`, `planned` and `planPrompt` skip it and `waitingReason` and the card call it a draft. The view opens its inspector and focuses the details; `queue` (`{id}`, Queue it, or the details field's submit with `secondary`) deletes the flag.
+
 `move` (`{id, delta}`) swaps a queued task with its neighbour in `queueOrder`, then writes `order` on every queued task and clears their `rank`; `startOrder` sorts by `rank`, then `order`, before the planner's order, priority and arrival.
 
 ### Converting an open agent

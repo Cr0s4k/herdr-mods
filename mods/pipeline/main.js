@@ -8,10 +8,11 @@ import { loadProcedures, procedure } from "./procedures.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
 const BAR = 50, CONTROLS = 46, STATUS = 36, ONE_ROW = 1340;
-const SHORTCUTS = [["Space", "Start or pause"], ["N", "New task"], ["↑ ↓ J K", "Walk the tasks"], ["D", "Read the selected task's changes", "live"], ["T", "Try the selected task", "live"],
+const SHORTCUTS = [["Space", "Start or pause"], ["N", "New task"], ["⌘ Enter", "Add the typed task as a draft and write its details; in the details, queue it", "live"], ["↑ ↓ J K", "Walk the tasks"], ["D", "Read the selected task's changes", "live"], ["T", "Try the selected task", "live"],
   ["P", "Tickets from Plane", "live"], ["L", "Tickets from Linear", "live"], ["A", "Example tasks", "simulation"], ["Q", "Next task that needs you"], ["1–9", "Pick an answer"],
   ["Y", "Merge or approve everything waiting"], ["R", "Retry failed tasks"], ["S", "Simulation speed", "simulation"], ["?", "Show these keys"], ["Esc", "Close what is open"]];
-const shortcuts = live => SHORTCUTS.filter(([, , only]) => !only || only === (live ? "live" : "simulation"));
+const chord = (gap = "") => appWindow()?.platform === "macos" ? `⌘${gap}Enter` : `Ctrl${gap || "+"}Enter`;
+const shortcuts = live => SHORTCUTS.filter(([, , only]) => !only || only === (live ? "live" : "simulation")).map(([key, ...rest]) => [key === "⌘ Enter" ? chord(" ") : key, ...rest]);
 const KEYS = Object.fromEntries(["live", "simulation"].map(mode => [mode, shortcuts(mode === "live").map(([key, what]) => `${key} ${what.toLowerCase()}`).join(" · ")]));
 const COMET = ["●", "•", "·", "", "", ""];
 const CHECK_HINTS = [
@@ -96,6 +97,7 @@ function cardStatus(state, task) {
   if (state.live && adoptStep(task)) return adoptStep(task);
   if (state.live && ["merging", "failed", "done", "routing"].includes(task.status)) return labelFor(state, task.status);
   if (task.status === "queued") {
+    if (task.draft) return "Draft";
     const waits = dependencies(state, task);
     if (waits.length) return `Needs ${waits.join(", ")}`;
     if (waitingReason(state, task).startsWith("Held by")) return "Held by usage limit";
@@ -130,7 +132,7 @@ export default class Pipeline extends View {
     this.teamSearch.on("submit", (_e, cx) => this.loadTeams(cx));
     this.title = InputState.new({ placeholder: "New task: type a title and press Enter" });
     this.title.on("change", (_e, cx) => cx.notify());
-    this.title.on("submit", (_e, cx) => this.create(cx));
+    this.title.on("submit", (e, cx) => this.create(cx, Boolean(e?.secondary)));
     this.reply = InputState.new({ placeholder: "Or type your own answer" });
     this.reply.on("change", (_e, cx) => cx.notify());
     this.reply.on("submit", (_e, cx) => this.answer(this.selected, this.reply.value(), cx, true));
@@ -187,6 +189,7 @@ export default class Pipeline extends View {
     this.prepareInput.on("submit", (_e, cx) => this.savePrepare(cx));
     this.teamGuess = null; this.asked = null; this.prepareSuggestions = []; this.demoSkill = null; this.linearWrite = null;
     this.details.on("blur", (_e, cx) => this.saveDetails(cx));
+    this.details.on("submit", (e, cx) => { if (e?.secondary) this.queueDraft(cx); });
     this.mode = this.context.cwd && localStorage.getItem("mode") !== "simulation" ? "live" : "simulation";
     this.confirm = null; this.peek = { key: null, screen: [], diff: [] }; this.sent = null;
     this.repo = null; this.agentChoices = []; this.codexModels = []; this.opencodeModels = []; this.github = false; this.deciding = null;
@@ -763,11 +766,25 @@ export default class Pipeline extends View {
     const next = this.state()?.tasks.find(needsInput);
     if (next) this.inspect(next.id, cx); else this.handle.focus();
   }
-  create(cx) {
+  queueDraft(cx) {
+    const task = this.state()?.tasks.find(task => task.id === this.detailsFor && task.draft);
+    if (!task) return;
+    this.saveDetails(cx);
+    this.act({ type: "queue", id: task.id }, cx);
+    this.handle.focus();
+  }
+  create(cx, draft = false) {
     const title = this.title.value().trim();
     if (!title) { this.handle.focus(); cx.notify(); return; }
     const ref = this.state()?.live && ticketRef(title);
     this.title.set_value("");
+    if (!ref && draft && this.state()?.live) {
+      const before = this.state().tasks.length;
+      this.act({ type: "create", title, draft: true }, cx);
+      const tasks = this.state().tasks;
+      if (tasks.length > before) { this.inspect(tasks.at(-1).id, cx); this.details.focus(); }
+      return;
+    }
     if (!ref) { this.act({ type: "create", title }, cx); return; }
     // A Linear link or key becomes that ticket, so its updates and its pull request link work. Anything that fails leaves the typed task.
     cx.spawn(async cx => {
@@ -977,6 +994,8 @@ export default class Pipeline extends View {
         .child(icon("plus", 13).text_color(t.muted))
         .child(div().flex_1().min_w(0).child(Input.new(this.title).w_full().text_size(12).accessibility_label("New task title")))
         .when(typed.length > TITLE, el => el.child(div().id("pipeline-create-long").flex_none().text_size(11).text_color(t.muted).child("Title + details")))
+        .when(Boolean(typed) && Boolean(state.live) && !ticketRef(typed), el => el.child(this.button("create-draft", "Details…", cx => this.create(cx, true), t, { small: true,
+          hint: `Add it as a draft and write its details first: context, images, model, repositories (${chord()}). It starts only after you queue it` })))
         .when(Boolean(typed), el => el.child(this.button("create", "Add", cx => this.create(cx), t, { small: true, primary: true,
           hint: typed.length > TITLE ? "Add to the queue (Enter). The title is its first sentence or opening words; the whole text goes in its details" : "Add to the queue (Enter)" }))),
       ...(state.live ? [this.ticketsButton(state, t), ...this.outsideButton(state, t), this.statusChip(state, t)]
@@ -1420,7 +1439,7 @@ export default class Pipeline extends View {
       .bg(kind === "comet" ? t.accent : kind === "star" ? t.canvas : selected ? t.selected : t.surface)
       .border_1().border_color(selected ? t.accent : ["failed", "input"].includes(task.status) ? t.blocked : kind === "star" ? t.canvas : kind === "comet" ? t.accent : t.border)
       .text_color(t.foreground).text_size(12).tab_index(0).flex().items_center().justify_center()
-      .accessibility_label(`${task.id}: ${task.title}. ${labelFor(state, task.status)}. ${task.repos.join(", ")}`)
+      .accessibility_label(`${task.id}: ${task.title}. ${task.draft ? "Draft" : labelFor(state, task.status)}. ${task.repos.join(", ")}`)
       .tooltip(task.status === "queued" ? `${task.title}\n${waitingReason(state, task)}` : `${task.title}\n${labelFor(state, task.status)}`)
       .hover(el => el.bg(round ? (kind === "comet" ? t.accent : t.hover) : t.hover).border_color(t.accent)).focus(el => el.border_color(t.accent))
       .on_click((_e, cx) => this.inspect(task.id, cx));
@@ -2079,7 +2098,7 @@ export default class Pipeline extends View {
     const trees = workspacesOf(task), several = task.repos.length > 1, target = targetOf(task) ?? this.repo?.branch ?? "your branch";
     const branch = (trees[0] ?? Object.values(task.planned ?? {})[0])?.branch;
     body.child(this.copyable(`title-${task.id}`, task.title).text_size(18).font_semibold().line_height(1.3));
-    body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : adoptStep(task) ?? labelFor(state, task.status)))
+    body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : task.draft ? "Draft" : adoptStep(task) ?? labelFor(state, task.status)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.agent) body.child(div().id(`pipeline-agent-line-${task.id}`).w_full().min_w(0).text_size(12).line_height(1.45).text_color(t.muted).child(`${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`));
     if (task.error) body.child(this.copyable(`error-${task.id}`, task.error).text_size(12).line_height(1.45).text_color(t.blocked));
@@ -2110,11 +2129,14 @@ export default class Pipeline extends View {
       body.child(Textarea.new(this.details).w_full().h(120).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Details for the agent"));
       body.child(this.label("The title and these details are the agent's first message. Saved when you leave the field.", t));
       this.imagesDetail(body, task, t);
-      body.child(this.label(waitingReason(state, task), t));
+      if (task.draft) body.child(h_flex().gap(8).items_center()
+        .child(this.button(`queue-${task.id}`, "Queue it", cx => this.queueDraft(cx), t, { icon: "plus", primary: true, hint: `Add it to the queue as it is now (${chord()} in the details)` }))
+        .child(div().flex_1().min_w(0).text_size(12).line_height(1.45).text_color(t.muted).child("A draft: no agent starts until you queue it.")));
+      else body.child(this.label(waitingReason(state, task), t));
       if (state.planner?.on && task.plan?.reason && task.plan.sig === planSig(task)) body.child(div().id(`pipeline-plan-reason-${task.id}`).text_size(12).line_height(1.45)
         .child(`Planner: ${task.plan.reason}${task.plan.waits.length ? ` Waits for ${task.plan.waits.join(", ")}.` : ""}`));
       const queue = queueOrder(state), at = queue.findIndex(row => row.id === task.id);
-      body.child(h_flex().gap(6).items_center().flex_wrap().child(this.firstButton(task, t))
+      if (!task.draft) body.child(h_flex().gap(6).items_center().flex_wrap().child(this.firstButton(task, t))
         .child(this.button(`up-${task.id}`, "Move up", cx => this.act({ type: "move", id: task.id, delta: -1 }, cx), t, { disabled: at <= 0, hint: "Start it before the task above it" }))
         .child(this.button(`down-${task.id}`, "Move down", cx => this.act({ type: "move", id: task.id, delta: 1 }, cx), t, { disabled: at < 0 || at >= queue.length - 1, hint: "Start it after the task below it" })));
       this.taskTune(body, state, task, t);

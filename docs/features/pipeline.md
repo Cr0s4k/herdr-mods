@@ -63,7 +63,10 @@ nothing to finish.
 1. Type a task into **New task** and press Enter. A Linear link or key on its own
    (`https://linear.app/…/issue/WEB-171/…`, `WEB-171`) becomes that ticket, read in full,
    so its updates and pull request link work; if Linear can't be read it stays a typed task. Click it to add details for the agent;
-   the title and details are its first message. Under the details, **Images** takes up to
+   the title and details are its first message. While the pipeline runs with a free slot
+   Enter starts the agent at once, so to write the details first press **Details…**
+   (Cmd+Enter, Ctrl+Enter off macOS): the task is added as a draft with its inspector
+   open, and no agent starts until **Queue it** (the same keys in the details field). Under the details, **Images** takes up to
    four screenshots or mockups (PNG, JPEG, GIF, WebP): drop them from Finder, or **Paste
    image** for one on the clipboard (macOS). Pipeline copies them into
    `~/.config/herdr-app/pipeline-images`, lists them in the agent's first message and gives
