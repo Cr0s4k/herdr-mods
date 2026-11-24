@@ -2401,3 +2401,10 @@ test("who merges is one answer that sets how work lands, guessed from the reposi
   assert.equal(model.guessFlow([pr("me"), pr("ana"), pr("me")]).why, "2 people opened its last 3 merged pull requests");
   assert.equal(model.guessFlow([pr("me"), pr("me"), pr("me")]), null, "pull requests one person merges unreviewed say nothing either way");
 });
+
+test("a PR task without a terminal has no agent, whatever panes are open", () => {
+  const task = { status: "pr", terminal: null, repos: ["shop"], workspaces: { shop: { root: "/wt" } } };
+  const hostOf = panes => ({ agents: () => [], terminals: () => [], panes: () => panes });
+  assert.equal(live.agentSeen(task, hostOf([{ pane: "p1", mod: "pipeline", terminal: null }])), "gone", "a pane that is no terminal doesn't pass for its agent");
+  assert.equal(live.agentSeen({ ...task, terminal: "t1" }, hostOf([{ terminal: "t1" }])), undefined);
+});

@@ -69,6 +69,8 @@ const SECTIONS = {
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
 const filterLabel = filter => [SCOPES[filter.scope], filter.team?.name, filter.project?.name].filter(Boolean).join(" · ");
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
+// A branch name inside a button: a long one would be cut at both ends, so it is cut once, at its end.
+const brief = (name, room = 26) => String(name).length > room ? `${String(name).slice(0, room - 2)}…` : String(name);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const stamp = at => { const d = new Date(at), two = n => String(n).padStart(2, "0"); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${two(d.getHours())}:${two(d.getMinutes())}`; };
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
@@ -2089,7 +2091,7 @@ export default class Pipeline extends View {
       if (pane) body.child(this.button(`open-${task.id}`, "Open agent", () => this.showPane(pane), t, { icon: "terminal", hint: "Show its terminal" }));
     }
     if (task.stalled) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(`Its terminal has shown nothing new for ${elapsed(Date.now() - task.stalled)}. Open its agent to see whether it is stuck.`));
-    if (conflicted(task)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${target}`, cx => this.resolve(task, cx), t,
+    if (conflicted(task)) body.child(this.button(`resolve-${task.id}`, `Ask the agent to rebase onto ${brief(target, 12)}`, cx => this.resolve(task, cx), t,
       { icon: "reset", primary: true, hint: "Sends the refusal to its agent, which rebases, resolves the conflicts and stops for review again" }));
     if (uncommitted(task)) body.child(h_flex().gap(8).flex_wrap()
       .when(Boolean(task.terminal), el => el.child(this.button(`ask-commit-${task.id}`, "Ask the agent to commit", cx => this.resolve(task, cx, "commit"), t,
@@ -2177,9 +2179,9 @@ export default class Pipeline extends View {
       else if (task.unchanged) body.child(this.button(`merge-${task.id}`, "Mark it done", cx => this.act({ type: "approve", id: task.id }, cx), t,
         { icon: "check", primary: true, hint: "Closes the task and removes its worktree and branch" }));
       else body.child(state.delivery === "pr"
-        ? this.button(`merge-${task.id}`, several ? `Open pull requests into ${target}` : `Open a pull request into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
+        ? this.button(`merge-${task.id}`, several ? `Open pull requests into ${brief(target, 14)}` : `Open a pull request into ${brief(target, 14)}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
           { icon: "check", primary: !uncommitted(task), hint: `Pushes the branch to origin and opens a pull request with gh${several ? " in each repository the agent changed; each one links the others" : ""}. Refuses while the agent has uncommitted changes.` })
-        : this.button(`merge-${task.id}`, several ? `Merge into ${target} in all ${task.repos.length}` : `Merge into ${target}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
+        : this.button(`merge-${task.id}`, several ? `Merge into ${brief(target)} in all ${task.repos.length}` : `Merge into ${brief(target)}`, cx => this.act({ type: "approve", id: task.id }, cx), t,
           { icon: "check", primary: !conflicted(task) && !uncommitted(task), hint: several ? "Rebases every repository's branch, and fast-forwards them only if all rebased cleanly. Its worktrees and your project folders must have no uncommitted changes."
             : "Rebases onto it and fast-forwards. Its worktree and your project folder must have no uncommitted changes." }));
       if (state.check?.command) body.child(this.button(`recheck-${task.id}`, "Run checks again", cx => this.act({ type: "recheck", id: task.id }, cx), t, { icon: "reset" }));

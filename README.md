@@ -110,6 +110,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Git (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
 | `mods/find-file/` | Find file: the ⇧⌘N popup, and `match.js`, its fzf-style matcher |
+| `scripts/pipeline-shots.mjs` | Screenshots Pipeline's inspector for one made-up task per state, to check its layout by eye |
 | `keys.json`, `scripts/keys.sh` | The shortcuts install adds to Herdr's `keys.json`, and the script that adds them without replacing yours |
 | `mods/changes-modal/` | Herdr's Changes panel, cloned and named Git: the Changes tab lists files, the History tab (`history.js`) lists commits, diffs open in a dialog |
 | `mods/review-pane/` | Git inside a normal pane, sharing the existing view through a symlink |

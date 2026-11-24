@@ -34,6 +34,10 @@ bound that key in that section or gave the action a key already (`scripts/keys.s
   check in place). Pipeline's After merge command (`./install.sh`, in Settings → Delivery)
   installs the merged state from the main checkout; where it isn't set, say in your report
   that the change still needs an install from the main checkout after merging.
+- After changing Pipeline's inspector or cards, look at them: `node scripts/pipeline-shots.mjs <folder>` (after
+  `./install.sh`, with Herdr running) screenshots the inspector for one made-up task per state, with a long
+  branch name and title, and cleans up after itself. It holds Herdr's window for about fifteen seconds. Tests
+  don't see overflow or clipping; these images do. `herdr-app do pipeline.task-<id>` opens one task's inspector.
 - Mods sharing state use `shared(key)` / `setShared(key, value)`; there is no command to set it
   from outside. To test, drop a throwaway mod that calls it in `init` and open it with
   `herdr-app do tab.new '{"name":"t","mod":"<mod>"}'`, then remove both.

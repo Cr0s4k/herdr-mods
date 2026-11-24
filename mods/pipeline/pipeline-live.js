@@ -164,7 +164,8 @@ export function observe(task, host) {
 export function agentSeen(task, host) {
   if (task.status !== "pr" || task.discard || task.reopen || !workspacesOf(task).length) return undefined;
   const agent = host.agents().find(row => row.address === task.terminal);
-  const alive = agent || host.terminals().some(row => row.address === task.terminal && row.state === "live") || host.panes().some(row => row.terminal === task.terminal);
+  // A task without a terminal has no agent; a pane that is no terminal has none either, and must not pass for one.
+  const alive = task.terminal && (agent || host.terminals().some(row => row.address === task.terminal && row.state === "live") || host.panes().some(row => row.terminal === task.terminal));
   const seen = !alive ? "gone" : agent?.status === "working" ? "working" : agent?.status === "blocked" ? "input" : null;
   return seen === (task.agentState ?? null) ? undefined : seen;
 }
