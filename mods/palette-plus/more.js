@@ -62,6 +62,7 @@ export function more() {
   const where = focused();
 
   list.push(command("Panel", "Find file…", "mod.open", "go to file open search fuzzy quick name", { name: "find-file" }));
+  list.push(overlay("Review", "Clean up worktrees…", "git remove delete prune stale old branches merged checkouts", { mod: "worktree-cleanup", width: 860, height: 560 }));
   list.push(command("Agent", "Find conversation…", "mod.open", "search chats sessions history said resume past recent", { name: "find-chat" }));
   if (shown(root, "tabs-show")) {
     const panel = find(root, n => n.id === "panel"), body = find(root, n => n.id === "panel-body");

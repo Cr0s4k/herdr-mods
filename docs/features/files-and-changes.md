@@ -76,6 +76,26 @@ instead of describing each place in its terminal.
   Each of those keeps its own notes, and Send takes all of the checkout's.
 - Unsent notes are dropped after 30 days.
 
+## Clean up worktrees
+
+**Clean up worktrees…** in the [command palette](palette.md) lists the other worktrees of the
+focused pane's repository, so the ones left behind by finished or abandoned work can go
+without guessing what is in them.
+
+- Each row shows the branch, the folder, when it last got a commit, and what removing it
+  would lose, compared with the branch the main checkout is on: **nothing main lacks**, **3
+  commits not in main** (then **pushed**, or **2 not pushed** for commits that exist nowhere
+  else), **4 uncommitted files**, **folder is gone**.
+- It opens with the ones that lose nothing ticked: no commits of their own, or a folder that
+  is already gone. Click a row (or Space) to tick or untick it.
+- A worktree can't be ticked while an unfinished Pipeline task owns it, a terminal is open in
+  it, it is locked, or it has uncommitted or untracked files. Commit or discard those first.
+- **Remove** asks once, then runs `git worktree remove` and `git branch -d` for each, never
+  with force: Git still refuses a worktree with changes, and a branch that isn't merged stays
+  (the row then says so). A folder that is gone is pruned.
+- It doesn't know about squash merges: a branch merged that way shows its commits as not in
+  main. If they are pushed, removing the worktree keeps the branch.
+
 ## Find file
 
 **⇧⌘N** (or the magnifier in the Files header) searches the focused pane's project by file name,

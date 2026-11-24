@@ -19,7 +19,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 |---|---|---|
 | **Pipeline** | Queue tasks, typed or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
-| **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Notes left on a diff's lines go to the agent as one message. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
+| **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Notes left on a diff's lines go to the agent as one message. A dialog lists the repository's worktrees with what removing each would lose, and removes the ticked ones. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
 | **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, recent conversations to resume and a search of everything said in them (⇧⌘F), focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
 | **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
@@ -110,6 +110,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Git (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
+| `mods/worktree-cleanup/` | Clean up worktrees: the dialog, and `cleanup.py`, which reads each worktree's state and removes without forcing Git |
 | `mods/find-chat/` | Find conversation: the ⇧⌘F popup that searches what was said in past conversations and resumes one; the search itself is in `mods/spaces-pin/recent.py` |
 | `mods/find-file/` | Find file: the ⇧⌘N popup, and `match.js`, its fzf-style matcher |
 | `scripts/pipeline-shots.mjs` | Screenshots Pipeline's inspector for one made-up task per state, to check its layout by eye |
@@ -133,7 +134,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
 | `mods/toggles/` | Feature toggles popup, opened from the tab bar; it sizes itself to its rows (`mods/tabs-show/toggles.js` is a symlink) |
 | `mods/space-hide/` | Timed hiding, custom local deadlines and early restoration of spaces |
-| `mods/palette-plus/` | Herdr's command palette, cloned from `frame/palette`, with the mods' actions added (`more.js`) |
+| `mods/palette-plus/` | Herdr's command palette, cloned from `frame/palette`, with the mods' actions added (`more.js`) and Pipeline's tasks (`jump.js`) |
 | `mods/workspace-status-git/` | Herdr's bottom status bar, cloned, with commits to push and pull beside the branch |
 | `mods/changes-modal/sync.js` | Reads the branch's ahead/behind counts, shared with the status bar and review pane through symlinks |
 | `mods/workspace-chrome-minimal/` | Herdr's sidebar header, cloned, without the logo and name; keeps Search and the sidebar toggle |

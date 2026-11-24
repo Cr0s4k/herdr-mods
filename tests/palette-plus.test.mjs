@@ -100,6 +100,8 @@ test("dialogs open centred, and space focus switches both ways", () => {
 test("Find file is listed even without the tab bar, and opens the find-file popup", () => {
   setup({ tabBar: false, sidebar: false });
   assert.deepEqual(titled("Find conversation…").args, { name: "find-chat" });
+  titled("Clean up worktrees…").do();
+  assert.deepEqual(world.overlays.pop(), { kind: "dialog", mod: "worktree-cleanup", width: 860, height: 560 });
   assert.deepEqual(titled("Find file…"), { name: "mod.open", args: { name: "find-file" }, group: "Panel", title: "Find file…", words: "go to file open search fuzzy quick name" });
 });
 
