@@ -22,6 +22,7 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 - **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
   shows every space.
 - **Terminals in the sidebar**: the terminals listed under their space, after its agents.
+- **Recent conversations**: the Recent row under each space, with its folder's closed conversations.
 
 Switches live in Herdr's shared state (`features`), so they survive restarts. To add one,
 add a row to `FEATURES` in `mods/toggles/main.js` and check

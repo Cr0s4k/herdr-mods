@@ -6,13 +6,14 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, nextCommand, readTextFile, appHome, knownAgents } from "herdr";
 import { AgentTree, branch } from "./agent-tree.js";
 import { hiddenSpaces, expireSpaces } from "./hide-state.js";
 import { ink, watchMotion } from "./ui.js";
-import { spacePipeline, pipelineRow, openPipeline } from "./pipeline-row.js";
+import { spacePipeline, pipelineRow, openPipeline, taskStages } from "./pipeline-row.js";
 import { spaceTerminals, terminalRow } from "./terminal-row.js";
 import { touch, quietSpaces, TRACES, sessions } from "./tidy.js";
+import { recentHeader, sessionRow, closedSessions, resumeArgs } from "./recent.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -125,6 +126,9 @@ export default class Spaces extends View {
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Refresh only when the refs could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
+    try { this.recentOpen = new Set(JSON.parse(localStorage.getItem("spaces.recent") ?? "[]")); } catch { this.recentOpen = new Set(); }
+    this.recent = {}; // space -> its folder's conversations at the last read
+    cx.timer.every(5000, (cx) => this.readRecent(cx));
     this.handle = cx.focus_handle();
     this.keyboard = false;
     this.cursor = null;
@@ -188,6 +192,7 @@ export default class Spaces extends View {
       case "enter": case "space":
         if (space) run("space.select", { id: item.w.id });
         else if (item.kind === "pipeline") openPipeline(item.w, item.pipe);
+        else if (item.act) item.act(cx);
         else run("pane.focus", { pane: item.a.pane });
         break;
       case "right":
@@ -728,6 +733,62 @@ export default class Spaces extends View {
     cx.notify();
   }
 
+  folder(w) {
+    const h = this.home(w, this.panes), [on, cwd] = JSON.parse(h.key);
+    return { on, cwd: h.g?.top || cwd };
+  }
+
+  // Read for the spaces whose Recent row is open, again once a minute.
+  readRecent(cx) {
+    for (const w of spaces()) {
+      if (!this.recentOpen.has(w.id)) continue;
+      const { on, cwd } = this.folder(w), had = this.recent[w.id];
+      if (!cwd || had?.loading || (had?.cwd === cwd && Date.now() - had.at < 60000)) continue;
+      this.recent[w.id] = { rows: [], ...had, cwd, loading: true };
+      cx.spawn(async (cx) => {
+        let rows = had?.cwd === cwd ? had.rows : [];
+        try {
+          this.recentScript ??= await readTextFile(`${appHome()}/mods/spaces-pin/recent.py`);
+          rows = JSON.parse((await exec("python3", ["-c", this.recentScript, JSON.stringify({ cwd })], { on, timeout: 15000 })).stdout).data ?? rows;
+        } catch {}
+        this.recent[w.id] = { cwd, rows, at: Date.now(), loading: false };
+        cx.notify();
+      });
+    }
+  }
+
+  toggleRecent(w, cx) {
+    this.recentOpen.has(w.id) ? this.recentOpen.delete(w.id) : this.recentOpen.add(w.id);
+    localStorage.setItem("spaces.recent", JSON.stringify([...this.recentOpen]));
+    this.readRecent(cx);
+    cx.notify();
+  }
+
+  resume(w, session, cx) {
+    const { on, cwd } = this.folder(w);
+    cx.spawn(async (cx) => {
+      const agent = (await knownAgents({ on })).find(a => a.key === session.agent && a.installed);
+      if (!agent) return;
+      run("tab.new", { space: w.id, folder: cwd, argv: resumeArgs(agent, session), name: session.title.slice(0, 28) });
+      const had = this.recent[w.id];
+      if (had) this.recent[w.id] = { ...had, rows: had.rows.filter(row => row.id !== session.id) };
+      cx.notify();
+    });
+  }
+
+  // The Recent row and, when open, the folder's closed conversations.
+  recentItems(w, t, parent, prefix = "") {
+    if (shared("features")?.recent === false) return [];
+    const open = this.recentOpen.has(w.id), key = `recent:${w.id}`, cwd = this.recent[w.id]?.cwd;
+    const here = this.agents.list.filter(a => a.space === w.id && this.panes.find(p => p.pane === a.pane)?.cwd === cwd);
+    const rows = open ? closedSessions(this.recent[w.id]?.rows ?? [], here).slice(0, 8) : [];
+    return [
+      { id: `${prefix}recent-branch-${w.id}`, view: () => recentHeader(w, open, t, { prefix, toggle: cx => this.toggleRecent(w, cx), ring: this.navigable(key, { kind: "recent", w, parent, act: cx => this.toggleRecent(w, cx) }) }) },
+      ...rows.map(session => ({ id: `${prefix}session-branch-${session.id}`, view: () => sessionRow(w, session, t, { prefix, resume: cx => this.resume(w, session, cx),
+        ring: this.navigable(`session:${w.id}:${session.id}`, { kind: "session", w, parent, act: cx => this.resume(w, session, cx) }) }) })),
+    ];
+  }
+
   pipeline(w) {
     return spacePipeline(w, [w.folder, place(w, this.panes)], this.panes);
   }
@@ -741,7 +802,8 @@ export default class Spaces extends View {
     const kids = r.kids.filter(k => !this.attention || k.summary.blocked > 0);
     const pipe = this.attention ? null : this.pipeline(r.w);
     const terms = this.attention ? [] : this.terminals(r.w);
-    const hasChildren = members.length + kids.length + terms.length + (pipe ? 1 : 0) > 0;
+    const recent = this.attention ? [] : this.recentItems(r.w, t, `space:${r.w.id}`);
+    const hasChildren = members.length + kids.length + terms.length + recent.length + (pipe ? 1 : 0) > 0;
     const open = this.attention || (this.expanded[r.w.id] ?? !r.tree);
     const key = `space:${r.w.id}`;
     const cursor = this.navigable(key, { kind: "space", w: r.w, parent, open, hasChildren, toggle: (cx) => this.toggleSpace(r, cx) });
@@ -752,6 +814,7 @@ export default class Spaces extends View {
       ...direct.map(a => ({ id: `agent-branch-${a.address}`, view: () => agent(a) })),
       ...trees.map((wt, n) => ({ id: `worktree-branch-${r.w.id}-${n}`, view: () => this.worktree(r.w, wt, n, t, agent) })),
       ...terms.map(term => ({ id: `term-branch-${term.p.pane}`, view: () => terminalRow(r.w, term, t, { ring: this.navigable(`term:${term.p.pane}`, { kind: "terminal", a: term.p, parent: key }) }) })),
+      ...recent,
       ...kids.map(k => ({ id: `space-branch-${k.w.id}`, view: () => this.spaceTree(k, t, key) })),
     ];
     return v_flex().id(`space-tree-${r.w.id}`).flex_none().min_w(0)
@@ -965,6 +1028,7 @@ export default class Spaces extends View {
         .children(direct.map(agent))
         .children(trees.map((wt, n) => this.worktree(s, wt, n, t, agent, { prefix: "focus-", compact: collapsed })))
         .children(terms.map(term => terminalRow(s, term, t, { prefix: "focus-", compact: collapsed, ring: this.navigable(`term:${term.p.pane}`, { kind: "terminal", a: term.p, parent: null }) })))
+        .when(!collapsed, el => el.children(this.recentItems(s, t, null, "focus-").map(item => item.view())))
         .when(!members.length && !pipe && !terms.length, el => el.child(div().id("spaces-focus-empty").px(8).pt(12).text_size(12).text_color(t.muted)
           .tooltip("No agents in this space.").child(collapsed ? "0" : "No agents in this space."))))
       .when(collapsed, el => el.child(div().id("spaces-focus-expand-sidebar").h(28).flex_none().flex().items_center().justify_center()
@@ -991,6 +1055,7 @@ export default class Spaces extends View {
     this.panes = panes();
     this.lock(sp, this.panes);
     this.agents.update(sp, this.panes);
+    this.agents.tasks = taskStages();
     const attentionCount = this.agents.summary(visible.map(s => s.id)).blocked;
     const ids = new Set(sp.map(p => p.id));
     const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));

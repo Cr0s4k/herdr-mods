@@ -16,6 +16,18 @@ export function spacePipeline(s, folders, ps) {
   return pane || key ? { pane, state: key ? all[key] : null, key } : null;
 }
 
+const STAGES = { testing: "Checks", review: "Review", merging: "Merging", pr: "PR" };
+// Where Pipeline has the task each agent works on, by terminal, so an agent's row says more than Herdr's status can.
+export function taskStages(all = shared(STORE) ?? {}) {
+  const found = new Map();
+  for (const state of Object.values(all)) if (state?.live) for (const task of state.tasks ?? []) {
+    if (!task.terminal || task.status === "done" || task.discard) continue;
+    const failed = task.status === "failed";
+    found.set(task.terminal, { id: task.id, title: task.title, stage: failed ? (task.reason === "checks" ? "Checks failed" : "Stopped") : STAGES[task.status] ?? null, failed });
+  }
+  return found;
+}
+
 export function pipelineSummary(state) {
   const count = (...statuses) => (state?.tasks ?? []).filter(task => statuses.includes(task.status)).length;
   const working = count("routing", "working", "input", "testing", "merging"), queued = count("queued"), review = count("review", "pr"), failed = count("failed");

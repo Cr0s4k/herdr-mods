@@ -1779,7 +1779,7 @@ test("the setup card turns screenshots on, and a task that started without them 
   assert.match(message, /running the project with `npm run dev` \(PIPELINE_PORT=\d{4}/);
   assert.match(message, /as it was at aaaaaaa without losing your work/);
   assert.match(message, /git rev-parse --git-path herdr-evidence/);
-  assert.match(message, /present them on one private page, published with Claude Code's Artifact tool.*how to try it locally \(`npm run dev`, PIPELINE_PORT=\d{4}\).*walkthrough\.url/);
+  assert.match(message, /present them on one page.*how to try it locally \(`npm run dev`, PIPELINE_PORT=\d{4}\).*walkthrough\.url/);
   assert.match(text(view.render(cx)), /Asked\. The page appears here when its turn ends\./);
   assert.equal(find(view.render(cx), "evidence-ask-T-1").styles.disabled[0], true);
   view.act({ type: "summary", id: "T-1", text: "", evidence: { files: ["/g/01-before-a.png"], url: null } }, cx);

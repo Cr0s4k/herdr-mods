@@ -129,11 +129,11 @@ export class AgentTree {
     const state = this.states(a).reduce((best, s) => (RANK[s] > (RANK[best] ?? 0) ? s : best), null);
     const name = sub ? a.name || a.template || a.program?.name || a.address : this.labels.get(a.address);
     const on = sub ? a.address === this.shown : a.focused;
-    const pic = icon(a.program, t);
+    const pic = icon(a.program, t), task = sub ? null : this.tasks?.get(a.address);
     const row = h_flex().id(`${prefix}ag-${a.address}`).h(28).px(5).gap(6).min_w(0).flex_none().rounded(6).items_center()
       .when(compact, el => el.justify_center())
       .cursor_pointer().accessibility_label(`${name}, ${statusName(state)}`)
-      .tooltip(`${name} · ${a.program?.name || "Agent"} · ${statusName(state)} · ${a.address}`)
+      .tooltip([name, task?.title, a.program?.name || "Agent", statusName(state), task?.stage && `Pipeline: ${task.stage}`, a.address].filter(Boolean).join(" · "))
       .when(on, el => el.bg(t.selected))
       .when(!on, el => el.hover(s => s.bg(t.hover)))
       .on_hover((over, cx) => {
@@ -154,6 +154,7 @@ export class AgentTree {
         .text_color(t.muted).hover(s => s.text_color(t.foreground)).tooltip(a.pinned ? "Unpin agent" : "Pin agent in this space")
         .on_click((_e, cx) => { cx.stop_propagation(); run("terminal.pin", { terminal: a.address, pinned: !a.pinned }); this.hovered = null; cx.notify(); })
         .child(svg(`mods/workspace-chrome/${a.pinned ? "pin-off" : "pin"}.svg`).size(12))))
+      .when(!compact && Boolean(task?.stage), el => el.child(div().id(`${prefix}agent-stage-${a.address}`).flex_none().text_size(11).text_color(task.failed ? t.blocked : t.muted).child(task.stage)))
       .child(this.indicator(t, state, true))
       .when(ring, el => el.relative().child(div().absolute().inset_0().rounded(6).border_1().border_color(t.accent)));
     return v_flex().min_w(0).flex_none().child(row)

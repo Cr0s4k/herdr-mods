@@ -19,6 +19,20 @@ you named it) or its folder, with the program running in it beside the name (`we
 Click one to focus its pane. Two with the same name also show their tab number, or their
 address when they share a tab. **Needs you** leaves them out.
 
+**Recent** closes each space's list. Click it to unfold the last eight conversations held in
+the space's folder that no open agent is in: Claude Code's, Codex's and OpenCode's, newest
+first, each with its title and how long ago it was last used. Click one to resume it in a new
+tab of that space (`claude --resume`, `codex resume`, `opencode --session`). The list is read
+when you unfold it and again once a minute while it stays open; which spaces have it unfolded
+survives restarts. An open agent hides its kind's newest conversation, since it is probably in
+it. Conversations held in a Pipeline task's worktree belong to that folder, not the space's:
+reopen those from the task (see [Pipeline](pipeline.md)). **Needs you** and the narrow sidebar
+leave the row out.
+
+An agent that a Pipeline task owns says where Pipeline has the task beside its status:
+**Checks**, **Checks failed**, **Review**, **Merging**, **PR** or **Stopped**. Its tooltip adds
+the task's title. While the agent works or asks, Herdr's own status says enough.
+
 Herdr names a space after its first terminal's live folder, so a `cd` or a new worktree
 renames it. Here a space is locked to the first place it has outside your home folder: it
 takes that repo's (or folder's) name as its own, and the sidebar and the status bar keep
@@ -73,6 +87,6 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 **Ctrl-A E** (or moving left past the first pane) puts the keyboard in the sidebar, with an
 accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
 spaces, their agents and terminals; **→ ←** unfold and fold a space, and **←** on an agent or
-terminal goes back to its space. **Enter** shows the space or focuses the agent or terminal. On a space, **P** pins it, **F**
+terminal goes back to its space. **Enter** shows the space, focuses the agent or terminal, unfolds Recent or resumes a conversation. On a space, **P** pins it, **F**
 focuses it, **H** hides it and **M** opens its menu; **N** adds a space and **T** tidies. **Esc** leaves focus
 mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.

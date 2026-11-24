@@ -58,9 +58,13 @@ source = (await readFile(new URL("../mods/spaces-pin/terminal-row.js", import.me
 source = "const { div, svg, h_flex, run } = globalThis.__spacesNative;\n" + source;
 Object.assign(globalThis.__spacesNative, await import("data:text/javascript," + encodeURIComponent(source)));
 Object.assign(globalThis.__spacesNative, await import("../mods/spaces-pin/tidy.js"));
+source = (await readFile(new URL("../mods/spaces-pin/recent.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+source = "const { div, svg, h_flex } = globalThis.__spacesNative;\n" + source;
+const recent = await import("data:text/javascript," + encodeURIComponent(source));
+Object.assign(globalThis.__spacesNative, recent, { readTextFile: async () => "script", appHome: () => "/home", knownAgents: async () => world.known ?? [] });
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -260,6 +264,15 @@ test("a worktree terminal first in a space keeps the checkout's name and groups 
   const tree = find(root, "worktree-tree-app-0");
   assert.match(text(tree), /t-4-fix/);
   assert.ok(find(tree, "ag-task"));
+  assert.equal(find(tree, "agent-stage-task"), undefined, "an agent no task owns says nothing of Pipeline");
+  sharedState.set(STORE, { "live:x": { live: true, tasks: [{ id: "T-4", title: "Fix the login", status: "pr", terminal: "task" }, { id: "T-5", title: "Old", status: "done", terminal: "main" }] } });
+  root = view.render();
+  assert.equal(text(find(root, "agent-stage-task")), "PR");
+  assert.match(find(root, "ag-task").styles.tooltip[0], /Fix the login · .*Pipeline: PR/);
+  assert.equal(find(root, "agent-stage-main"), undefined, "a finished task leaves its agent alone");
+  sharedState.get(STORE)["live:x"].tasks[0] = { id: "T-4", title: "Fix the login", status: "failed", reason: "checks", terminal: "task" };
+  assert.equal(text(find(view.render(), "agent-stage-task")), "Checks failed");
+  sharedState.delete(STORE);
   assert.equal(find(tree, "ag-main"), undefined);
   assert.ok(find(find(root, "space-tree-app"), "ag-main"));
   click(root, "worktree-app-0");
@@ -585,6 +598,12 @@ test("the sidebar walks spaces and agents with the keyboard", () => {
   key("left");
   assert.equal(view.cursor, "space:app");
   key("end");
+  assert.equal(view.cursor, "recent:other", "the Recent row closes each space's list");
+  key("enter");
+  assert.ok(view.recentOpen.has("other"));
+  key("enter");
+  assert.ok(!view.recentOpen.has("other"));
+  key("up");
   assert.equal(view.cursor, "agent:two");
   key("up");
   world.calls = [];
@@ -754,4 +773,36 @@ test("a space first seen takes its last use from its folder, and one made while 
   view.seed(world.spaces, [], running);
   assert.equal(asked.length, 1);
   assert.ok(view.used.made >= view.born.made);
+});
+
+test("a space lists its folder's closed conversations under Recent and resumes one in a new tab", async () => {
+  const view = setup();
+  assert.deepEqual([recent.ago(0, 59 * 60000), recent.ago(0, 3 * 3600000), recent.ago(0, 49 * 3600000)], ["59m", "3h", "2d"]);
+  const sessions = [{ agent: "claude", id: "c2", title: "Fix the login", at: Date.now() - 120000 }, { agent: "opencode", id: "o1", title: "Review PR 12", at: Date.now() - 7200000 },
+    { agent: "claude", id: "c1", title: "Older work", at: Date.now() - 3 * 86400000 }];
+  assert.deepEqual(recent.closedSessions(sessions, [{ program: { key: "claude" } }]).map(row => row.id), ["o1", "c1"], "an open agent's own conversation is left out");
+  assert.deepEqual(recent.resumeArgs({ run: ["claude", "--yolo"] }, sessions[0]), ["claude", "--yolo", "--resume", "c2"]);
+  assert.deepEqual(recent.resumeArgs({ run: ["codex"] }, { agent: "codex", id: "x" }), ["codex", "resume", "x"]);
+  assert.deepEqual(recent.resumeArgs({ run: ["opencode"] }, { agent: "opencode", id: "ses_1" }), ["opencode", "--session", "ses_1"]);
+  let root = view.render();
+  assert.ok(find(root, "recent-app"));
+  assert.equal(find(root, "session-o1"), undefined, "folded until asked");
+  const jobs = [], spawning = { ...cx, spawn: fn => jobs.push(fn(spawning)) };
+  world.exec = async (command, args) => { world.read = [command, JSON.parse(args[2])]; return { stdout: JSON.stringify({ data: sessions }) }; };
+  find(root, "recent-app").handlers.click({}, spawning);
+  await Promise.all(jobs);
+  assert.equal(world.read[0], "python3");
+  assert.equal(world.read[1].cwd, view.folder(world.spaces.find(s => s.id === "app")).cwd);
+  root = view.render();
+  assert.match(text(find(root, "session-o1")), /Review PR 12.*2h/);
+  world.known = [{ key: "opencode", run: ["opencode"], installed: true }];
+  world.calls = []; jobs.length = 0;
+  find(root, "session-o1").handlers.click({}, spawning);
+  await Promise.all(jobs);
+  assert.deepEqual(world.calls, [["tab.new", { space: "app", folder: world.read[1].cwd, argv: ["opencode", "--session", "ses_1".replace("ses_1", "o1")], name: "Review PR 12" }]]);
+  assert.equal(find(view.render(), "session-o1"), undefined, "a resumed conversation is an agent now");
+  sharedState.set("features", { recent: false });
+  assert.equal(find(view.render(), "recent-app"), undefined);
+  sharedState.delete("features");
+  localStorage.setItem("spaces.recent", "[]");
 });

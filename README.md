@@ -21,7 +21,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
 | **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |
-| **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
+| **Spaces and agents** | One sidebar tree of spaces, their agents and terminals, with pins, a Needs you filter, recent conversations to resume, focus, timed hiding, Tidy and keyboard control. | [spaces.md](docs/features/spaces.md) |
 | **Since you left** | A per-space feed of what agents finished and what they need from you. | [brief.md](docs/features/brief.md) |
 | **Watchers** | Get told when a pull request is reviewed, checked or merged, or when a shell command succeeds. | [watchers.md](docs/features/watchers.md) |
 | **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
@@ -119,6 +119,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `skills/herdr-watch/` | tells agents how to set a watcher with `herdr-watch` instead of polling |
 | `skills/herdr-brief/` | tells agents how to post results, validation and open questions using `herdr-brief` |
 | `mods/spaces-pin/` | Unified Spaces and Agents tree, with pinned spaces, agent statuses and a Needs you filter |
+| `mods/spaces-pin/recent.py`, `recent.js` | The Recent row: reads a folder's Claude Code, Codex and OpenCode conversations and resumes one |
 | `mods/space-new/` | Space creation menu and searchable `~/Projects` picker, sharing the Changes + terminal layout |
 | `mods/menu-pin/` | Herdr's right-click menu, cloned, with Hide, Pin / Unpin and Focus this space |
 | `mods/toggles/` | Feature toggles popup, opened from the tab bar; it sizes itself to its rows (`mods/tabs-show/toggles.js` is a symlink) |

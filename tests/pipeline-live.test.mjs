@@ -2050,7 +2050,7 @@ test("the first message carries the person's instructions and asks for before an
   assert.match(text, /`npm run dev`, with PIPELINE_PORT=4242/);
   assert.match(text, /\/repo\/\.git\/worktrees\/wt\/herdr-evidence/);
   assert.match(text, /01-before-login\.png/);
-  assert.match(text, /- Then present them on one private page.*side by side.*how to try it locally \(`npm run dev`, PIPELINE_PORT=4242\).*Embed the images in the page/);
+  assert.match(text, /- Then present them on one page.*side by side.*how to try it locally \(`npm run dev`, PIPELINE_PORT=4242\).*Artifact tool.*docstash/);
   let saved = reduce(state, { type: "summary", id: "T-1", text: "", evidence: { files: ["/g/01-before-a.png", "/g/01-after-a.png"], url: "https://claude.ai/artifact/1" } }, 0);
   assert.deepEqual(row(saved, "T-1").evidence, { files: ["/g/01-before-a.png", "/g/01-after-a.png"], url: "https://claude.ai/artifact/1" });
   saved = reduce(saved, { type: "cleaned", id: "T-1" }, 0);
