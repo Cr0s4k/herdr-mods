@@ -849,7 +849,10 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.deepEqual([row(view, "T-2").reopen, row(view, "T-2").reopenAsk], [true, "rebase"]);
   view.act({ type: "reopenFailed", id: "T-2", error: null }, cx);
   view.act({ type: "agentSeen", id: "T-2", state: "working" }, cx);
-  assert.match(text(find(view.render(cx), "card-T-2")), /Agent working · Conflicts with main/, "what the agent does comes first, where a long need can't cut it off");
+  assert.match(text(find(view.render(cx), "pr-agent-T-2")), /Agent working\s+Conflicts with main/, "what the agent does comes first, where a long need can't cut it off");
+  assert.ok(find(view.render(cx), "sat-T-2") || !view.animated(), "its card turns like a working one");
+  view.act({ type: "agentSeen", id: "T-2", state: "input" }, cx);
+  assert.match(text(find(view.render(cx), "pr-agent-T-2")), /Needs you\s+Conflicts with main/);
   view.act({ type: "agentSeen", id: "T-2", state: null }, cx);
   view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
     status: { draft: true, mergeable: "MERGEABLE", mergeState: "DRAFT", review: null, failed: 0, failing: [], pending: 0, passed: 2 } }, cx);

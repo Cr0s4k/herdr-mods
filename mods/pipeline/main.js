@@ -1410,18 +1410,24 @@ export default class Pipeline extends View {
     if (kind === "star") card.child(div().id(`pipeline-twinkle-${task.id}`).size(newest ? 9 : 7).rounded(5).bg(color)
       .when(motion, el => el.loop("opacity", { from: 0.55, to: 1, period: 1800 + (task.finished ?? 0) % 7 * 300 })));
     else if (kind !== "comet") {
-      const busy = ACTIVE.includes(task.status) && !asking && motion, linked = kind === "review" && state.live && task.status === "pr" && Boolean(task.prs);
+      const agent = state.live && task.status === "pr" ? task.agentState : null, lead = agent === "working" ? t.accent : agent === "input" ? t.blocked : color;
+      const busy = (agent === "working" || (ACTIVE.includes(task.status) && !asking)) && motion, linked = kind === "review" && state.live && task.status === "pr" && Boolean(task.prs);
       card.child(v_flex().size_full().p(kind === "review" || asking ? 9 : 10).gap(4)
         .child(h_flex().gap(6).items_center()
-          .child(busy ? svg("mods/pipeline/satellite.svg").id(`pipeline-sat-${task.id}`).size(11).flex_none().text_color(color).spin(task.status === "testing" ? 800 : 1500) : dot(color))
+          .child(busy ? svg("mods/pipeline/satellite.svg").id(`pipeline-sat-${task.id}`).size(11).flex_none().text_color(lead).spin(task.status === "testing" ? 800 : 1500) : dot(lead))
           .child(div().text_size(11).font_medium().text_color(t.muted).flex_none().child(task.id))
           .child(div().flex_1())
           .when(!linked && (!state.live || task.repos.length > 1), el => el.child(div().text_size(11).text_color(t.muted).truncate().child(task.repos.join(" + ")))))
         .child(div().text_size(12).font_medium().truncate().child(task.title))
         .child(asking
           ? h_flex().child(div().px(6).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold().flex().items_center().child(cardStatus(state, task)))
-          : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task).tone, t) : t.muted).truncate()
-            .when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
+          : agent === "working" || agent === "input"
+            ? h_flex().id(`pipeline-pr-agent-${task.id}`).gap(6).items_center().min_w(0).text_size(11)
+              .child(agent === "input" ? div().px(6).h(18).flex_none().rounded(4).bg(t.blocked + "26").text_color(t.blocked).font_semibold().flex().items_center().child("Needs you")
+                : div().flex_none().font_medium().text_color(t.accent).child("Agent working"))
+              .child(div().flex_1().min_w(0).truncate().text_color(toneColor(prNeeds(task).tone, t)).child(prNeeds(task).label))
+            : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task).tone, t) : t.muted).truncate()
+              .when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
     if (ACTIVE.includes(task.status) && kind === "card" && !asking && !state.live) wrap.child(div().absolute().left(10).bottom(6).w(cw - 20).h(2).rounded(1).bg(t.raised)
