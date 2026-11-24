@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const modelSource = await readFile(new URL("../mods/brief/model.js", import.meta.url), "utf8");
-const { observe, entriesFor, unreadFor, receipt } = await import("data:text/javascript," + encodeURIComponent(modelSource));
+const { observe, entriesFor, unreadFor, receipt, pipelineOwns, LONG } = await import("data:text/javascript," + encodeURIComponent(modelSource));
 const agent = (status, extra = {}) => ({ address: "t1", space: "one", app: "codex", status, seq: 1, title: "Fix login", ...extra });
 
 test("baseline, unknown, closed and replaced agents never imply successful work", () => {
@@ -151,13 +151,13 @@ test("a brief pane stays bound to its tab and never focuses a reused terminal in
 });
 
 globalThis.__briefTrackerNative = {
-  agents: () => world.agents, appHome: () => "/app",
-  exec: async () => world.result,
+  agents: () => world.agents, terminals: () => world.terminals ?? [], appHome: () => "/app",
+  exec: async (command, args) => { (world.ran ??= []).push(args); return world.result; },
   shared: key => world.values.get(key), setShared: (key, value) => world.values.set(key, value),
 };
 const trackerSource = (await readFile(new URL("../mods/brief/tracker.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const { BriefTracker } = await import("data:text/javascript," + encodeURIComponent(modelSource.replaceAll("export ", "") +
-  "\nconst { agents, appHome, exec, shared, setShared } = globalThis.__briefTrackerNative;\n" + trackerSource));
+  "\nconst { agents, terminals, appHome, exec, shared, setShared } = globalThis.__briefTrackerNative;\n" + trackerSource));
 
 test("the always-mounted tracker skips completed turns and records requests once across redraws", () => {
   world.values = new Map(); world.agents = [agent("working")];
@@ -182,4 +182,41 @@ test("a broken handoff refresh keeps the last successful reports until recovery"
   await tracker.refresh({ notify() {} });
   assert.deepEqual(world.values.get("brief.reports"), []);
   assert.equal(world.values.get("brief.error"), null);
+});
+
+test("a long turn that ends while nobody looks is handed on with when it began; a watched or short one isn't", () => {
+  const start = observe({}, [agent("working")], 1000);
+  assert.deepEqual(observe(start.next, [agent("done", { title: "Fix login", program: { key: "claude" } })], 1000 + LONG).finished,
+    [{ space: "one", terminal: "t1", title: "Fix login", agent: "claude", since: 1000, time: 1000 + LONG }]);
+  assert.deepEqual(observe(start.next, [agent("done")], 999 + LONG).finished, []);
+  assert.deepEqual(observe(start.next, [agent("idle")], 1000 + LONG).finished, []);
+  const asked = observe(start.next, [agent("blocked")], 2000), resumed = observe(asked.next, [agent("working")], 3000);
+  assert.equal(observe(resumed.next, [agent("done")], 1000 + LONG).finished[0].since, 1000);
+  const idle = observe({}, [agent("idle")], 1000), again = observe(idle.next, [agent("working")], 5000);
+  assert.deepEqual(observe(again.next, [agent("done")], 5000 + LONG).finished.map(turn => turn.since), [5000]);
+  assert.deepEqual(observe({}, [agent("done")], 1000 + LONG).finished, []);
+});
+
+test("Pipeline's unfinished tasks are left to Pipeline", () => {
+  const all = { a: { live: true, tasks: [{ terminal: "t1", status: "working" }, { terminal: "t2", status: "done" }, { terminal: "t3", status: "review", discard: true }] }, demo: { tasks: [{ terminal: "t4", status: "working" }] } };
+  assert.deepEqual(["t1", "t2", "t3", "t4"].map(terminal => pipelineOwns(all, terminal)), [true, false, false, false]);
+  assert.equal(pipelineOwns(undefined, "t1"), false);
+});
+
+test("the tracker asks for a brief from the last reply once, with the agent's process, and not for remote, Pipeline or switched-off turns", async () => {
+  const run = async (address, values = []) => {
+    world.values = new Map(values); world.ran = []; world.result = { code: 0, stdout: JSON.stringify({ items: [], warning: null }) };
+    world.terminals = [{ address, cwd: "/shell", foreground: { pid: 41, cwd: "/work" } }];
+    const tracker = new BriefTracker(), real = Date.now;
+    try {
+      Date.now = () => 1000; world.agents = [agent("working", { address })]; tracker.observe();
+      Date.now = () => 1000 + LONG; world.agents = [agent("done", { address, title: "Fix login", program: { key: "claude" } })]; tracker.observe(); tracker.observe();
+    } finally { Date.now = real; }
+    await tracker.refresh({ notify() {} }); await tracker.refresh({ notify() {} });
+    return world.ran.filter(args => args[1] === "wrap").map(args => JSON.parse(args[2]));
+  };
+  assert.deepEqual(await run("t1"), [{ space: "one", terminal: "t1", title: "Fix login", agent: "claude", since: 1000, time: 1000 + LONG, pid: 41, cwd: "/work" }]);
+  assert.deepEqual(await run("mini/t1"), []);
+  assert.deepEqual(await run("t1", [["features", { briefReplies: false }]]), []);
+  assert.deepEqual(await run("t1", [["pipeline.prototype.v1", { a: { live: true, tasks: [{ terminal: "t1", status: "working" }] } }]]), []);
 });

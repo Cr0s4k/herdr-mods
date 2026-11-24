@@ -7,7 +7,8 @@ mark its brief read. Each space has its own read receipts, even when several
 spaces share a project folder.
 
 While Herdr is open on `main-custom`, the toolbar records requests for input
-across spaces. Finishing a turn no longer creates an update. Existing finished-turn
+across spaces. Finishing a turn doesn't create an update by itself (see
+[When the agent leaves no brief](#when-the-agent-leaves-no-brief) for the one case that does). Existing finished-turn
 notices and routine reports whose title and opening sentence announce a commit or
 push are kept in **History**, without adding to the unread count. Reports with
 questions, caveats or reported failures remain in the main feed. The initial agent state
@@ -36,9 +37,27 @@ fallback; ambiguous matches fail instead of using the focused space. The command
 uses local `herdr-app` and `hc` access. Existing agents may need to load the new
 skill before they start posting richer handoffs.
 
+## When the agent leaves no brief
+
+Agents forget to post, and an agent without the skill never does. So when a turn of a minute
+or more ends while you aren't looking at it (Herdr's **done** status) and the agent left no
+brief during it, Herdr makes one from the agent's last reply:
+
+- the tab's title is the brief's title, the reply's first paragraph its summary, and the rest
+  sits behind **Read more**;
+- a reply that ends on a question shows it under **Needs your answer**;
+- its time says **from its last reply**, so you can tell it from a brief the agent wrote.
+
+A turn you watched end leaves nothing: you saw the reply. Neither does a Pipeline task's agent
+(Pipeline reports on those), an agent on another machine, or OpenCode. It works for Claude
+Code, read from the conversation its process has open, and for Codex, read from the
+conversation of the agent's folder that changed during the turn. Only the reply's text is
+read, from the agent's own session file, never the terminal. **Briefs from last replies** in
+the tab bar's switches turns it off.
+
 The panel can **Move to pane** like the other panels. A moved brief remains bound
 to its tab's space. Shared activity and read receipts survive restarts. Handoffs
 are stored atomically under `~/.config/herdr-app/brief/items/`; the panel loads the
 newest 500 handoffs and retains the last 500 observed events across spaces. It
 refreshes handoffs every ten seconds, keeps previous results on errors, and never
-reads terminal transcripts or treats a status indicator as a test result.
+reads the terminal's screen or treats a status indicator as a test result.

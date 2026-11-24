@@ -20,15 +20,29 @@ export const unreadFor = (items, read) => {
   return items.filter(item => !ids.has(item.id));
 };
 
+// A turn this long that ends while nobody is looking gets a brief from the agent's last reply, unless the agent left its own.
+export const LONG = 60000;
+const busy = status => status === "working" || status === "blocked";
+
+// Pipeline reports on its own tasks.
+export function pipelineOwns(all, terminal) {
+  return Object.values(all ?? {}).some(state => state?.live && (state.tasks ?? []).some(task => task.terminal === terminal && task.status !== "done" && !task.discard));
+}
+
 export function observe(previous, agents, time) {
-  const events = [];
+  const events = [], finished = [];
   const next = {};
   for (const agent of agents) {
     const key = `${agent.space}:${agent.address}`;
     const old = previous[key];
-    next[key] = { status: agent.status, app: agent.app };
+    const since = busy(agent.status) ? (old && old.app === agent.app && old.since) || time : null;
+    next[key] = { status: agent.status, app: agent.app, since };
     // First observation is a baseline. Unknown/disappeared agents aren't done.
     if (!old || old.app !== agent.app || old.status === agent.status) continue;
+    // "done" is Herdr's word for finished while you weren't looking; a turn you watched end goes to "idle".
+    if (agent.status === "done" && old.since && time - old.since >= LONG) {
+      finished.push({ space: agent.space, terminal: agent.address, title: agent.title || agent.program?.name || "Agent", agent: agent.program?.key ?? null, since: old.since, time });
+    }
     const blocked = agent.status === "blocked";
     if (!blocked) continue;
     events.push({ id: `activity-${key}-${time}-${agent.seq}`, space: agent.space,
@@ -36,5 +50,5 @@ export function observe(previous, agents, time) {
       title: agent.title || agent.program?.name || "Agent",
       summary: "Your agent is waiting for your input. Open the conversation to reply.", source: "observed" });
   }
-  return { next, events };
+  return { next, events, finished };
 }

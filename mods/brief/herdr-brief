@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -65,6 +66,11 @@ def post(args):
                      "title": args.title.strip(), "summary": args.summary.strip(),
                      "changes": args.change, "tests": args.test, "questions": args.question,
                      "caveats": args.caveat})
+    save(item)
+    return {"id": item["id"], "space": space}
+
+
+def save(item):
     root = store()
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{item['id']}.json"
@@ -74,7 +80,83 @@ def post(args):
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
-    return {"id": item["id"], "space": space}
+
+
+TAIL = 512_000
+
+
+def rows(file):
+    with open(file, "rb") as handle:
+        handle.seek(max(0, file.stat().st_size - TAIL))
+        for line in handle.read().decode("utf-8", "replace").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                yield row
+
+
+def text_of(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n\n".join(part["text"] for part in content if isinstance(part, dict) and isinstance(part.get("text"), str) and part["text"].strip())
+    return ""
+
+
+def claude_reply(turn, home=None):
+    """The last thing the Claude Code running as this process said, from the conversation it has open."""
+    base = Path(home or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        session = json.loads((base / "sessions" / f"{turn['pid']}.json").read_text())
+        file = base / "projects" / re.sub(r"[^A-Za-z0-9]", "-", session["cwd"]) / f"{session['sessionId']}.jsonl"
+        said = [text_of((row.get("message") or {}).get("content")) for row in rows(file) if row.get("type") == "assistant" and not row.get("isSidechain")]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return next((text for text in reversed(said) if text.strip()), None)
+
+
+def codex_reply(turn, home=None):
+    """The last thing Codex said in the conversation of this folder that changed during the turn."""
+    base = Path(home or os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
+    files = sorted((file for file in base.glob("*/*/*/*.jsonl") if file.stat().st_mtime * 1000 >= turn["since"]), key=lambda file: file.stat().st_mtime, reverse=True)
+    for file in files[:20]:
+        with open(file, encoding="utf-8", errors="replace") as handle:
+            try:
+                meta = json.loads(handle.readline()).get("payload") or {}
+            except ValueError:
+                continue
+        if meta.get("cwd") != turn.get("cwd"):
+            continue
+        said = [text_of(row["payload"].get("content")) for row in rows(file)
+                if row.get("type") == "response_item" and isinstance(row.get("payload"), dict) and row["payload"].get("role") == "assistant"]
+        return next((text for text in reversed(said) if text.strip()), None)
+    return None
+
+
+def shape(text):
+    """A reply as a brief: its first paragraph, the rest behind Read more, and a closing question as one to answer."""
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text.strip()) if part.strip()]
+    question = paragraphs.pop() if len(paragraphs) > 1 and paragraphs[-1].endswith("?") and len(paragraphs[-1]) <= 600 else None
+    summary, rest = paragraphs[0], "\n\n".join(paragraphs[1:])
+    return {"summary": summary if len(summary) <= 600 else summary[:600].rstrip() + "…",
+            "changes": [rest if len(rest) <= 6000 else rest[:6000].rstrip() + "…"] if rest else [],
+            "questions": [question] if question else []}
+
+
+def wrap(turn, claude_home=None, codex_home=None):
+    """Leave a brief from the agent's last reply for a turn that ended unseen, unless the agent left one during it."""
+    if any(item["terminal"] == turn["terminal"] and item["time"] >= turn["since"] for item in listing()["items"]):
+        return {"skipped": "The agent left its own brief."}
+    reply = claude_reply(turn, claude_home) if turn.get("agent") == "claude" else codex_reply(turn, codex_home) if turn.get("agent") == "codex" else None
+    if not reply:
+        return {"skipped": "No reply could be read."}
+    item = validate({"id": f"handoff-{time.time_ns()}-{secrets.token_hex(4)}", "space": turn["space"], "terminal": turn["terminal"],
+                     "cwd": turn.get("cwd"), "time": int(turn["time"]), "source": "agent", "kind": "reply", "auto": True,
+                     "title": str(turn.get("title") or "Agent").strip()[:200], "tests": [], "caveats": [], **shape(reply)})
+    save(item)
+    return {"id": item["id"], "space": item["space"]}
 
 
 def listing():
@@ -96,6 +178,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="Read saved handoffs as JSON")
+    wrapping = commands.add_parser("wrap", help="Herdr's own: leave a brief from an agent's last reply")
+    wrapping.add_argument("turn", help="JSON: space, terminal, title, agent, since, time, pid, cwd")
     posting = commands.add_parser("post", help="Leave a handoff for your own space")
     posting.add_argument("--title", required=True)
     posting.add_argument("--summary", required=True)
@@ -105,7 +189,7 @@ def main():
     posting.add_argument("--cwd", help="Task's working folder")
     args = parser.parse_args()
     try:
-        print(json.dumps(listing() if args.command == "list" else post(args)))
+        print(json.dumps(listing() if args.command == "list" else wrap(json.loads(args.turn)) if args.command == "wrap" else post(args)))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(json.dumps({"error": str(error)}))
         return 1

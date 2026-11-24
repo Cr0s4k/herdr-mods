@@ -9,6 +9,8 @@ Before the final reply for substantive work in Herdr, post a short note for the 
 
 In a Herdr Pipeline task (your first message says Pipeline made the worktree), post no brief: the summary file Pipeline asked for is the report, and Pipeline tells the person when the task needs them.
 
+When you post nothing and your turn ends while the person is away, Herdr shows the first paragraph of your final reply instead. A brief you write is better: it says what they can now do, where your reply may open with something else.
+
 Write for the person, not the activity log:
 
 - Use a concrete title such as "Spaces can hide until tomorrow", rather than "Agent finished" or "Changes committed and pushed".

@@ -23,6 +23,8 @@ of the mods. Everything is on until you switch it off, and changes apply at once
   shows every space.
 - **Terminals in the sidebar**: the terminals listed under their space, after its agents.
 - **Recent conversations**: the Recent row under each space, with its folder's closed conversations.
+- **Briefs from last replies**: [Since you left](brief.md#when-the-agent-leaves-no-brief) takes an agent's last
+  reply as a brief when it finishes while you're away and left none.
 - **Usage log**: the local note of which panels, popups and actions you use (`herdr-usage` reads it) and which
   Pipeline buttons you press (`herdr-pipeline --usage`).
 

@@ -64,7 +64,7 @@ export default class Brief extends View {
             .when(expanded && more, el => el.child(section(`changes-${item.id}`, "What changed", item.changes)))
             .child(h_flex().gap(6).items_center()
               .child(div().flex_1().min_w(0).text_size(11.5).text_color(t.muted)
-                .tooltip(`${date.toLocaleString()}${report ? " · Written by your agent" : " · Activity only; no result reported"}`).child(stamp))
+                .tooltip(`${date.toLocaleString()}${item.auto ? " · Taken from the agent's last reply; it left no brief" : report ? " · Written by your agent" : " · Activity only; no result reported"}`).child(item.auto ? `${stamp} · from its last reply` : stamp))
               .when(more, el => el.child(button(`brief-more-${item.id}`, expanded ? "Read less" : "Read more", cx => {
                 if (expanded) this.expanded.delete(item.id); else this.expanded.add(item.id);
                 cx.notify();

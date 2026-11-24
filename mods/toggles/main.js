@@ -21,6 +21,7 @@ export const FEATURES = [
   ["needsYou", "Needs you", "Filter button at the top of the Spaces sidebar"],
   ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["recent", "Recent conversations", "Closed agent conversations under their space, to resume"],
+  ["briefReplies", "Briefs from last replies", "Since you left takes an agent's last reply when it finishes while you're away and left no brief"],
   ["usageLog", "Usage log", "Notes which panels, popups and Pipeline buttons you use, in files on this computer only"],
 ];
 

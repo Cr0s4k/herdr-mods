@@ -75,5 +75,62 @@ class BriefTests(unittest.TestCase):
             brief.validate({**item, "summary": " "})
 
 
+class ReplyTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.home))
+        self.turn = {"space": "one", "terminal": "t1", "title": "Fix login", "agent": "claude", "since": 1000, "time": 90000, "pid": 41, "cwd": "/work/shop"}
+        lines = lambda *rows: "\n".join(json.dumps(row) for row in rows) + "\n"
+        (self.home / "sessions").mkdir()
+        (self.home / "sessions/41.json").write_text(json.dumps({"pid": 41, "sessionId": "abc", "cwd": "/work/shop"}))
+        folder = self.home / "projects/-work-shop"
+        folder.mkdir(parents=True)
+        said = lambda text, **more: {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "hm"}, {"type": "text", "text": text}]}, **more}
+        (folder / "abc.jsonl").write_text(lines(said("An earlier reply."), {"type": "user", "message": {"content": "go on"}},
+                                               said("The login works again.\n\n- The cookie is host-only.\n- Tests pass.\n\nShould I also remove the old flag?"),
+                                               said("A helper's words", isSidechain=True), {"type": "assistant", "message": {"content": [{"type": "tool_use", "input": {}}]}}))
+        day = self.home / "sessions/2026/11/24"
+        day.mkdir(parents=True)
+        (day / "one.jsonl").write_text(lines({"type": "session_meta", "payload": {"id": "cx1", "cwd": "/work/shop"}},
+                                             {"type": "response_item", "payload": {"role": "assistant", "content": [{"type": "output_text", "text": "Cached the lookups."}]}}))
+        (day / "two.jsonl").write_text(lines({"type": "session_meta", "payload": {"id": "cx2", "cwd": "/elsewhere"}},
+                                             {"type": "response_item", "payload": {"role": "assistant", "content": [{"type": "output_text", "text": "Not this one."}]}}))
+
+    def wrap(self, **more):
+        with patch.dict(os.environ, {"HERDR_APP_HOME": str(self.home / "app")}):
+            done = brief.wrap({**self.turn, **more}, self.home, self.home)
+            return done, brief.listing()["items"]
+
+    def test_a_reply_becomes_its_first_paragraph_the_rest_and_a_closing_question(self):
+        done, items = self.wrap()
+        self.assertEqual(done["space"], "one")
+        item = items[0]
+        self.assertEqual((item["title"], item["summary"], item["changes"], item["questions"]),
+                         ("Fix login", "The login works again.", ["- The cookie is host-only.\n- Tests pass."], ["Should I also remove the old flag?"]))
+        self.assertEqual((item["auto"], item["source"], item["terminal"], item["time"], item["tests"]), (True, "agent", "t1", 90000, []))
+        self.assertEqual(brief.shape("Is this what you meant?"), {"summary": "Is this what you meant?", "changes": [], "questions": []})
+        long = brief.shape("x" * 700 + "\n\n" + "y" * 7000)
+        self.assertEqual((len(long["summary"]), len(long["changes"][0])), (601, 6001))
+
+    def test_the_agent_s_own_brief_from_that_turn_wins_and_an_older_one_does_not(self):
+        with patch.dict(os.environ, {"HERDR_APP_HOME": str(self.home / "app")}):
+            own = {"id": "handoff-1-a", "space": "one", "terminal": "t1", "time": 500, "source": "agent", "title": "Old", "summary": "Before this turn.", "changes": [], "tests": [], "questions": []}
+            brief.save(own)
+        self.assertIn("id", self.wrap()[0])
+        with patch.dict(os.environ, {"HERDR_APP_HOME": str(self.home / "app")}):
+            brief.save({**own, "id": "handoff-2-b", "time": 5000})
+        done, items = self.wrap()
+        self.assertEqual(done, {"skipped": "The agent left its own brief."})
+        self.assertEqual(len(items), 3)
+
+    def test_codex_is_read_from_the_folder_s_conversation_and_what_can_t_be_read_is_skipped(self):
+        done, items = self.wrap(agent="codex", since=0)
+        self.assertEqual(items[0]["summary"], "Cached the lookups.")
+        self.assertEqual(self.wrap(agent="codex", since=0, terminal="t2", cwd="/nowhere")[0], {"skipped": "No reply could be read."})
+        self.assertEqual(self.wrap(agent="opencode", terminal="t3")[0], {"skipped": "No reply could be read."})
+        self.assertEqual(self.wrap(pid=99, terminal="t4")[0], {"skipped": "No reply could be read."})
+        self.assertEqual(self.wrap(pid=None, terminal="t5")[0], {"skipped": "No reply could be read."})
+
+
 if __name__ == "__main__":
     unittest.main()
