@@ -30,6 +30,8 @@ test("only what loses nothing is ticked to start with; uncommitted files and loc
   assert.ok(suggested({ ...row({ gone: true, ahead: 3 }), ...plain }));
   assert.ok(!suggested({ ...row({ ahead: 2 }), ...plain }) && removable({ ...row({ ahead: 2 }), ...plain }));
   assert.ok(!suggested({ ...row({ ahead: null }), ...plain }));
+  assert.ok(suggested({ ...row({ ahead: 7, only: 7, pr: 216 }), ...plain }));
+  assert.ok(!suggested({ ...row({ ahead: 7, pr: 216, dirty: 1 }), ...plain }));
   assert.ok(!removable({ ...row({ dirty: 1 }), ...plain }));
   assert.ok(!removable({ ...row({ locked: true }), ...plain }));
 });
@@ -38,6 +40,7 @@ test("each checkout's tags say what is in it", () => {
   const texts = (extra, target = "main") => tags({ ...row(extra), task: null, open: 0, ...extra }, target).map(tag => `${tag.tone}:${tag.text}`);
   assert.deepEqual(texts({}), ["good:nothing main lacks"]);
   assert.deepEqual(texts({ ahead: 3, only: 0 }), ["warn:3 commits not in main", "good:pushed"]);
+  assert.deepEqual(texts({ ahead: 3, only: 3, pr: 216, dirty: 1 }), ["bad:1 uncommitted file", "good:merged in #216"]);
   assert.deepEqual(texts({ ahead: 1, only: 1, dirty: 2 }), ["bad:2 uncommitted files", "warn:1 commit not in main", "bad:1 not pushed"]);
   assert.deepEqual(texts({ task: { id: "T-1", state: "in review" }, open: 2, locked: true, gone: true, ahead: null, only: null }),
     ["held:Pipeline T-1 · in review", "held:2 terminals open", "held:locked", "good:folder is gone"]);

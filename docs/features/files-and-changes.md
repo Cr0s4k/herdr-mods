@@ -86,15 +86,18 @@ without guessing what is in them.
   would lose, compared with the branch the main checkout is on: **nothing main lacks**, **3
   commits not in main** (then **pushed**, or **2 not pushed** for commits that exist nowhere
   else), **4 uncommitted files**, **folder is gone**.
-- It opens with the ones that lose nothing ticked: no commits of their own, or a folder that
-  is already gone. Click a row (or Space) to tick or untick it.
+- It opens with the ones that lose nothing ticked: no commits of their own, a pull request
+  merged on GitHub (**merged in #216**), or a folder that is already gone. Click a row (or Space) to tick or untick it.
 - A worktree can't be ticked while an unfinished Pipeline task owns it, a terminal is open in
   it, it is locked, or it has uncommitted or untracked files. Commit or discard those first.
-- **Remove** asks once, then runs `git worktree remove` and `git branch -d` for each, never
-  with force: Git still refuses a worktree with changes, and a branch that isn't merged stays
-  (the row then says so). A folder that is gone is pruned.
-- It doesn't know about squash merges: a branch merged that way shows its commits as not in
-  main. If they are pushed, removing the worktree keeps the branch.
+- **Remove** asks once, then runs `git worktree remove` and `git branch -d` for each. The
+  worktree is never forced: Git still refuses one with changes. A branch that isn't merged
+  stays (the row then says so). A folder that is gone is pruned.
+- A squash or rebase merge leaves the branch's commits out of the base, so Git alone would call
+  it unmerged. With GitHub's `gh` signed in, a branch counts as merged when its pull request
+  was merged at the very commit the branch is on, and its branch is then deleted with `-D`.
+  Commits added after the merge make it unmerged again. Without `gh`, such a branch shows its
+  commits as not in main and its branch is kept.
 
 ## Find file
 

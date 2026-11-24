@@ -19,7 +19,7 @@ export function annotate(rows, all, panes, on) {
 
 // Git refuses a locked checkout and one with uncommitted files; one in use is left alone here.
 export const removable = row => !row.locked && !(row.dirty > 0) && !row.task && !row.open;
-export const suggested = row => removable(row) && (row.gone || row.ahead === 0);
+export const suggested = row => removable(row) && (row.gone || row.ahead === 0 || Boolean(row.pr));
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -30,6 +30,7 @@ export function tags(row, target) {
   if (row.locked) out.push({ text: "locked", tone: "held" });
   if (row.gone) out.push({ text: "folder is gone", tone: "good" });
   if (row.dirty > 0) out.push({ text: `${plural(row.dirty, "uncommitted file")}`, tone: "bad" });
+  if (row.pr) return [...out, { text: `merged in #${row.pr}`, tone: "good" }];
   if (row.ahead === 0) out.push({ text: `nothing ${target} lacks`, tone: "good" });
   else if (row.ahead > 0) out.push({ text: `${plural(row.ahead, "commit")} not in ${target}`, tone: "warn" });
   if (row.only > 0) out.push({ text: `${row.only} not pushed`, tone: "bad" });

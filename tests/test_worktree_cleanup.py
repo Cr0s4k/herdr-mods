@@ -1,8 +1,10 @@
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +82,23 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue((dirty / "scratch.txt").exists() and self.repo.exists())
         self.assertEqual(sorted(self.git(self.repo, "branch", "--format=%(refname:short)").split()), ["ahead", "dirty", "main"])
         self.assertEqual(list(self.rows()), ["dirty"])
+
+    def test_a_branch_whose_pull_request_was_merged_at_its_commit_counts_as_merged_and_goes(self):
+        squashed, moved = self.tree("squashed"), self.tree("moved")
+        self.commit(squashed, "more.txt")
+        self.commit(moved, "more.txt")
+        tip = self.git(squashed, "rev-parse", "HEAD")
+        with patch.object(cleanup, "merged_prs", lambda cwd: {"squashed": (216, tip), "moved": (217, "0" * 40)}):
+            rows = self.rows()
+            self.assertEqual((rows["squashed"]["ahead"], rows["squashed"].get("pr"), rows["moved"].get("pr")), (1, 216, None))
+            done = {Path(row["path"]).name: row for row in cleanup.remove(str(self.repo), [str(squashed), str(moved)])["results"]}
+        self.assertEqual((done["squashed"]["kept"], done["moved"]["kept"]), (False, True))
+        self.assertEqual(sorted(self.git(self.repo, "branch", "--format=%(refname:short)").split()), ["main", "moved"])
+
+    def test_without_gh_nothing_is_called_merged(self):
+        with patch.dict(os.environ, {"PATH": "/nonexistent"}):
+            self.assertEqual(cleanup.merged_prs(str(self.repo)), {})
+        self.assertEqual(cleanup.merged_as({"branch": "a", "head": "x"}, {"a": (1, None)}), None)
 
     def test_outside_a_repository_it_says_so(self):
         with self.assertRaises(ValueError):
