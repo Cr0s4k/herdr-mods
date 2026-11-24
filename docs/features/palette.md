@@ -13,6 +13,9 @@ What it adds:
   everything waiting, retry failed tasks, go to the next task that needs you, and open its
   Queue, Review, Pull requests, Completed, Activity, Schedule, Plan and Settings. From another
   tab, Pipeline opens first.
+  Every unfinished task of every open space's Pipeline is listed too, as **Go to T-7 (ENG-42,
+  #216): its title**: type the ticket's key, the pull request's number, the branch or the task's
+  id to find it, and it opens that task's inspector in its own space.
 - **Review**: Changes + terminal in this tab, and the project on GitHub.
 - **Agent**: [Find conversation…](spaces.md#find-conversation), beside Herdr's own agent commands.
 - **Space**: a new space from `~/Projects`, hide this space for a while, hidden spaces, Focus

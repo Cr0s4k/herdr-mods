@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { STORE, taskJumps } from "../mods/palette-plus/jump.js";
+import { STORE as PIPELINES } from "../mods/pipeline/pipeline-model.js";
+
 const world = {};
 globalThis.__moreNative = {
+  STORE, taskJumps, run: (name, args) => world.calls.push([name, args]),
   spaces: () => world.spaces, focused: () => world.focus, agents: () => world.agents, layout: () => world.layout,
   shared: key => world.shared[key], setShared: (key, value) => { world.shared[key] = value; },
   openOverlay: spec => world.overlays.push(spec), togglesSize: () => ({ width: 420, height: 400 }),
@@ -17,7 +21,7 @@ function setup({ panel = null, sidebar = true, tabBar = true } = {}) {
     spaces: [{ id: "space", active: true }],
     focus: { space: "space", tab: "tab", pane: "pane", terminal: "t1" },
     agents: [{ address: "t1", pinned: false }],
-    shared: {}, overlays: [],
+    shared: {}, overlays: [], calls: [],
     layout: { id: "root", children: [
       { id: "sidebar", hidden: !sidebar, children: [{ type: "block", content: { mod: "spaces-pin" } }] },
       { type: "block", hidden: !tabBar, content: { mod: "tabs-show" } },
@@ -97,4 +101,28 @@ test("Find file is listed even without the tab bar, and opens the find-file popu
   setup({ tabBar: false, sidebar: false });
   assert.deepEqual(titled("Find conversation…").args, { name: "find-chat" });
   assert.deepEqual(titled("Find file…"), { name: "mod.open", args: { name: "find-file" }, group: "Panel", title: "Find file…", words: "go to file open search fuzzy quick name" });
+});
+
+test("unfinished Pipeline tasks are listed by ticket, pull request and branch, and open in their own space", () => {
+  setup();
+  assert.equal(STORE, PIPELINES);
+  world.spaces = [{ id: "space", active: true, folder: "/work/site", machine: null, name: "site" }, { id: "shop", active: false, folder: "/work/shop", machine: null, name: "shop" }];
+  world.shared[STORE] = {
+    "live:a": { live: true, context: { cwd: "/work/shop", on: null }, tasks: [
+      { id: "T-7", title: "Dark mode", status: "pr", ticket: { key: "ENG-42", url: "https://linear.app/acme/issue/ENG-42" }, prs: { shop: { number: 216, url: "https://github.com/me/shop/pull/216" } }, workspaces: { shop: { branch: "T-7-dark-mode" } } },
+      { id: "T-8", title: "Merged already", status: "done" }, { id: "T-9", title: "Thrown away", status: "review", discard: true },
+      { id: "T-10", title: "Plain", status: "queued" },
+    ] },
+    "live:b": { live: true, context: { cwd: "/work/closed", on: null }, tasks: [{ id: "T-1", title: "No space open", status: "review" }] },
+    demo: { context: {}, tasks: [{ id: "T-1", title: "A simulation", status: "review" }] },
+  };
+  const jumps = more().filter(e => e.title.startsWith("Go to "));
+  assert.deepEqual(jumps.map(e => e.title), ["Go to T-7 (ENG-42, #216): Dark mode", "Go to T-10: Plain"]);
+  assert.match(jumps[0].words, /pull request open .*ENG-42 .*pull\/216 T-7-dark-mode shop/);
+  assert.deepEqual([jumps[0].group, jumps[0].name, jumps[0].args], ["Pipeline", "tabs-show.pipeline-task-T-7", { space: "shop" }]);
+  jumps[0].do();
+  assert.deepEqual(world.calls, [["space.select", { id: "shop" }], ["tabs-show.pipeline-task-T-7", undefined]]);
+  setup({ tabBar: false });
+  world.shared[STORE] = { "live:a": { live: true, context: { cwd: undefined }, space: "space", tasks: [{ id: "T-1", title: "x", status: "review" }] } };
+  assert.equal(more().filter(e => e.title.startsWith("Go to ")).length, 0);
 });

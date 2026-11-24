@@ -1,5 +1,6 @@
-import { spaces, focused, agents, layout, shared, setShared, openOverlay } from "herdr";
+import { spaces, focused, agents, layout, shared, setShared, openOverlay, run } from "herdr";
 import { popupSize as togglesSize } from "./toggles.js";
+import { STORE, taskJumps } from "./jump.js";
 
 export const GROUPS = ["Panel", "Pipeline", "Review"];
 
@@ -74,6 +75,10 @@ export function more() {
     }
     list.push(command("Pipeline", "Open Pipeline", "tabs-show.pipeline", "tasks queue worktrees agents"));
     for (const [cmd, title, words] of PIPELINE) list.push(command("Pipeline", title, `tabs-show.pipeline-${cmd}`, words));
+    for (const jump of taskJumps(shared(STORE), spaces())) {
+      list.push({ ...command("Pipeline", jump.title, `tabs-show.pipeline-task-${jump.task}`, jump.words, { space: jump.space }),
+        do: () => { run("space.select", { id: jump.space }); run(`tabs-show.pipeline-task-${jump.task}`); } });
+    }
     list.push(command("Review", "Open Changes + terminal", "tabs-show.review", "review diff git commit"));
     list.push(command("Review", "Open on GitHub", "tabs-show.github", "browser repository pull request"));
   }
