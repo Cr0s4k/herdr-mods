@@ -196,7 +196,7 @@ export class History {
           throw new Error((r.stderr || r.stdout).trim());
         }
       } catch (e) { view.note = `Revert failed: ${e.message ?? e}`; }
-      finally { this.reverting = null; view.refresh(cx); cx.notify(); }
+      finally { this.reverting = null; view.refresh(cx, true); cx.notify(); }
     });
     cx.notify();
   }

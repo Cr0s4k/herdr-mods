@@ -8,3 +8,12 @@ export function parseBranch(header) {
 }
 
 export const remoteGit = (args, root, on, timeout) => exec("env", ["GIT_TERMINAL_PROMPT=0", "git", ...args], { cwd: root, on, timeout });
+
+export async function branchState(git) {
+  const head = await git(["symbolic-ref", "-q", "--short", "HEAD"]);
+  const branch = head.code === 0 ? head.stdout.trim() : "";
+  if (!branch) return null;
+  const ref = await git(["for-each-ref", "--format=%(upstream:short)%00%(upstream:track)", `refs/heads/${branch}`]);
+  const [upstream = "", track = ""] = ref.code === 0 ? ref.stdout.trim().split("\0") : [];
+  return parseBranch(`## ${branch}${upstream ? `...${upstream}` : ""}${track ? ` ${track}` : ""}`);
+}
