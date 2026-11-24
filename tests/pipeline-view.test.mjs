@@ -29,7 +29,7 @@ const path = () => new Proxy({}, { get: (_target, key) => key === "build" ? () =
 globalThis.__pipelineView = {
   TextareaState: { new: () => globalThis.__pipelineView.InputState.new() },
   ...model, ...geometry, View: class {}, div: native, svg: native, image: native, h_flex: native, v_flex: native,
-  Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) },
+  Button: { new: id => native().id(id) }, Input: { new: native }, Textarea: { new: native }, Switch: { new: id => native().id(id) }, TextView: { markdown: (id, markdown) => native().id(id).child(markdown.replace(/  \n/g, "\n").replace(/\\(.)/g, "$1")) },
   InputState: { new: () => { let value = ""; const handlers = {}; return { on(name, fn) { handlers[name] = fn; }, emit: (name, cx) => handlers[name]?.({}, cx), focus() {}, release() {}, value: () => value, set_value: next => { value = next; } }; } },
   hc: async args => { world.hc.push(args); return { code: 0, stdout: world.screen ?? "" }; }, run: (name, args) => { world.runs.push([name, args]); world.onRun?.(name, args); },
   panes: () => world.panes ?? [], spaces: () => world.spaces ?? [],
@@ -38,7 +38,7 @@ globalThis.__pipelineView = {
   screenQuestion: live.screenQuestion, answerKeys: live.answerKeys, replyKeys: live.replyKeys,
   fixRequest: (command, output) => `failed: ${command}\n${output}`,
   setupArgs: live.setupArgs, readSetup: live.readSetup, openTry: live.openTry, evidenceRequest: live.evidenceRequest, loadProcedures: async () => {}, procedure: live.procedure,
-  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
+  rebaseRequest: (target, error) => `rebase onto ${target}: ${error}`, prConflictRequest: (number, target) => `rebase #${number} onto ${target}`, commitRequest: () => "commit what you left", changedFiles: live.changedFiles,
   openOverlay: spec => { world.overlays.push(spec); return "ov1"; },
   readTickets: async (provider, payload) => { world.planeCalls.push({ provider, ...payload }); return world.planeReply?.(payload, provider) ?? { issues: [] }; },
   fullTickets: async (provider, issues) => { world.fullCalls = [...(world.fullCalls ?? []), [provider, issues.map(issue => issue.identifier)]];
@@ -839,6 +839,16 @@ test("pull request delivery changes the approve wording and links the open PR", 
   assert.match(text(find(waiting, "pr-checks-T-2")), /1 failing: test/);
   assert.match(text(find(waiting, "pr-review-T-2")), /Required, not given yet/);
   assert.ok(find(waiting, "pr-ready-T-2").nodes.includes("Back to draft"));
+  assert.equal(find(waiting, "pr-rebase-T-2"), undefined, "no rebase is offered without conflicts");
+  view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
+    status: { draft: false, mergeable: "CONFLICTING", mergeState: "DIRTY", review: null, failed: 0, failing: [], pending: 0, passed: 2 } }, cx);
+  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Ask the agent to rebase onto main/);
+  view.act({ type: "agentSeen", id: "T-2", state: "gone" }, cx);
+  assert.match(text(find(view.render(cx), "pr-rebase-T-2")), /Reopen agent and ask it to rebase onto main/);
+  click(view, "pr-rebase-T-2");
+  assert.deepEqual([row(view, "T-2").reopen, row(view, "T-2").reopenAsk], [true, "rebase"]);
+  view.act({ type: "reopenFailed", id: "T-2", error: null }, cx);
+  view.act({ type: "agentSeen", id: "T-2", state: null }, cx);
   view.act({ type: "prStatus", id: "T-2", repo: "shop", url: "https://github.com/me/shop/pull/12",
     status: { draft: true, mergeable: "MERGEABLE", mergeState: "DRAFT", review: null, failed: 0, failing: [], pending: 0, passed: 2 } }, cx);
   assert.ok(find(view.render(cx), "pr-ready-T-2").nodes.includes("Mark ready"));
@@ -1303,7 +1313,11 @@ test("a stalled agent, its tokens and its own history show on the card and in th
   const inspector = text(find(scene, "inspector"));
   assert.match(inspector, /shown nothing new for 12 min/);
   assert.match(inspector, /Claude Code used 3\.4k tokens written · 120k read · 2\.0M from cache, over 1 reply\./);
-  assert.match(inspector, /Task history T-1 is working\. T-1 joined the queue\./);
+  assert.match(inspector, /History · 2/);
+  assert.equal(find(view.render(cx), "history-lines-T-1"), undefined, "folded until asked");
+  click(view, "history-T-1");
+  assert.match(text(find(view.render(cx), "history-lines-T-1")), /is working\..*joined the queue\./, "each line drops the task's own id");
+  assert.equal(text(find(view.render(cx), "title-T-1")).trim(), row(view, "T-1").title, "the title is text that can be selected");
 });
 
 test("a wide Pipeline has one bar of controls and one status bar; a narrower one gives the controls their own row", () => {

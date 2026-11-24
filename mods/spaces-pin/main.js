@@ -787,6 +787,8 @@ export default class Spaces extends View {
       { id: `${prefix}recent-branch-${w.id}`, view: () => recentHeader(w, open, t, { prefix, toggle: cx => this.toggleRecent(w, cx), ring: this.navigable(key, { kind: "recent", w, parent, act: cx => this.toggleRecent(w, cx) }) }) },
       ...rows.map(session => ({ id: `${prefix}session-branch-${session.id}`, view: () => sessionRow(w, session, t, { prefix, pic: this.agents.pic(this.known?.[session.agent], t), resume: cx => this.resume(w, session, cx),
         ring: this.navigable(`session:${w.id}:${session.id}`, { kind: "session", w, parent, act: cx => this.resume(w, session, cx) }) }) })),
+      ...(open && !rows.length ? [{ id: `${prefix}recent-none-${w.id}`, view: () => div().id(`${prefix}recent-empty-${w.id}`).h(24).px(5).flex().items_center().text_size(12).text_color(t.muted)
+        .child(this.recent[w.id]?.loading ? "Reading…" : "No closed conversations here") }] : []),
     ];
   }
 

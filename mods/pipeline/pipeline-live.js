@@ -1,4 +1,4 @@
-import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
+import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, agentOpening, prConflict, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 import { procedure } from "./procedures.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
@@ -285,6 +285,7 @@ export const screenText = text => text.replace(/\d+[a-z]*/gi, "").replace(/[^A-Z
 
 export const commitRequest = () => procedure("uncommitted");
 export const rebaseRequest = (target, error) => procedure("merge-refused", { target, error: error || "The branch conflicts." });
+export const prConflictRequest = (number, target) => procedure("pr-conflict", { number, target: target || "its base branch" });
 export const fixRequest = (command, output) => procedure("check-failed", { command, output: output || "(no output)" });
 
 const PR_READ = 60000, PR_READ_AWAY = 600000;
@@ -342,7 +343,9 @@ export class LiveRunner {
         const agent = known.find(row => row.installed && row.name === task.agent) ?? known.find(row => row.installed && row.key === state.agent?.key) ?? known.find(row => row.installed);
         if (!agent) throw new Error("No coding agent is installed on that machine.");
         const before = host.panes().map(row => row.terminal).filter(Boolean);
-        const own = host.resume(state.context, task, ws, agentResume(agent), state.space ?? task.space);
+        const conflict = task.reopenAsk === "rebase" && prConflict(task), run = agentResume(agent);
+        const opening = conflict ? agentOpening({ ...agent, run }, prConflictRequest(conflict[1].number, task.workspaces?.[conflict[0]]?.target)) : { argv: run };
+        const own = host.resume(state.context, task, ws, opening, state.space ?? task.space);
         const opened = await host.locate(state.context, ws, cx, before);
         if (!opened) throw new Error("Its agent was asked to start, but its terminal never appeared.");
         this.apply(id, { type: "reopened", id: task.id, ...opened, own, agent: agent.name });

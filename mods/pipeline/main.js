@@ -1,9 +1,9 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
-import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch } from "gpui-base";
+import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch, TextView } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prConflict, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prConflictRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { loadProcedures, procedure } from "./procedures.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
@@ -69,6 +69,8 @@ const SECTIONS = {
 const SCOPES = { mine: "My tickets", unassigned: "Unassigned", all: "All tickets" };
 const filterLabel = filter => [SCOPES[filter.scope], filter.team?.name, filter.project?.name].filter(Boolean).join(" · ");
 const icon = (name, size = 15) => svg(`mods/pipeline/${name}.svg`).size(size).flex_none();
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const stamp = at => { const d = new Date(at), two = n => String(n).padStart(2, "0"); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${two(d.getHours())}:${two(d.getMinutes())}`; };
 const dot = (color, size = 6) => div().size(size).rounded(size / 2).bg(color).flex_none();
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const choices = question => (question?.options ?? []).filter((_, i) => i !== question.typed);
@@ -397,6 +399,14 @@ export default class Pipeline extends View {
     if (!repo?.files.length) return;
     openOverlay({ mod: "changes-modal", kind: "dialog", width: 0.9, height: 0.9,
       props: { root: repo.root, on: this.context.on ?? null, hasHead: true, base: repo.base, files: repo.files, index } });
+  }
+  rebasePr(task, pr, target, cx) {
+    cx.spawn(async cx => {
+      const sent = await hc(["send", task.terminal, prConflictRequest(pr.number, target)]).then(result => result.code === 0, () => false);
+      if (sent) this.rebased = task.id; else this.focusAgent(task);
+      this.track("prRebase", { task: task.id });
+      cx.notify();
+    });
   }
   resolve(task, cx, ask = "rebase") {
     if (!task?.terminal || !task.error) return;
@@ -801,6 +811,11 @@ export default class Pipeline extends View {
           .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.border)
           .when(on, el => el.justify_end())
           .child(div().size(12).rounded(6).bg(on ? t.accent_foreground : t.muted))));
+  }
+  // Text that can be selected and copied, which a plain element's can't.
+  copyable(id, text) {
+    const plain = String(text ?? "").replace(/([\\`*_{}\[\]<>()#+\-.!|~])/g, "\\$1").replace(/\n/g, "  \n");
+    return TextView.markdown(`pipeline-${id}`, plain).selectable(true);
   }
   label(text, t) { return div().text_size(12).line_height(1.5).text_color(t.muted).child(text); }
   heading(text) { return div().text_size(12).font_medium().child(text); }
@@ -2035,11 +2050,11 @@ export default class Pipeline extends View {
     this.peekAt(task, cx);
     const trees = workspacesOf(task), several = task.repos.length > 1, target = targetOf(task) ?? this.repo?.branch ?? "your branch";
     const branch = (trees[0] ?? Object.values(task.planned ?? {})[0])?.branch;
-    body.child(div().text_size(18).font_semibold().line_height(1.3).child(task.title));
+    body.child(this.copyable(`title-${task.id}`, task.title).text_size(18).font_semibold().line_height(1.3));
     body.child(h_flex().gap(7).items_center().flex_wrap().child(dot(stateColor(task, t))).child(div().text_size(12).child(task.discard ? "Discarding" : adoptStep(task) ?? labelFor(state, task.status)))
       .when(Boolean(task.agent), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`)))
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
-    if (task.error) body.child(div().text_size(12).line_height(1.45).text_color(t.blocked).child(task.error));
+    if (task.error) body.child(this.copyable(`error-${task.id}`, task.error).text_size(12).line_height(1.45).text_color(t.blocked));
     if (adoptStep(task) && !task.discard) {
       const pane = panes().find(row => row.terminal === task.adopt.terminal), agent = task.adopt.agent ?? "Its agent";
       body.child(this.label(!task.adopt.files ? `${agent} was asked what it is working on and which uncommitted files are its own. It answers when its current turn ends; then Pipeline makes the worktree and moves those files.`
@@ -2079,14 +2094,14 @@ export default class Pipeline extends View {
       this.repoChips(body, state, task, t);
       this.waitsDetail(body, state, task, t);
     } else {
-      if (task.description) body.child(div().text_size(12).line_height(1.5).text_color(t.muted).child(task.description));
+      if (task.description) body.child(this.copyable(`description-${task.id}`, task.description).text_size(12).line_height(1.5).text_color(t.muted));
       if (several) body.child(this.label(`Repositories: ${task.repos.join(" + ")}`, t));
     }
     if (task.summary && task.status !== "queued") body.child(this.heading("Summary from the agent"))
       .child(v_flex().id(`pipeline-summary-${task.id}`).w_full().p(10).gap(2).rounded(6).border_1().border_color(t.border).bg(t.surface).text_size(12).line_height(1.5)
         .children(task.summary.split("\n").filter(line => line.trim()).map(line => {
           const [, label, rest] = line.match(/^\s*(Changed|Checked|Unsure):\s*(.*)$/) ?? [];
-          return label ? h_flex().gap(8).items_start().child(div().w(56).flex_none().text_color(label === "Unsure" ? t.ansi3 : t.muted).child(label)).child(div().flex_1().min_w(0).child(rest)) : div().child(line);
+          return label ? h_flex().gap(8).items_start().child(div().w(56).flex_none().text_color(label === "Unsure" ? t.ansi3 : t.muted).child(label)).child(div().flex_1().min_w(0).child(this.copyable(`summary-${task.id}-${label}`, rest).text_size(12).line_height(1.5))) : div().child(line);
         })));
     if (task.evidence && task.status !== "queued") this.evidenceDetail(body, task, t);
     if (task.terminal && trees.length && !(task.evidence?.files?.length && task.evidence.url) && ["working", "input", "review"].includes(task.status) && !task.discard) {
@@ -2157,6 +2172,11 @@ export default class Pipeline extends View {
           .child(dot(toneColor(item.tone, t)).mt(6))
           .child(div().w(54).flex_none().text_color(t.muted).child(item.name))
           .child(div().flex_1().min_w(0).text_color(item.tone === "blocked" ? t.blocked : t.foreground).child(item.value)));
+        const clash = !pr.merged && prConflict({ prs: { [name]: pr } }), gone = task.agentState === "gone" || !task.terminal;
+        if (clash) body.child(this.button(`pr-rebase-${task.id}${suffix}`, task.reopen ? "Reopening…" : gone ? `Reopen agent and ask it to rebase onto ${prTarget ?? "its base"}` : this.rebased === task.id ? "Asked. It rebases and pushes" : `Ask the agent to rebase onto ${prTarget ?? "its base"}`,
+          cx => gone ? this.act({ type: "reopen", id: task.id, ask: "rebase" }, cx) : this.rebasePr(task, pr, prTarget, cx), t,
+          { icon: "reset", primary: !task.reopen && this.rebased !== task.id, disabled: Boolean(task.reopen) || task.agentState === "working",
+            hint: `${gone ? "Starts its agent again in the worktree, continuing its last conversation, and tells it" : "Tells its agent"} to rebase onto origin/${prTarget ?? "the base branch"}, resolve the conflicts and push` }));
         if (pr.readyError) body.child(div().id(`pipeline-pr-ready-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.readyError));
         const draft = Boolean(pr.status?.draft);
         body.child(h_flex().gap(8).flex_wrap()
@@ -2203,9 +2223,14 @@ export default class Pipeline extends View {
     if (branch && trees.length > 1) body.child(this.label(`Branch ${branch} in each repository`, t)).children(trees.map(ws => this.label(`${ws.name} · ${ws.cwd}`, t)));
     else if (branch) body.child(this.label(`Branch ${branch}${trees[0]?.cwd ? ` · ${trees[0].cwd}` : ""}`, t));
     if (task.usage) body.child(this.label(`${task.agent ?? "Its agent"} used ${usageText(task.usage)}, over ${task.usage.turns} ${task.usage.turns === 1 ? "reply" : "replies"}.`, t));
-    const log = taskLog(state, task).slice(0, 12);
-    if (log.length) body.child(this.heading("Task history"));
-    for (const message of log) body.child(this.label(message, t));
+    const log = (task.log ?? state.events.filter(item => item.task === task.id)).slice(0, 12), shown = this.history === task.id;
+    if (log.length) body.child(h_flex().id(`pipeline-history-${task.id}`).gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted).hover(el => el.text_color(t.foreground))
+      .role("button").accessibility_label(`${shown ? "Hide" : "Show"} task history`)
+      .on_click((_e, cx) => { this.history = shown ? null : task.id; this.track("history", { task: task.id }); cx.notify(); })
+      .child(svg(`mods/workspace-chrome/chevron-${shown ? "down" : "right"}.svg`).size(11).flex_none()).child(`History · ${log.length}`));
+    if (log.length && shown) body.child(v_flex().id(`pipeline-history-lines-${task.id}`).gap(3).pl(18).children(log.map((item, n) => h_flex().gap(8).items_start().text_size(11.5).line_height(1.45).text_color(t.muted)
+      .child(div().w(84).flex_none().child(item.at ? stamp(item.at) : ""))
+      .child(div().flex_1().min_w(0).child(this.copyable(`history-${task.id}-${n}`, String(item.message ?? item).replace(new RegExp(`^${task.id.replace(/[^\\w-]/g, "")}( · | )`), "")).text_size(11.5).line_height(1.45))))));
   }
   revertDetail(body, state, task, t) {
     const where = [...new Set((task.landed ?? []).map(repo => repo.branch))].join(" + "), sure = this.confirm === `revert-${task.id}`, byPr = revertsByPr(task);

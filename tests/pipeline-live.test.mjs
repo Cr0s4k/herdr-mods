@@ -2257,7 +2257,7 @@ test("pull requests open as drafts when set, and are marked ready or draft again
 test("a task with an open PR says what its agent does, and reopens a closed one in its worktree", async () => {
   const world = prHost({ state: "OPEN", status: { draft: false, mergeable: "CONFLICTING", mergeState: "DIRTY", review: null, failed: 0, failing: [], pending: 0, passed: 1 } });
   const resumed = [];
-  world.host.resume = (_context, task, ws, argv, space) => { resumed.push({ task: task.id, cwd: ws.cwd, argv, space }); return "tab"; };
+  world.host.resume = (_context, task, ws, opening, space) => { resumed.push({ id: task.id, cwd: ws.cwd, ...opening, space }); return "tab"; };
   world.host.locate = async (_context, _ws, _cx, previous) => ({ space: "s9", tab: "tb10", terminal: [previous].flat().includes("t9") ? "t10" : "t9" });
   const runner = new live.LiveRunner(world.host);
   await reviewed(world, runner);
@@ -2277,10 +2277,18 @@ test("a task with an open PR says what its agent does, and reopens a closed one 
   world.store = { [id]: reduce(world.state(), { type: "reopen", id: "T-1" }, 0) };
   await settle(runner);
   const task = row(world.state(), "T-1");
-  assert.deepEqual(resumed.map(call => [call.task, call.argv]), [["T-1", ["claude", "--continue"]]]);
+  assert.deepEqual(resumed.map(call => [call.id, call.argv, call.task]), [["T-1", ["claude", "--continue"], undefined]]);
   assert.deepEqual([task.status, task.reopen, task.terminal, task.tab, task.agentState], ["pr", false, "t10", "tb10", null]);
   assert.deepEqual(model.agentResume({ key: "codex", run: ["codex", "--yolo"] }), ["codex", "--yolo", "resume", "--last"]);
   assert.deepEqual(model.agentResume({ key: "opencode", run: ["opencode"] }), ["opencode", "--continue"]);
+  world.agents = []; world.panes = [];
+  await settle(runner);
+  assert.equal(model.prConflict(row(world.state(), "T-1"))[1].number, 12);
+  world.store = { [id]: reduce(world.state(), { type: "reopen", id: "T-1", ask: "rebase" }, 0) };
+  await settle(runner);
+  assert.deepEqual(resumed.at(-1).argv, ["claude", "--continue"]);
+  assert.match(resumed.at(-1).task, /Pull request #12 of this branch conflicts with main.*rebase this branch onto origin\/main.*--force-with-lease/s, "a reopened agent is told what to do in its first message");
+  assert.equal(row(world.state(), "T-1").reopenAsk, null);
   world.agents = []; world.panes = [];
   world.host.locate = async () => null;
   await settle(runner);

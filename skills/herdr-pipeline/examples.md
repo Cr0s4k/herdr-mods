@@ -90,6 +90,14 @@ The branch conflicts with main in src/theme.js.
 Rebase this branch onto main, resolve the conflicts, make sure the work still does what the task asked, commit, and stop.
 ````
 
+## An open pull request conflicts with its base
+
+````text
+Pull request #12 of this branch conflicts with main on GitHub, so it can't be merged.
+
+Fetch origin, rebase this branch onto origin/main, resolve the conflicts, make sure the work still does what the task asked, commit, push the branch with `git push --force-with-lease`, and stop.
+````
+
 ## Delivery found uncommitted changes
 
 ````text

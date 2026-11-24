@@ -21,6 +21,7 @@ const SECTIONS = [
   ["Screenshots asked for from the inspector, after the work", () => live.evidenceRequest(task, ws, everything)],
   ["The check command failed", () => live.fixRequest("npm test", "FAIL src/theme.test.js\n  expected \"dark\", received \"light\"")],
   ["The merge was refused", () => live.rebaseRequest("main", "The branch conflicts with main in src/theme.js.")],
+  ["An open pull request conflicts with its base", () => live.prConflictRequest(12, "main")],
   ["Delivery found uncommitted changes", () => live.commitRequest()],
   ["A conversation is converted into a task", () => live.adoptAsk(task, "/tmp/herdr-adopt-T-7.json", "/work/shop")],
   ["A converted conversation's work moved to a new agent", () => procedure("adopt-moved", { task: task.id, folder: ws.cwd })],

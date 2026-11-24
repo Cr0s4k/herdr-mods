@@ -294,7 +294,10 @@ nothing to finish.
    draft, or as an ordinary one where the repository's plan has no drafts; **Mark ready** and
    **Back to draft** in the inspector change it without opening GitHub. The card stays on the
    pull request while its agent goes on: it adds **Agent working** or **Agent needs you**, and
-   when the agent's tab was closed the inspector offers **Reopen agent**, which starts the same
+   a pull request that conflicts with its base has **Ask the agent to rebase**, which tells the
+   agent to rebase onto the base branch, resolve the conflicts and push (with the agent's tab
+   closed it reads **Reopen agent and ask it to rebase**, and the request is the reopened
+   agent's first message). When the agent's tab was closed the inspector also offers **Reopen agent**, which starts the same
    agent in the worktree continuing its last conversation there (`claude --continue`,
    `codex resume --last`, `opencode --continue`). The task finishes when the PR is merged (then cleans up as above), or returns to
    review if the PR is closed. Needs `gh`, signed in, and a GitHub
@@ -452,3 +455,7 @@ Saved pipelines nobody can return to are cleared out a minute after Herdr starts
 hourly: an example pipeline left alone for a day, and a pipeline whose folder is gone with
 nothing left to finish. Finished tasks keep their summary, links and last eight history lines,
 and lose their check output.
+
+In a task's inspector the title, description, error, the agent's summary and the history can
+be selected and copied. **History** at the bottom is folded; click it for the task's last
+twelve events with their times.

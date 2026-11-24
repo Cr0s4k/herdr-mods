@@ -33,6 +33,7 @@ One file each in `procedures/`. `{{name}}` marks a value the mod fills in.
 | walkthrough.md | inside both evidence procedures | `tryout`: how to try the change locally |
 | check-failed.md | the check command failed | `command`, `output` |
 | merge-refused.md | the branch could not be merged | `target`: the branch; `error`: what Git said |
+| pr-conflict.md | an open pull request conflicts with its base, from the inspector; also the first message of an agent reopened for it | `number`: the pull request; `target`: its base branch |
 | uncommitted.md | delivery found uncommitted changes | nothing |
 | adopt-ask.md | a running conversation is converted into a task | `task`: its id; `file`: the JSON file to write; `root`: the project folder |
 | adopt-moved.md | the converted work went to a new agent | `task`, `folder`: its worktree |

@@ -70,7 +70,7 @@ export const liveHost = {
   start(context, task, workspaces, agent, space, delivery, extras) {
     return openAgent(context, { folder: workspaces[0].cwd, ...agentOpening(agent, prompt(task, workspaces, delivery, extras)) }, task.id, space);
   },
-  resume: (context, task, ws, argv, space) => openAgent(context, { folder: ws.cwd, argv }, task.id, space),
+  resume: (context, task, ws, opening, space) => openAgent(context, { folder: ws.cwd, ...opening }, task.id, space),
   tryout: (context, task, ws, command, cx) => openTry({ run, panes, spaces, focused }, context, task, ws, command, cx, true),
   async locate(context, workspace, cx, previous) {
     for (let i = 0; i < 60; i++) {

@@ -804,6 +804,8 @@ test("a space lists its folder's closed conversations under Recent and resumes o
   await Promise.all(jobs);
   assert.deepEqual(world.calls, [["tab.new", { space: "app", folder: world.read[1].cwd, argv: ["opencode", "--session", "ses_1".replace("ses_1", "o1")], name: "Review PR 12" }]]);
   assert.equal(find(view.render(), "session-o1"), undefined, "a resumed conversation is an agent now");
+  view.recent.app.rows = [];
+  assert.match(text(find(view.render(), "recent-empty-app")), /No closed conversations here/);
   sharedState.set("features", { recent: false });
   assert.equal(find(view.render(), "recent-app"), undefined);
   sharedState.delete("features");

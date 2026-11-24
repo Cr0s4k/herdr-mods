@@ -76,6 +76,8 @@ export const agentOpening = (agent, text) => AGENT_OPTIONS[agent.key]?.prompt ? 
 export const agentResume = agent => [...agent.run, ...(AGENT_OPTIONS[agent.key]?.resume ?? [])];
 // What the agent of a task with an open pull request does: the card stays on the pull request, so this is said beside it.
 export const prAgent = task => task.status !== "pr" ? null : { working: "Agent working", input: "Agent needs you", gone: "Agent closed" }[task.agentState] ?? null;
+// The first of a task's open pull requests that can't merge for conflicts, as [repository, pull request].
+export const prConflict = task => Object.entries(task.prs ?? {}).find(([, pr]) => !pr.merged && (pr.status?.mergeable === "CONFLICTING" || pr.status?.mergeState === "DIRTY")) ?? null;
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
   { id: "DEMO-101", title: "Define the checkout contract", repos: ["contracts", "api"], priority: 3, depends: [], column: "Ready", description: "Agree on request and response types, then update the API schema. The web checkout depends on this contract landing in both repositories." },
@@ -1384,20 +1386,20 @@ export function reduce(state, action, now = Date.now()) {
     case "reopen": {
       const task = row(action.id);
       if (!next.live || task?.status !== "pr" || task.reopen || !workspacesOf(task).length) return state;
-      Object.assign(task, { reopen: true, reopenError: null });
+      Object.assign(task, { reopen: true, reopenAsk: action.ask ?? null, reopenError: null });
       break;
     }
     case "reopened": {
       const task = row(action.id);
       if (!next.live || !task?.reopen) return state;
-      Object.assign(task, { reopen: false, reopenError: null, agentState: null, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? task.agent });
+      Object.assign(task, { reopen: false, reopenAsk: null, reopenError: null, agentState: null, space: action.space, tab: action.tab, terminal: action.terminal, own: action.own ?? "tab", agent: action.agent ?? task.agent });
       event(next, `${task.id} · ${action.agent ?? "its agent"} reopened in its worktree, continuing its last conversation.`, task.id);
       break;
     }
     case "reopenFailed": {
       const task = row(action.id);
       if (!next.live || !task?.reopen) return state;
-      Object.assign(task, { reopen: false, reopenError: action.error });
+      Object.assign(task, { reopen: false, reopenAsk: null, reopenError: action.error });
       break;
     }
     case "prReady": {
