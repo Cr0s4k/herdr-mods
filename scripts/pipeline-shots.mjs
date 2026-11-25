@@ -35,6 +35,8 @@ const TASKS = [
   ["PR: conflicts, failing checks and a review", { status: "pr", workspaces: tree("clash"), prs: pr(216, { mergeable: "CONFLICTING", mergeState: "DIRTY", failed: 2, failing: ["integration-tests", "lint"], review: "CHANGES_REQUESTED", comments: 3 }), summary, agent: "OpenCode", tuning: "opencode-go/deepseek-v4.1-flash · max effort" }],
   ["PR: a draft with checks running", { status: "pr", workspaces: tree("draft"), prs: pr(217, { draft: true, mergeState: "DRAFT", pending: 4, passed: 5 }) }],
   ["PR: ready to merge", { status: "pr", workspaces: tree("ready"), prs: pr(218, { review: "APPROVED" }), evidence: { files: [], url: "https://docstash.ai/d/example" } }],
+  ["PR: its agent pushed fixes for the comments you sent", { status: "pr", workspaces: tree("fixed"), prs: { shop: { ...pr(220, { comments: 2, heard: [Date.now() - 7200000, Date.now() - 3600000], head: "b1c2d3e4f5" }).shop, sent: ["C1", "C2"], seen: Date.now(),
+    asked: { at: Date.now() - 1800000, head: "a1b2c3d4e5", ids: ["C1", "C2"], authors: ["mikael-johnsson"] } } } }],
   ["Merged", { status: "done", summary, prs: { shop: { url: "https://github.invalid/me/shop/pull/219", number: 219, merged: true } }, usage: { written: 305412, read: 4405580, cached: 151839744, turns: 471 } }],
 ];
 

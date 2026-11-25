@@ -305,7 +305,11 @@ nothing to finish.
    Linear's link-back don't): one that came after you last opened the task puts a dot and **N new** on its card and
    a notification on screen. The inspector lists the comments, new ones marked; tick the ones to act on, add a note
    if you like ("skip the Low ones"), and **Send** gives them to its agent in full, or reopens a closed agent with
-   them. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
+   them. Comments you sent stay listed, greyed, so they aren't sent twice by accident. Once its agent pushes the fixes,
+   the card reads **Fixes pushed · ask for a re-review**: the inspector shows the agent's reply, which you can edit or clear,
+   and **Ask … to review again** requests their review again on GitHub (so they're notified) and posts the reply in your
+   name. The handled comments then fold away. **Ask for a re-review after fixes** (Settings, Delivery) does that by
+   itself, with the agent's reply as written. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
    reads **Waiting for review** rather than **Ready to merge**, even where GitHub requires no
    review. With **Merge once approved** (Settings, Delivery) Pipeline merges the pull request itself
    with `gh` once someone approved it and its checks pass, with no repository setting needed: it

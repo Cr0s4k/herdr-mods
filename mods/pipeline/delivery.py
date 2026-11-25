@@ -172,9 +172,9 @@ def push(payload):
     return result
 
 
-def gh(cwd, *args):
+def gh(cwd, *args, input=None):
     try:
-        result = subprocess.run(["gh", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60)
+        result = subprocess.run(["gh", *args], cwd=str(cwd), input=input, capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         raise ValueError("The GitHub CLI (gh) isn't installed here. Install it and run gh auth login, or deliver by merging locally.")
     return result
@@ -297,7 +297,7 @@ def pr_state(payload):
 
 WHO = "author { login __typename }"
 PR_FIELDS = f"""fragment pr on PullRequest {{
-  state isDraft mergeable mergeStateStatus reviewDecision {WHO}
+  state isDraft mergeable mergeStateStatus reviewDecision headRefOid {WHO}
   reviews(last: 100) {{ nodes {{ state submittedAt {WHO} }} }}
   comments(last: 100) {{ nodes {{ createdAt isMinimized {WHO} }} }}
   commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ contexts(first: 100) {{ nodes {{
@@ -378,7 +378,7 @@ def pr_summary(pr):
     times = sorted([stamp(review.get("submittedAt")) for review in reviews] + [stamp(comment.get("createdAt")) for comment in comments])
     status = {"draft": bool(pr.get("isDraft")), "mergeable": pr.get("mergeable") or "UNKNOWN",
               "mergeState": pr.get("mergeStateStatus") or "UNKNOWN", "review": pr.get("reviewDecision") or None,
-              "comments": len(times), "heard": times, **checks(pr.get("statusCheckRollup"))}
+              "comments": len(times), "heard": times, "head": pr.get("headRefOid") or None, **checks(pr.get("statusCheckRollup"))}
     return {"state": pr.get("state", "OPEN"), "status": status}
 
 
@@ -397,6 +397,36 @@ def pr_comments(payload):
     for comment in comments:
         found.append({"id": comment["id"], "kind": "comment", "author": comment["author"]["login"], "at": stamp(comment.get("createdAt")), "url": comment.get("url"), "body": (comment.get("body") or "").strip()})
     return {"comments": sorted(found, key=lambda item: item["at"])}
+
+
+# What its agent says it did about the comments it was sent, written after `since` (ms): Pipeline offers it as the reply.
+def reply_draft(payload):
+    worktree = Path(payload["worktree"])
+    path = worktree.is_dir() and git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "herdr-reply.md", optional=True)
+    try:
+        if not path or Path(path).stat().st_mtime * 1000 < payload.get("since", 0):
+            return {"text": None}
+        return {"text": Path(path).read_text().strip() or None}
+    except OSError:
+        return {"text": None}
+
+
+# GitHub notifies a reviewer only on a new request, so one still requested is removed and added back. The reply goes last: retrying after a failure never posts it twice.
+def pr_rereview(payload):
+    url, root = payload["url"], payload["root"]
+    reviewers = ",".join(payload.get("reviewers") or [])
+    if reviewers:
+        gh(root, "pr", "edit", url, "--remove-reviewer", reviewers)
+        asked = gh(root, "pr", "edit", url, "--add-reviewer", reviewers)
+        if asked.returncode:
+            raise ValueError(asked.stderr.strip() or "GitHub didn't ask them to review.")
+    body = payload["body"] if "body" in payload else reply_draft(payload)["text"] if payload.get("worktree") else None
+    body = (body or "").strip()
+    if body:
+        posted = gh(root, "pr", "comment", url, "--body-file", "-", input=body)
+        if posted.returncode:
+            raise ValueError(f"Asked them to review again, but the reply wasn't posted: {posted.stderr.strip() or 'GitHub refused it.'}")
+    return {**pr_state(payload), "replied": bool(body)}
 
 
 def pr_ready(payload):
@@ -590,7 +620,7 @@ def adopt_move(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_states": pr_states, "pr_comments": pr_comments, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_states": pr_states, "pr_comments": pr_comments, "pr_rereview": pr_rereview, "reply_draft": reply_draft, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
                       "adopt_ask": adopt_ask, "adopt_read": adopt_read, "adopt_move": adopt_move}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")

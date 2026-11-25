@@ -830,6 +830,75 @@ test("picked comments go to the agent in full with the person's note, and a clos
   assert.ok(JSON.stringify(opening).includes("Skip the Low one."), "the reopened agent's first message is the picked comments");
 });
 
+test("once its agent pushes after being sent comments, the card asks for a re-review, and asking marks them handled", async () => {
+  const base = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 2, comments: 1, heard: [5000], head: "aaa" };
+  let github = { state: "OPEN", status: base };
+  const world = prHost(() => github);
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.clock(1000); await settle(runner);
+  world.store = { [id]: reduce(world.state(), { type: "prSent", id: "T-1", repo: "shop", ids: ["C1"], authors: ["mikael"] }, 7000) };
+  let pr = row(world.state(), "T-1").prs.shop;
+  assert.deepEqual([pr.asked, model.prFixed(pr)], [{ at: 7000, head: "aaa", ids: ["C1"], authors: ["mikael"] }, false]);
+  github = { state: "OPEN", status: { ...base, head: "bbb" } };
+  world.clock(20000); await settle(runner);
+  pr = row(world.state(), "T-1").prs.shop;
+  assert.equal(model.prFixed(pr), true);
+  assert.equal(model.prNeeds(row(world.state(), "T-1")).label, "Fixes pushed · ask for a re-review");
+  assert.deepEqual(model.prAsks(pr), [], "its agent isn't asked about comments it was already sent");
+  assert.deepEqual(model.prAsks({ ...pr, status: { ...pr.status, heard: [5000, 9000] } }), ["review"], "a comment written after the round is");
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_rereview").length, 0, "nothing is asked without the setting or the button");
+
+  world.store = { [id]: reduce(world.state(), { type: "prRereview", id: "T-1", repo: "shop", reply: "Fixed in bbb." }, 0) };
+  const base2 = world.host.delivery;
+  world.host.delivery = async (context, payload) => payload.op === "pr_rereview" ? (world.scripts.push(["delivery", payload]), { state: "OPEN", status: { ...base, head: "bbb" }, replied: true }) : base2(context, payload);
+  await settle(runner);
+  const call = world.scripts.find(([, payload]) => payload.op === "pr_rereview")[1];
+  assert.deepEqual([call.reviewers, call.body, call.since, call.worktree], [["mikael"], "Fixed in bbb.", 7000, "/wt/T-1-add-a-dark-mode-toggle"]);
+  pr = row(world.state(), "T-1").prs.shop;
+  assert.deepEqual([pr.rereviewing, pr.handled, Boolean(pr.asked.done), pr.asked.replied, model.prFixed(pr)], [undefined, ["C1"], true, true, false]);
+  assert.match(world.state().events[0].message, /asked mikael to review #12 again, with its agent's reply/);
+  const again = reduce(world.state(), { type: "prSent", id: "T-1", repo: "shop", ids: ["C2"], authors: ["ana"] }, 50000);
+  assert.deepEqual(row(again, "T-1").prs.shop.asked, { at: 50000, head: "bbb", ids: ["C2"], authors: ["ana"] }, "a new round starts after a re-review");
+});
+
+test("with Ask for a re-review after fixes, an idle agent's pushed fixes are re-reviewed with its own reply, and a refusal is tried once per push", async () => {
+  const base = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 2, comments: 1, heard: [5000], head: "aaa" };
+  let github = { state: "OPEN", status: base }, refuse = true;
+  const world = prHost(() => github), plain = world.host.delivery;
+  world.host.delivery = async (context, payload) => {
+    if (payload.op !== "pr_rereview") return plain(context, payload);
+    world.scripts.push(["delivery", payload]);
+    if (refuse) throw new Error("not a collaborator");
+    return { state: "OPEN", status: github.status, replied: false };
+  };
+  const asks = () => world.scripts.filter(([, payload]) => payload.op === "pr_rereview");
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(reduce(world.state(), { type: "autoRereview" }, 0), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.clock(1000); await settle(runner);
+  world.store = { [id]: reduce(world.state(), { type: "prSent", id: "T-1", repo: "shop", ids: ["C1"], authors: ["mikael"] }, 7000) };
+  world.store = { [id]: reduce(world.state(), { type: "agentSeen", id: "T-1", state: "working" }, 0) };
+  github = { state: "OPEN", status: { ...base, head: "bbb" } };
+  world.clock(20000); await settle(runner);
+  assert.equal(asks().length, 0, "not while its agent is still working");
+  world.store = { [id]: reduce(world.state(), { type: "agentSeen", id: "T-1", state: null }, 0) };
+  await settle(runner); await settle(runner);
+  assert.equal(asks().length, 1);
+  assert.equal("body" in asks()[0][1], false, "the agent's own reply is read from its worktree");
+  assert.match(row(world.state(), "T-1").prs.shop.rereviewError, /not a collaborator/);
+  world.clock(40000); await settle(runner); await settle(runner);
+  assert.equal(asks().length, 1, "a refusal isn't retried until it pushes again");
+  refuse = false;
+  github = { state: "OPEN", status: { ...base, head: "ccc" } };
+  world.clock(60000); await settle(runner); await settle(runner); await settle(runner);
+  assert.equal(asks().length, 2);
+  assert.equal(Boolean(row(world.state(), "T-1").prs.shop.asked.done), true);
+});
+
 test("a PR's most pressing need comes first", () => {
   const needs = status => model.prNeeds({ repos: ["shop"], prs: { shop: { number: 3, status: status && { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 0, ...status } } }, workspaces: { shop: { target: "main" } } });
   assert.deepEqual(needs(null), { label: "PR #3 open", tone: "wait" });

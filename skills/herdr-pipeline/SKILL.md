@@ -36,7 +36,7 @@ One file each in `procedures/`. `{{name}}` marks a value the mod fills in.
 | pr-conflict.md | an open pull request conflicts with its base, from the inspector; also the first message of an agent reopened for it | `number`: the pull request; `target`: its base branch |
 | pr-checks.md | an open pull request has failing checks, from the inspector (or a reopened agent's first message) | `number`: the pull request; `checks`: the failing checks' names |
 | pr-review.md | an open pull request has review comments, from the inspector (or a reopened agent's first message) | `number`: the pull request |
-| pr-comments.md | comments picked in a pull request's list in the inspector, with **Send to agent** (or a reopened agent's first message) | `number`: the pull request; `count`: how many; `comments`: each numbered with who wrote it, its link and its text quoted; `note`: what the person added, or nothing |
+| pr-comments.md | comments picked in a pull request's list in the inspector, with **Send to agent** (or a reopened agent's first message) | `number`: the pull request; `count`: how many; `comments`: each numbered with who wrote it, its link and its text quoted; `note`: what the person added, or nothing. The agent writes its reply to `herdr-reply.md` in the worktree's Git folder, which Pipeline offers to post with the re-review |
 | uncommitted.md | delivery found uncommitted changes | nothing |
 | adopt-ask.md | a running conversation is converted into a task | `task`: its id; `file`: the JSON file to write; `root`: the project folder |
 | adopt-moved.md | the converted work went to a new agent | `task`, `folder`: its worktree |
@@ -53,7 +53,7 @@ One file each in `procedures/`. `{{name}}` marks a value the mod fills in.
 
 Rules the files must keep:
 
-- Pipeline reads these names back: `herdr-summary.md` with its `Changed:`, `Checked:` and `Unsure:` lines, `herdr-pr.md`, `herdr-brief.md`, the `herdr-evidence` folder with `NN-before-…png` and `NN-after-…png` pairs, `walkthrough.url`, and the `title`, `description` and `files` keys of adopt-ask.md.
+- Pipeline reads these names back: `herdr-summary.md` with its `Changed:`, `Checked:` and `Unsure:` lines, `herdr-pr.md`, `herdr-reply.md`, `herdr-brief.md`, the `herdr-evidence` folder with `NN-before-…png` and `NN-after-…png` pairs, `walkthrough.url`, and the `title`, `description` and `files` keys of adopt-ask.md.
 - evidence-later.md is sent as one line: its lines are joined with spaces, so it takes no lists. walkthrough.md, ticket.md and uncommitted.md stay one line.
 - A new `{{name}}` needs its value where the procedure is filled: `procedure(name, values)` in `mods/pipeline/pipeline-live.js`, or `mods/linear/model.js` for ticket-launch.md, or `mods/changes-modal/main.js` for review-notes.md. An unknown name becomes nothing.
 - A new file goes in `PROCEDURES` in `mods/pipeline/procedures.js`, in the table above, and in `preview.mjs` so it shows in examples.md.

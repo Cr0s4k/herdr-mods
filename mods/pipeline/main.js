@@ -1,7 +1,7 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex, Button, Checkbox, Input, InputState, Textarea, TextareaState, Switch, TextView } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, prNew, prUnheard, flowOf, guessFlow, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, prNew, prUnheard, prFixed, flowOf, guessFlow, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
 import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prRequest, prCommentsRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { loadProcedures, procedure } from "./procedures.js";
@@ -145,6 +145,7 @@ export default class Pipeline extends View {
     this.commentNote = InputState.new({ placeholder: "Add a note for the agent (optional)" });
     this.commentNote.on("change", (_e, cx) => cx.notify());
     this.prComments = {}; this.chosen = new Set(); this.unfolded = new Set(); this.seenBefore = {};
+    this.replyText = TextareaState.new({ placeholder: "Nothing to post: only ask for the review", rows: 4 }); this.replyText.on("change", (_e, cx) => cx.notify());
     this.checkInput = InputState.new({ placeholder: "No checks. For example: npm test" });
     this.checkInput.on("submit", (_e, cx) => this.saveCheck(cx));
     this.checkInput.on("blur", (_e, cx) => this.saveCheck(cx));
@@ -236,7 +237,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.commentNote.release(); this.details.release(); this.rename.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.commentNote.release(); this.replyText.release(); this.details.release(); this.rename.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   // A log of what was pressed, kept on this computer only, to see later which parts of Pipeline are used. No titles or text go in it.
@@ -448,7 +449,7 @@ export default class Pipeline extends View {
     if (!list.length) return;
     const text = prCommentsRequest(pr, list, this.commentNote.value()), ids = list.map(comment => comment.id), gone = task.agentState === "gone" || !task.terminal;
     this.track("prComments", { task: task.id, count: ids.length, gone });
-    const done = cx => { this.chosen = new Set(); this.commentNote.set_value(""); this.act({ type: "prSent", id: task.id, repo: name, ids }, cx); };
+    const done = cx => { this.chosen = new Set(); this.commentNote.set_value(""); this.act({ type: "prSent", id: task.id, repo: name, ids, authors: [...new Set(list.map(comment => comment.author))] }, cx); };
     if (gone) { this.act({ type: "reopen", id: task.id, ask: "comments", repo: name, text }, cx); done(cx); return; }
     cx.spawn(async cx => {
       const sent = await hc(["send", task.terminal, text]).then(result => result.code === 0, () => false);
@@ -456,46 +457,99 @@ export default class Pipeline extends View {
       cx.notify();
     });
   }
+  commentRow(comment, state, t) {
+    const { picked, fresh, sent } = state, open = this.unfolded.has(comment.id);
+    const flat = comment.body.replace(/\*\*|__|`|^#+ /gm, "").replace(/\s+/g, " ").trim(), long = flat.length > 220 || comment.body.includes("\n");
+    return h_flex().id(`pipeline-comment-${comment.id}`).gap(9).items_start().p(8).rounded(6).border_1().border_color(picked ? t.accent : t.border).bg(picked ? t.selected : t.surface)
+      .opacity(sent && !picked ? 0.62 : 1)
+      .child(Checkbox.new(`pipeline-comment-pick-${comment.id}`).checked(picked).tab_index(0).accessibility_label(`Pick ${comment.author}'s ${comment.kind}${sent ? ", already sent to the agent" : ""}`)
+        .on_change((_value, cx) => { if (picked) this.chosen.delete(comment.id); else this.chosen.add(comment.id); cx.notify(); })
+        .child(div().size(16).mt(1).flex_none().flex().items_center().justify_center().rounded(4).border_1().cursor_pointer()
+          .border_color(picked ? t.accent : t.border).bg(picked ? t.accent : t.input).text_color(t.accent_foreground)
+          .when(picked, el => el.child(icon("check", 11)))))
+      .child(v_flex().flex_1().min_w(0).gap(4)
+        .child(h_flex().gap(6).items_center().text_size(11.5).min_w(0)
+          .when(fresh, el => el.child(dot(t.accent)))
+          .child(div().font_medium().truncate().child(comment.author))
+          .child(div().flex_none().text_color(t.muted).child(`${comment.kind === "review" ? "review · " : ""}${stamp(comment.at)}`))
+          .when(fresh, el => el.child(div().flex_none().text_color(t.accent).child("new")))
+          .when(Boolean(sent), el => el.child(div().flex_none().text_color(t.muted).child(`· ${sent}`)))
+          .child(div().flex_1())
+          .child(div().id(`pipeline-comment-link-${comment.id}`).flex_none().text_color(t.muted).cursor_pointer().hover(el => el.text_color(t.foreground)).child("Open")
+            .on_click((_e, cx) => { cx.stop_propagation(); this.openLink(comment.url); })))
+        .child(open ? this.copyable(`comment-body-${comment.id}`, comment.body).text_size(12).line_height(1.45)
+          : div().text_size(12).line_height(1.45).text_color(t.muted).child(flat.length > 220 ? `${flat.slice(0, 220)}…` : flat))
+        .when(long, el => el.child(div().id(`pipeline-comment-fold-${comment.id}`).text_size(11.5).text_color(t.accent).cursor_pointer()
+          .child(open ? "Show less" : "Show all").on_click((_e, cx) => { if (open) this.unfolded.delete(comment.id); else this.unfolded.add(comment.id); cx.notify(); }))));
+  }
+  // Sent comments stay pickable, to send again on purpose, but Pick all and Pick the new ones leave them out; once a re-review is asked for they fold away as handled.
   commentList(body, task, name, pr, t, suffix, cx) {
     if (pr.merged || !pr.status?.comments) return;
     this.loadComments(task, name, pr, cx);
     const entry = this.prComments[`${task.id}/${name}`], list = entry?.list ?? [], before = this.seenBefore.task === task.id ? this.seenBefore.prs?.[name] ?? 0 : pr.seen ?? 0;
-    const sent = new Set(pr.sent ?? []), unheard = list.filter(comment => comment.at > before).length;
-    body.child(this.heading(`Comments · ${list.length || pr.status.comments}${unheard ? ` · ${unheard} new` : ""}`));
+    const sent = new Set(pr.sent ?? []), handled = new Set(pr.handled ?? []), shown = list.filter(comment => !handled.has(comment.id)), done = list.filter(comment => handled.has(comment.id));
+    const unheard = shown.filter(comment => comment.at > before).length, fresh = shown.filter(comment => comment.at > before && !sent.has(comment.id)), unsent = shown.filter(comment => !sent.has(comment.id));
+    body.child(this.heading(`Comments · ${shown.length || (list.length ? 0 : pr.status.comments)}${unheard ? ` · ${unheard} new` : ""}`));
     if (!list.length) { body.child(this.label(entry?.error ? `Couldn't read them: ${entry.error}` : "Reading them from GitHub…", t)); return; }
-    for (const comment of list) {
-      const picked = this.chosen.has(comment.id), open = this.unfolded.has(comment.id), fresh = comment.at > before;
-      const flat = comment.body.replace(/\*\*|__|`|^#+ /gm, "").replace(/\s+/g, " ").trim(), long = flat.length > 220 || comment.body.includes("\n");
-      body.child(h_flex().id(`pipeline-comment-${comment.id}`).gap(9).items_start().p(8).rounded(6).border_1().border_color(picked ? t.accent : t.border).bg(picked ? t.selected : t.surface)
-        .child(Checkbox.new(`pipeline-comment-pick-${comment.id}`).checked(picked).tab_index(0).accessibility_label(`Pick ${comment.author}'s ${comment.kind}`)
-          .on_change((_value, cx) => { if (picked) this.chosen.delete(comment.id); else this.chosen.add(comment.id); cx.notify(); })
-          .child(div().size(16).mt(1).flex_none().flex().items_center().justify_center().rounded(4).border_1().cursor_pointer()
-            .border_color(picked ? t.accent : t.border).bg(picked ? t.accent : t.input).text_color(t.accent_foreground)
-            .when(picked, el => el.child(icon("check", 11)))))
-        .child(v_flex().flex_1().min_w(0).gap(4)
-          .child(h_flex().gap(6).items_center().text_size(11.5).min_w(0)
-            .when(fresh, el => el.child(dot(t.accent)))
-            .child(div().font_medium().truncate().child(comment.author))
-            .child(div().flex_none().text_color(t.muted).child(`${comment.kind === "review" ? "review · " : ""}${stamp(comment.at)}`))
-            .when(fresh, el => el.child(div().flex_none().text_color(t.accent).child("new")))
-            .when(sent.has(comment.id), el => el.child(div().flex_none().text_color(t.muted).child("· sent to agent")))
-            .child(div().flex_1())
-            .child(div().id(`pipeline-comment-link-${comment.id}`).flex_none().text_color(t.muted).cursor_pointer().hover(el => el.text_color(t.foreground)).child("Open")
-              .on_click((_e, cx) => { cx.stop_propagation(); this.openLink(comment.url); })))
-          .child(open ? this.copyable(`comment-body-${comment.id}`, comment.body).text_size(12).line_height(1.45)
-            : div().text_size(12).line_height(1.45).text_color(t.muted).child(flat.length > 220 ? `${flat.slice(0, 220)}…` : flat))
-          .when(long, el => el.child(div().id(`pipeline-comment-fold-${comment.id}`).text_size(11.5).text_color(t.accent).cursor_pointer()
-            .child(open ? "Show less" : "Show all").on_click((_e, cx) => { if (open) this.unfolded.delete(comment.id); else this.unfolded.add(comment.id); cx.notify(); })))));
+    const row = comment => this.commentRow(comment, { picked: this.chosen.has(comment.id), fresh: comment.at > before, sent: handled.has(comment.id) ? "handled" : sent.has(comment.id) ? "sent to agent" : null }, t);
+    if (!shown.length) body.child(this.label("Nothing new since the last re-review.", t));
+    for (const comment of shown) body.child(row(comment));
+    if (done.length) {
+      const key = `${task.id}/${name}`, unfold = this.unfolded.has(`handled/${key}`);
+      body.child(h_flex().id(`pipeline-comments-handled-${task.id}${suffix}`).gap(6).items_center().cursor_pointer().text_size(12).text_color(t.muted).hover(el => el.text_color(t.foreground))
+        .role("button").accessibility_label(`${unfold ? "Hide" : "Show"} handled comments`)
+        .on_click((_e, cx) => { if (unfold) this.unfolded.delete(`handled/${key}`); else this.unfolded.add(`handled/${key}`); cx.notify(); })
+        .child(svg(`mods/workspace-chrome/chevron-${unfold ? "down" : "right"}.svg`).size(11).flex_none()).child(`Handled · ${done.length}`));
+      if (unfold) for (const comment of done) body.child(row(comment));
     }
-    const picks = list.filter(comment => this.chosen.has(comment.id)).length, gone = task.agentState === "gone" || !task.terminal, asked = this.prAsked === `${task.id}/comments`;
+    const picked = list.filter(comment => this.chosen.has(comment.id)), picks = picked.length, again = picked.some(comment => sent.has(comment.id));
+    const gone = task.agentState === "gone" || !task.terminal, asked = this.prAsked === `${task.id}/comments`;
     body.child(h_flex().gap(8).items_center().flex_wrap()
-      .child(this.button(`comments-all-${task.id}${suffix}`, picks === list.length ? "Clear" : "Pick all", cx => { this.chosen = picks === list.length ? new Set() : new Set([...this.chosen, ...list.map(comment => comment.id)]); cx.notify(); }, t, { small: true }))
-      .when(Boolean(unheard) && picks !== unheard, el => el.child(this.button(`comments-new-${task.id}${suffix}`, "Pick the new ones", cx => { this.chosen = new Set(list.filter(comment => comment.at > before).map(comment => comment.id)); cx.notify(); }, t, { small: true }))));
+      .when(unsent.length > 0 || picks > 0, el => el.child(this.button(`comments-all-${task.id}${suffix}`, picks ? "Clear" : "Pick all unsent", cx => { this.chosen = picks ? new Set() : new Set(unsent.map(comment => comment.id)); cx.notify(); }, t, { small: true })))
+      .when(fresh.length > 0 && !picks, el => el.child(this.button(`comments-new-${task.id}${suffix}`, "Pick the new ones", cx => { this.chosen = new Set(fresh.map(comment => comment.id)); cx.notify(); }, t, { small: true }))));
     if (picks) body.child(Input.new(this.commentNote).id(`pipeline-comment-note-${task.id}${suffix}`).w_full().h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("A note for the agent"));
-    body.child(this.button(`comments-send-${task.id}${suffix}`, task.reopen ? "Reopening…" : asked && !picks ? "Sent. It pushes when done" : !picks ? "Pick comments to send" : `${gone ? "Reopen agent with" : "Send"} ${picks || ""} ${picks === 1 ? "comment" : "comments"}${gone ? "" : " to the agent"}`.replace(/\s+/g, " "),
+    const count = `${picks} ${picks === 1 ? "comment" : "comments"}`;
+    body.child(this.button(`comments-send-${task.id}${suffix}`, task.reopen ? "Reopening…" : asked && !picks ? "Sent. It pushes when done" : !picks ? "Pick comments to send"
+      : gone ? `Reopen agent with ${count}${again ? " again" : ""}` : `Send ${count} to the agent${again ? " again" : ""}`,
       cx => this.sendComments(task, name, pr, cx), t,
       { icon: "reset", primary: picks > 0, disabled: !picks || Boolean(task.reopen) || task.agentState === "working",
-        hint: `${gone ? "Starts its agent again in the worktree and gives it" : "Gives its agent"} the picked comments in full, with your note, to change the code and push` }));
+        hint: `${gone ? "Starts its agent again in the worktree and gives it" : "Gives its agent"} the picked comments in full, with your note, to change the code and push${again ? ". Some were sent before" : ""}` }));
+  }
+  // Its agent's reply is read from the worktree once it pushed, and kept as typed once the person edits it.
+  loadReply(task, name, pr, cx) {
+    const round = `${task.id}/${name}/${pr.asked.at}`, key = `${round}/${pr.status?.head}/${task.agentState ?? ""}`, ws = task.workspaces?.[name];
+    if (this.replyFor === key || !ws?.root) return;
+    if (this.replyRound !== round) { this.replyRound = round; this.replyText.set_value(""); this.replyLoaded = ""; }
+    this.replyFor = key;
+    cx.spawn(async cx => {
+      try {
+        const script = await readTextFile(`${appHome()}/mods/pipeline/delivery.py`), root = ws.source ?? this.context.cwd;
+        const ran = await exec("python3", ["-c", script, JSON.stringify({ op: "reply_draft", worktree: ws.root, since: pr.asked.at })], { cwd: root, on: this.context.on, timeout: 20000 });
+        const text = JSON.parse(ran.stdout)?.data?.text;
+        if (text && this.replyFor === key && this.replyText.value() === this.replyLoaded) { this.replyText.set_value(text); this.replyLoaded = text; cx.notify(); }
+      } catch { /* No draft: the person can write one or ask without it. */ }
+    });
+  }
+  // One reply box per inspector: with several repositories only the first pull request with fixes gets it, the others post their agent's reply as written.
+  rereviewBlock(body, state, task, name, pr, t, suffix, cx) {
+    const asked = pr.asked, who = asked?.authors?.length ? asked.authors.join(", ") : "its reviewers";
+    if (asked?.done) { body.child(this.label(`Asked ${who} to review again ${stamp(asked.done)}${asked.replied ? ", with its agent's reply" : ""}.`, t)); return; }
+    if (!prFixed(pr) && !pr.rereviewing) return;
+    const editable = Object.entries(task.prs).find(([, other]) => prFixed(other) || other.rereviewing)?.[0] === name;
+    body.child(this.heading("Fixes pushed"));
+    const pushed = `Its agent pushed ${pr.status.head.slice(0, 7)} after you sent it ${asked.ids.length === 1 ? "a comment" : `${asked.ids.length} comments`}.`;
+    if (editable) {
+      this.loadReply(task, name, pr, cx);
+      body.child(this.label(`${pushed} The reply below goes on the pull request in your name; clear it to only ask for the review.`, t));
+      body.child(Textarea.new(this.replyText).id(`pipeline-reply-${task.id}${suffix}`).w_full().h(96).px(9).py(8).rounded(6).border_1().border_color(t.border).bg(t.input).text_size(12).accessibility_label("Reply on the pull request"));
+    } else body.child(this.label(`${pushed} Asking posts the reply its agent wrote, if any, in your name.`, t));
+    const reply = editable ? this.replyText.value().trim() : undefined;
+    if (pr.rereviewError) body.child(div().id(`pipeline-rereview-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.rereviewError));
+    body.child(this.button(`rereview-${task.id}${suffix}`, pr.rereviewing ? "Asking GitHub…" : `Ask ${who} to review again`,
+      cx => { this.track("rereview", { task: task.id }); this.act({ type: "prRereview", id: task.id, repo: name, ...(editable ? { reply } : {}) }, cx); }, t,
+      { icon: "eye", primary: !pr.rereviewing, disabled: Boolean(pr.rereviewing) || task.agentState === "working",
+        hint: `Asks ${who} to review again${reply === "" ? "" : ", then posts the reply on the pull request"}. GitHub notifies them` }));
+    if (!state.autoRereview) body.child(this.label("Settings → Delivery → Ask for a re-review after fixes does this by itself, with its agent's reply.", t));
   }
   resolve(task, cx, ask = "rebase") {
     if (!task?.terminal || !task.error) return;
@@ -1454,12 +1508,13 @@ export default class Pipeline extends View {
         ...(state.delivery !== "pr" && this.github ? [use("pr", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx),
           "This repository is on GitHub and gh is installed, so finished work can open a pull request instead")] : []),
         change("delivery", "delivery")], chose("delivery", state.delivery)),
-      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval || state.mergeApproved || state.autoRebase ? ok : plain,
-        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}${state.mergeApproved ? " · merges once approved" : ""}${state.autoRebase ? " · rebases on conflicts" : ""}`, [
+      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval || state.mergeApproved || state.autoRebase || state.autoRereview ? ok : plain,
+        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}${state.mergeApproved ? " · merges once approved" : ""}${state.autoRebase ? " · rebases on conflicts" : ""}${state.autoRereview ? " · asks for re-reviews" : ""}`, [
         ...(!state.draftPr ? [use("draft", "Open as drafts", cx => this.act({ type: "draftPr" }, cx), "Each pull request opens as a draft; mark it ready from its task when it should be reviewed")] : []),
         ...(!state.prApproval ? [use("approval", "Wait for an approval", cx => this.act({ type: "prApproval" }, cx), "A pull request counts as ready to merge only once someone approved it, even where GitHub requires no review")] : []),
         ...(!state.mergeApproved ? [use("merge", "Merge once approved", cx => this.act({ type: "mergeApproved" }, cx), "Once someone approves a pull request and its checks pass, Pipeline merges it on GitHub")] : []),
         ...(!state.autoRebase ? [use("rebase", "Rebase on conflicts", cx => this.act({ type: "autoRebase" }, cx), "When a pull request conflicts with its base, its agent rebases and pushes by itself")] : []),
+        ...(!state.autoRereview ? [use("rereview", "Ask for re-reviews", cx => this.act({ type: "autoRereview" }, cx), "Once an agent pushes fixes for comments you sent it, Pipeline posts its reply and asks the comments' authors to review again")] : []),
         change("prs", "delivery")])]),
       ...(state.delivery === "pr" ? [] : [row("after", "After merge", state.afterMerge ? ok : plain, state.afterMerge ?? "Nothing to run", [
         ...(!state.afterMerge && afterHint ? [use("after", `Use ${afterHint}`, cx => { this.afterInput.set_value(afterHint); this.act({ type: "afterMerge", command: afterHint }, cx); },
@@ -1975,6 +2030,8 @@ export default class Pipeline extends View {
         Boolean(state.mergeApproved), cx => this.act({ type: "mergeApproved" }, cx), t));
       if (state.delivery === "pr") body.child(this.switchRow("auto-rebase", "Rebase on conflicts", state.autoRebase ? "A pull request that conflicts has its agent rebase and push by itself, reopening the agent if its tab is closed" : "A conflicting pull request waits for you to ask its agent",
         Boolean(state.autoRebase), cx => this.act({ type: "autoRebase" }, cx), t));
+      if (state.delivery === "pr") body.child(this.switchRow("auto-rereview", "Ask for a re-review after fixes", state.autoRereview ? "Once an agent pushes fixes for comments you sent it, Pipeline posts its reply on the pull request and asks the comments' authors to review again" : "After an agent pushes fixes for comments, the task waits for you to ask for a re-review",
+        Boolean(state.autoRereview), cx => this.act({ type: "autoRereview" }, cx), t));
       if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Link the walkthrough page in the pull request", "Adds one line to the description linking the before and after page. The screenshots themselves stay out of the repository",
         Boolean(state.evidencePr), cx => this.act({ type: "evidencePr" }, cx), t));
       if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
@@ -2375,6 +2432,7 @@ export default class Pipeline extends View {
         .when(!pr.merged && Boolean(pr.status), el => el.child(this.button(`pr-ready-${task.id}${suffix}`, pr.readying ? "Asking GitHub…" : draft ? "Mark ready" : "Back to draft",
           cx => this.act({ type: "prReady", id: task.id, repo: name, undo: !draft }, cx), t,
           { icon: draft ? "check" : null, primary: draft && !pr.readying, disabled: Boolean(pr.readying), hint: draft ? "Marks it ready for review on GitHub (gh pr ready)" : "Makes it a draft again on GitHub (gh pr ready --undo)" }))));
+      this.rereviewBlock(body, state, task, name, pr, t, suffix, cx);
       this.commentList(body, task, name, pr, t, suffix, cx);
     }
     if (task.agentState === "gone" || task.reopen) {

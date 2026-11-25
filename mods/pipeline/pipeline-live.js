@@ -1,4 +1,4 @@
-import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, agentOpening, prConflict, prMergeReady, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
+import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, agentOpening, prConflict, prMergeReady, prFixed, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 import { procedure } from "./procedures.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
@@ -372,6 +372,27 @@ export class LiveRunner {
     Promise.resolve(this.host.send?.(task.terminal, prConflictRequest(conflict[1].number, task.workspaces?.[conflict[0]]?.target))).catch(() => {});
   }
 
+  // With Ask for a re-review, once an idle agent pushed fixes for the comments it was sent.
+  autoRereview(id, state, task) {
+    if (!state.autoRereview || task.status !== "pr" || task.discard || task.reopen || ["working", "input"].includes(task.agentState)) return;
+    for (const [repo, pr] of Object.entries(task.prs ?? {})) if (prFixed(pr) && !pr.rereviewing && !pr.asked.tried) this.apply(id, { type: "prRereview", id: task.id, repo });
+  }
+
+  rereview(id, state, task, repo, cx) {
+    const pr = task.prs[repo], key = `rereview/${id}/${task.id}/${repo}`;
+    if (this.polling.has(key)) return;
+    this.polling.add(key);
+    cx.spawn(async () => {
+      const ws = task.workspaces?.[repo], source = ws?.source ?? state.context.cwd;
+      const payload = { op: "pr_rereview", root: source, url: pr.url, reviewers: pr.asked.authors, worktree: ws?.root, since: pr.asked.at, ...("reply" in pr.rereviewing ? { body: pr.rereviewing.reply } : {}) };
+      try {
+        const { status, replied } = await this.host.delivery({ cwd: source, on: state.context.on }, payload);
+        this.apply(id, { type: "prRereviewed", id: task.id, repo, url: pr.url, status, replied });
+      } catch (error) { this.apply(id, { type: "prRereviewed", id: task.id, repo, url: pr.url, error: String(error?.message ?? error) }); }
+      finally { this.polling.delete(key); this.polled.delete(`pr/${id}/${task.id}/${repo}`); }
+    });
+  }
+
   reopenAgent(id, state, task, cx) {
     const key = `reopen/${id}/${task.id}`, host = this.host;
     if (this.polling.has(key)) return;
@@ -585,7 +606,11 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) { this.askAdopted(id, state, task, cx); this.watchStall(id, task, cx); this.countUsage(id, state, task, cx); this.readSummary(id, state, task, cx); }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
-      if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged && pr.readying) this.readyPullRequest(id, state, task, repo, cx);
+      if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) {
+        if (!pr.merged && pr.readying) this.readyPullRequest(id, state, task, repo, cx);
+        if (!pr.merged && pr.rereviewing) this.rereview(id, state, task, repo, cx);
+      }
+      if (task.status === "pr") this.autoRereview(id, state, this.task(id, task.id) ?? task);
       if (task.status === "pr") this.mergeApproved(id, state, this.task(id, task.id) ?? task, cx);
       if (["review", "input", "failed"].includes(task.status) && !task.discard) this.watchBranch(id, state, task, cx);
     }

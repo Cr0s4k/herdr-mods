@@ -477,13 +477,13 @@ class DeliveryTest(unittest.TestCase):
         log = self.stub_gh(graphql(reply))
         result = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})
         self.assertEqual(result, {"state": "OPEN", "status": {"draft": False, "mergeable": "CONFLICTING", "mergeState": "DIRTY", "review": "CHANGES_REQUESTED", "comments": 2,
-                                                              "heard": [1795600800000, 1795604400000], "failed": 2, "failing": ["test", "ci/legacy"], "pending": 2, "passed": 2}})
+                                                              "heard": [1795600800000, 1795604400000], "head": None, "failed": 2, "failing": ["test", "ci/legacy"], "pending": 2, "passed": 2}})
         self.assertIn("statusCheckRollup", log.read_text())
 
     def test_pull_request_without_reviews_or_checks(self):
         self.stub_gh(graphql({"state": "OPEN", "isDraft": True, "mergeable": "UNKNOWN", "mergeStateStatus": "DRAFT", "reviewDecision": ""}))
         status = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["status"]
-        self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "comments": 0, "heard": [], "failed": 0, "failing": [], "pending": 0, "passed": 0})
+        self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "comments": 0, "heard": [], "head": None, "failed": 0, "failing": [], "pending": 0, "passed": 0})
 
     def test_a_pull_requests_comments_are_listed_whole_oldest_first(self):
         reply = {"author": person("me"),
@@ -498,6 +498,36 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual([(item["id"], item["kind"], item["author"], item["body"]) for item in comments],
                          [("C1", "comment", "mikael", "## Review\n\nMedium: flaky."), ("R1", "review", "ana", "src/a.js:8: Use setTheme().\n\nsrc/b.js:3: Gone?")])
 
+    def test_a_re_review_asks_its_reviewers_again_then_posts_the_reply(self):
+        log = self.stub_gh('case "$1 $2" in "api graphql") ' + graphql({"state": "OPEN", "headRefOid": "abc"}) + ';; "pr comment") cat > "$HOME/reply.txt";; esac\n')
+        url = "https://github.com/me/project/pull/12"
+        with patch.dict(os.environ, {"HOME": str(self.home)}):
+            result = delivery.pr_rereview({"root": str(self.repo), "url": url, "reviewers": ["mikael", "ana"], "body": "  Fixed in abc: the test retries.  "})
+        self.assertEqual([result["replied"], result["status"]["head"]], [True, "abc"])
+        calls = [line for line in log.read_text().splitlines() if line.startswith("pr ")]
+        self.assertEqual(calls, ["pr edit " + url + " --remove-reviewer mikael,ana", "pr edit " + url + " --add-reviewer mikael,ana", "pr comment " + url + " --body-file -"])
+        self.assertEqual((self.home / "reply.txt").read_text(), "Fixed in abc: the test retries.")
+
+    def test_a_re_review_without_a_reply_only_asks(self):
+        log = self.stub_gh('case "$1 $2" in "api graphql") ' + graphql({"state": "OPEN"}) + ';; esac\n')
+        result = delivery.pr_rereview({"root": str(self.repo), "url": "https://github.com/me/project/pull/12", "reviewers": ["mikael"], "body": ""})
+        self.assertFalse(result["replied"])
+        self.assertNotIn("pr comment", log.read_text())
+
+    def test_a_re_review_that_github_refuses_posts_nothing(self):
+        log = self.stub_gh('case "$*" in *--add-reviewer*) echo "not a collaborator" >&2; exit 1;; esac\n')
+        with self.assertRaisesRegex(ValueError, "not a collaborator"):
+            delivery.pr_rereview({"root": str(self.repo), "url": "https://github.com/me/project/pull/12", "reviewers": ["mikael"], "body": "Fixed."})
+        self.assertNotIn("pr comment", log.read_text())
+
+    def test_the_agents_reply_is_read_only_when_written_after_the_comments_were_sent(self):
+        path = Path(self.git(self.repo, "rev-parse", "--path-format=absolute", "--git-path", "herdr-reply.md"))
+        path.write_text("Fixed in abc.\n")
+        written_at = path.stat().st_mtime * 1000
+        self.assertEqual(delivery.reply_draft({"worktree": str(self.repo), "since": written_at - 1000})["text"], "Fixed in abc.")
+        self.assertIsNone(delivery.reply_draft({"worktree": str(self.repo), "since": written_at + 1000})["text"], "an older reply is from an earlier round")
+        self.assertIsNone(delivery.reply_draft({"worktree": str(self.home / "gone"), "since": 0})["text"])
+
     def test_many_pull_requests_are_read_in_one_query_per_host(self):
         node = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED", "author": person("me"),
                 "reviews": {"nodes": [{"state": "COMMENTED", "submittedAt": "2026-11-25T10:00:00Z", "author": person("ana")}]},
@@ -507,8 +537,8 @@ class DeliveryTest(unittest.TestCase):
         log = self.stub_gh("cat <<'EOF'\n" + json.dumps(reply) + "\nEOF\nexit 1\n")
         urls = ["https://github.com/me/shop/pull/12", "https://github.com/me/api/pull/3", "https://github.com/me/gone/pull/1", "https://github.com/me/shop/pull/12"]
         states = delivery.pr_states({"root": str(self.repo), "urls": urls})["states"]
-        self.assertEqual(states, {"https://github.com/me/shop/pull/12": {"state": "OPEN", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "heard": [1795600800000], "failed": 1, "failing": ["test"], "pending": 0, "passed": 0}},
-                                  "https://github.com/me/api/pull/3": {"state": "MERGED", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "heard": [1795600800000], "failed": 0, "failing": [], "pending": 0, "passed": 0}}})
+        self.assertEqual(states, {"https://github.com/me/shop/pull/12": {"state": "OPEN", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "heard": [1795600800000], "head": None, "failed": 1, "failing": ["test"], "pending": 0, "passed": 0}},
+                                  "https://github.com/me/api/pull/3": {"state": "MERGED", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "heard": [1795600800000], "head": None, "failed": 0, "failing": [], "pending": 0, "passed": 0}}})
         calls = log.read_text()
         self.assertEqual(calls.count("api graphql --hostname github.com"), 1)
         self.assertIn("n1=api", calls)

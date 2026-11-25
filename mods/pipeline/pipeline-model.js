@@ -79,6 +79,8 @@ export const prAgent = task => task.status !== "pr" ? null : { working: "Agent w
 // The first of a task's open pull requests that can't merge for conflicts, as [repository, pull request].
 // Comments from others that came after the person last opened the task: what the card's dot counts.
 export const prUnheard = pr => pr.merged ? 0 : (pr.status?.heard ?? []).filter(at => at > (pr.seen ?? 0)).length;
+// Its agent pushed after it was sent comments, and their authors weren't asked to review again yet.
+export const prFixed = pr => Boolean(pr && !pr.merged && pr.asked && !pr.asked.done && pr.asked.head && pr.status?.head && pr.status.head !== pr.asked.head);
 export const prNew = task => Object.values(task.prs ?? {}).reduce((sum, pr) => sum + prUnheard(pr), 0);
 const prLatest = task => Math.max(0, ...Object.values(task.prs ?? {}).flatMap(pr => pr.status?.heard ?? []));
 export const prConflict = task => Object.entries(task.prs ?? {}).find(([, pr]) => !pr.merged && (pr.status?.mergeable === "CONFLICTING" || pr.status?.mergeState === "DIRTY")) ?? null;
@@ -98,7 +100,9 @@ export function guessFlow(merged) {
 export function prAsks(pr) {
   const status = pr?.status;
   if (!status || pr.merged) return [];
-  return [(status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") && "rebase", status.failed > 0 && "checks", (status.review === "CHANGES_REQUESTED" || status.comments > 0) && "review"].filter(Boolean);
+  // Once comments were sent, only ones written after that call for the agent again.
+  const review = pr.asked ? (status.heard ?? []).some(at => at > pr.asked.at) : status.review === "CHANGES_REQUESTED" || status.comments > 0;
+  return [(status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") && "rebase", status.failed > 0 && "checks", review && "review"].filter(Boolean);
 }
 export const tuningLabel = tune => [tune?.model, tune?.effort && `${tune.effort} effort`].filter(Boolean).join(" · ");
 export const CATALOG = [
@@ -294,6 +298,7 @@ export function prNeed(pr, target = "the base branch", rules = null) {
   if (status.draft) return { label: "Draft · mark it ready", tone: "wait", rank: 0 };
   if (status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") return { label: `Conflicts with ${target}`, tone: "blocked", rank: 1 };
   if (status.failed) return { label: `Checks failing · ${status.failed}`, tone: "blocked", rank: 2 };
+  if (prFixed(pr)) return { label: pr.rereviewing ? "Asking for a re-review" : "Fixes pushed · ask for a re-review", tone: "wait", rank: 2.5 };
   if (status.review === "CHANGES_REQUESTED") return { label: "Changes requested", tone: "blocked", rank: 3 };
   if (status.pending) return { label: `Checks running · ${status.pending}`, tone: "wait", rank: 4 };
   if (status.review === "REVIEW_REQUIRED" || (rules?.prApproval && status.review !== "APPROVED")) return { label: "Waiting for review", tone: "wait", rank: 5 };
@@ -588,7 +593,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "mergeApproved", "autoRebase", "autoTrust", "quiet", "planner", "implementer"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "mergeApproved", "autoRebase", "autoRereview", "autoTrust", "quiet", "planner", "implementer"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -1309,6 +1314,7 @@ export function reduce(state, action, now = Date.now()) {
     case "tryAuto": if (!next.live) return state; next.tryAuto = !next.tryAuto; event(next, next.tryAuto ? "Try it starts when work is ready for review." : "Try it starts when you ask."); break;
     case "evidence": if (!next.live) return state; next.evidence = !next.evidence; event(next, next.evidence ? "Agents are asked for before and after screenshots." : "Agents are no longer asked for screenshots."); break;
     case "evidencePr": if (!next.live) return state; next.evidencePr = !next.evidencePr; event(next, next.evidencePr ? "Pull requests link the walkthrough page." : "Pull requests don't link the walkthrough page."); break;
+    case "autoRereview": if (!next.live) return state; next.autoRereview = !next.autoRereview; event(next, next.autoRereview ? "Once an agent pushes fixes for comments you sent it, Pipeline posts its reply and asks their authors to review again." : "After an agent pushes fixes for comments, Pipeline waits for you to ask for a re-review."); break;
     case "autoRebase": if (!next.live) return state; next.autoRebase = !next.autoRebase; event(next, next.autoRebase ? "A pull request that conflicts has its agent rebase by itself." : "A conflicting pull request waits for you to ask for a rebase."); break;
     case "rebaseAsked": {
       const task = row(action.id);
@@ -1441,6 +1447,8 @@ export function reduce(state, action, now = Date.now()) {
       if (task.rebaseAsked && !prConflict(task)) delete task.rebaseAsked;
       // A refused merge is tried again only once GitHub tells something new about the pull request.
       if (pr.mergeTried) task.prs[action.repo] = { ...task.prs[action.repo], mergeTried: false, mergeError: null };
+      // An automatic re-review that failed is tried again after the agent pushes once more.
+      if (pr.asked?.tried && action.status.head !== pr.status?.head) task.prs[action.repo] = { ...task.prs[action.repo], asked: { ...pr.asked, tried: false } };
       break;
     }
     case "agentSeen": {
@@ -1456,6 +1464,21 @@ export function reduce(state, action, now = Date.now()) {
       Object.assign(task, { reopen: true, reopenAsk: action.ask ? { kind: action.ask, repo: action.repo ?? null, ...(action.text ? { text: action.text } : {}) } : null, reopenError: null, ...(action.ask === "rebase" ? { rebaseAsked: true } : {}) });
       break;
     }
+    case "prRereview": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr?.asked || pr.asked.done || pr.rereviewing) return state;
+      task.prs = { ...task.prs, [action.repo]: { ...pr, rereviewing: action.reply === undefined ? { draft: true } : { reply: action.reply }, rereviewError: null } };
+      break;
+    }
+    case "prRereviewed": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || !pr?.rereviewing || pr.url !== action.url) return state;
+      const { rereviewing, ...rest } = pr;
+      if (action.error) { task.prs = { ...task.prs, [action.repo]: { ...rest, rereviewError: action.error, asked: { ...pr.asked, tried: true } } }; break; }
+      task.prs = { ...task.prs, [action.repo]: { ...rest, ...(action.status ? { status: action.status } : {}), handled: [...new Set([...(pr.handled ?? []), ...pr.asked.ids])].slice(-200), asked: { ...pr.asked, done: now, replied: Boolean(action.replied) } } };
+      event(next, `${task.id} · asked ${pr.asked.authors.join(", ") || "its reviewers"} to review #${pr.number} again${action.replied ? ", with its agent's reply" : ""}.`, task.id);
+      break;
+    }
     case "prSeen": {
       const task = row(action.id);
       if (!next.live || task?.status !== "pr" || !prNew(task)) return state;
@@ -1465,7 +1488,9 @@ export function reduce(state, action, now = Date.now()) {
     case "prSent": {
       const task = row(action.id), pr = task?.prs?.[action.repo];
       if (!next.live || task?.status !== "pr" || !pr || !action.ids?.length) return state;
-      task.prs = { ...task.prs, [action.repo]: { ...pr, sent: [...new Set([...(pr.sent ?? []), ...action.ids])].slice(-200) } };
+      const open = pr.asked && !pr.asked.done ? pr.asked : null;
+      const asked = { at: now, head: pr.status?.head ?? null, ids: [...new Set([...(open?.ids ?? []), ...action.ids])], authors: [...new Set([...(open?.authors ?? []), ...(action.authors ?? [])])] };
+      task.prs = { ...task.prs, [action.repo]: { ...pr, sent: [...new Set([...(pr.sent ?? []), ...action.ids])].slice(-200), asked, rereviewError: null } };
       event(next, `${task.id} · sent ${action.ids.length === 1 ? "a comment" : `${action.ids.length} comments`} on #${pr.number} to its agent.`, task.id);
       break;
     }
