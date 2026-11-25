@@ -304,14 +304,14 @@ PR_FIELDS = """fragment pr on PullRequest {
 }"""
 
 
-# Every pull request on one GitHub host is read in a single GraphQL query, so asking often costs one request rather than one per pull request.
+# Every pull request on one GitHub host is read in a single GraphQL query, so asking often costs one request rather than one per pull request. A host that fails leaves out only its own.
 def pr_states(payload):
     hosts = {}
     for url in dict.fromkeys(payload["urls"]):
         match = re.match(r"https://([^/]+)/([^/]+)/([^/]+)/pull/(\d+)", url)
         if match:
             hosts.setdefault(match.group(1), []).append((url, match.group(2), match.group(3), int(match.group(4))))
-    states = {}
+    states, errors = {}, []
     for host, prs in hosts.items():
         names, fields, args = [], [], []
         for index, (url, owner, name, number) in enumerate(prs):
@@ -325,13 +325,15 @@ def pr_states(payload):
         except ValueError:
             data = {}
         if not data and asked.returncode:
-            raise ValueError(asked.stderr.strip() or "GitHub didn't answer about the pull requests.")
+            errors.append(asked.stderr.strip() or f"{host} didn't answer about the pull requests.")
         for index, (url, *_rest) in enumerate(prs):
             pr = ((data.get(f"r{index}") or {}).get("pullRequest"))
             if pr:
                 commit = ((pr.get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {}
                 rollup = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
                 states[url] = pr_summary({**pr, "reviews": (pr.get("reviews") or {}).get("nodes") or [], "statusCheckRollup": rollup})
+    if errors and len(errors) == len(hosts):
+        raise ValueError(errors[0])
     return {"states": states}
 
 

@@ -492,6 +492,12 @@ class DeliveryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Bad credentials"):
             delivery.pr_states({"root": str(self.repo), "urls": ["https://github.com/me/shop/pull/12"]})
 
+    def test_a_host_that_fails_leaves_out_only_its_own_pull_requests(self):
+        node = {"state": "MERGED", "isDraft": False, "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN", "reviewDecision": None, "author": {"login": "me"}, "reviews": {"nodes": []}, "commits": {"nodes": []}}
+        self.stub_gh('case "$*" in *github.invalid*) echo "error connecting to github.invalid" >&2; exit 1;; esac\ncat <<\'EOF\'\n' + json.dumps({"data": {"r0": {"pullRequest": node}}}) + "\nEOF\n")
+        states = delivery.pr_states({"root": str(self.repo), "urls": ["https://github.invalid/me/demo/pull/20", "https://github.com/me/shop/pull/12"]})["states"]
+        self.assertEqual(list(states), ["https://github.com/me/shop/pull/12"])
+
     def found(self, state, head):
         self.stub_gh("cat <<'EOF'\n" + json.dumps({"url": "https://github.com/me/project/pull/7", "number": 7, "state": state, "headRefOid": head}) + "\nEOF\n")
         return delivery.pr_find(self.payload("pr_find"))["found"]
