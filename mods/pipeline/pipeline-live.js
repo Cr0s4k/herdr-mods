@@ -291,12 +291,12 @@ export const prRequest = (kind, pr, target) => kind === "checks" ? procedure("pr
   : kind === "review" ? procedure("pr-review", { number: pr.number }) : prConflictRequest(pr.number, target);
 export const fixRequest = (command, output) => procedure("check-failed", { command, output: output || "(no output)" });
 
-const PR_READ = 60000, PR_READ_AWAY = 600000;
+const PR_READ = 15000, PR_READ_AWAY = 600000, FIND_READ = 60000;
 // Starts, merges and discards real agents' work, one job at a time, and maps agent status onto tasks.
 export class LiveRunner {
   constructor(host) { this.host = host; this.busy = false; this.peeked = new Map(); this.polled = new Map(); this.polling = new Set(); this.checking = new Set(); this.updating = new Set(); this.trying = new Set(); this.screens = new Map(); this.counted = new Map(); this.summarised = new Map(); this.forgetting = new Set(); this.queues = new Map(); this.planning = new Set(); }
 
-  // GitHub is asked once a minute only where the answer is waited for: the pipeline of the space on screen, and a running one with queued work a merge could release. The rest are asked every ten minutes.
+  // GitHub is asked every fifteen seconds only where the answer is waited for: the pipeline of the space on screen, and a running one with queued work a merge could release. The rest are asked every ten minutes, unless they ride along with one that is due.
   pace(state) {
     const shown = this.host.shown?.();
     const near = !this.host.shown || (shown && (state.space ?? state.context.space) === shown.space);
@@ -312,22 +312,39 @@ export class LiveRunner {
     this.viewing = viewing;
   }
 
-  // Open pull requests are asked about: what they wait for, and whether GitHub merged or closed them.
-  watchPullRequest(id, state, task, repo, cx) {
-    const pr = task.prs[repo], key = `pr/${id}/${task.id}/${repo}`, now = this.host.now();
-    if (this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < this.pace(state)) return;
-    this.polled.set(key, now); this.polling.add(key);
-    cx.spawn(async () => {
-      try {
-        const source = task.workspaces?.[repo]?.source ?? state.context.cwd;
-        const { state: github, status } = await this.host.delivery({ cwd: source, on: state.context.on }, { op: "pr_state", root: source, url: pr.url });
-        const now = this.task(id, task.id);
-        if (now?.status !== "pr" || now.prs?.[repo]?.url !== pr.url) return;
-        if (github === "OPEN" && status) this.apply(id, { type: "prStatus", id: task.id, repo, url: pr.url, status });
-        else if (github === "MERGED") await this.mergedOnGitHub(id, state, task.id, repo, pr.url);
-        else if (github === "CLOSED") this.apply(id, { type: "prClosed", id: task.id, repo, url: pr.url });
-      } catch { /* Try again next minute. */ } finally { this.polling.delete(key); }
-    });
+  // Open pull requests are asked about: what they wait for, and whether GitHub merged or closed them. Once one is due, every open one on that machine rides along in the same query.
+  watchPullRequests(cx) {
+    const now = this.host.now(), machines = new Map();
+    for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
+      if (task.status !== "pr" || task.discard) continue;
+      for (const [repo, pr] of Object.entries(task.prs ?? {})) {
+        if (pr.merged || pr.readying) continue;
+        const key = `pr/${id}/${task.id}/${repo}`, on = state.context.on ?? "";
+        if (!machines.has(on)) machines.set(on, { due: false, rows: [] });
+        const machine = machines.get(on);
+        machine.rows.push({ id, state, task, repo, pr, key });
+        if (now - (this.polled.get(key) ?? -Infinity) >= this.pace(state)) machine.due = true;
+      }
+    }
+    for (const [on, { due, rows }] of machines) {
+      const lane = `prs/${on}`;
+      if (!due || this.polling.has(lane)) continue;
+      for (const row of rows) this.polled.set(row.key, now);
+      this.polling.add(lane);
+      cx.spawn(async () => {
+        try {
+          const first = rows[0], source = first.task.workspaces?.[first.repo]?.source ?? first.state.context.cwd;
+          const { states } = await this.host.delivery({ cwd: source, on: first.state.context.on }, { op: "pr_states", root: source, urls: rows.map(row => row.pr.url) });
+          for (const { id, state, task, repo, pr } of rows) {
+            const answer = states?.[pr.url], current = this.task(id, task.id);
+            if (!answer || current?.status !== "pr" || current.prs?.[repo]?.url !== pr.url) continue;
+            if (answer.state === "OPEN" && answer.status) this.apply(id, { type: "prStatus", id: task.id, repo, url: pr.url, status: answer.status });
+            else if (answer.state === "MERGED") await this.mergedOnGitHub(id, state, task.id, repo, pr.url);
+            else if (answer.state === "CLOSED") this.apply(id, { type: "prClosed", id: task.id, repo, url: pr.url });
+          }
+        } catch { /* Try again at the next pace. */ } finally { this.polling.delete(lane); }
+      });
+    }
   }
 
   async mergedOnGitHub(id, state, taskId, repo, url) {
@@ -409,7 +426,7 @@ export class LiveRunner {
   // A pull request opened by hand on a task's branch is found here, so the task follows it like one Pipeline opened.
   watchBranch(id, state, task, cx) {
     const key = `find/${id}/${task.id}`, now = this.host.now(), workspaces = workspacesOf(task).filter(ws => !task.prs?.[ws.name]);
-    if (!workspaces.length || task.approvals?.length || this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < this.pace(state)) return;
+    if (!workspaces.length || task.approvals?.length || this.polling.has(key) || now - (this.polled.get(key) ?? -Infinity) < Math.max(this.pace(state), FIND_READ)) return;
     this.polled.set(key, now); this.polling.add(key);
     cx.spawn(async () => {
       try {
@@ -563,10 +580,11 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) { this.askAdopted(id, state, task, cx); this.watchStall(id, task, cx); this.countUsage(id, state, task, cx); this.readSummary(id, state, task, cx); }
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
-      if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) { if (pr.readying) this.readyPullRequest(id, state, task, repo, cx); else this.watchPullRequest(id, state, task, repo, cx); }
+      if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged && pr.readying) this.readyPullRequest(id, state, task, repo, cx);
       if (task.status === "pr") this.mergeApproved(id, state, this.task(id, task.id) ?? task, cx);
       if (["review", "input", "failed"].includes(task.status) && !task.discard) this.watchBranch(id, state, task, cx);
     }
+    this.watchPullRequests(cx);
     for (const [id, state] of this.pipelines()) this.updateTickets(id, state, cx);
     for (const [id, state] of this.pipelines()) this.startTries(id, state, cx);
     for (const [id, state] of this.pipelines()) this.forgetImages(id, state, cx);

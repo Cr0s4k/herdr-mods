@@ -472,6 +472,26 @@ class DeliveryTest(unittest.TestCase):
         status = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["status"]
         self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "comments": 0, "failed": 0, "failing": [], "pending": 0, "passed": 0})
 
+    def test_many_pull_requests_are_read_in_one_query_per_host(self):
+        node = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED", "author": {"login": "me"},
+                "reviews": {"nodes": [{"state": "COMMENTED", "author": {"login": "ana"}}]},
+                "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}]}}}}]}}
+        reply = {"data": {"r0": {"pullRequest": node}, "r1": {"pullRequest": {**node, "state": "MERGED", "commits": {"nodes": []}}}, "r2": None},
+                 "errors": [{"message": "Could not resolve to a Repository"}]}
+        log = self.stub_gh("cat <<'EOF'\n" + json.dumps(reply) + "\nEOF\nexit 1\n")
+        urls = ["https://github.com/me/shop/pull/12", "https://github.com/me/api/pull/3", "https://github.com/me/gone/pull/1", "https://github.com/me/shop/pull/12"]
+        states = delivery.pr_states({"root": str(self.repo), "urls": urls})["states"]
+        self.assertEqual(states, {"https://github.com/me/shop/pull/12": {"state": "OPEN", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "failed": 1, "failing": ["test"], "pending": 0, "passed": 0}},
+                                  "https://github.com/me/api/pull/3": {"state": "MERGED", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "failed": 0, "failing": [], "pending": 0, "passed": 0}}})
+        calls = log.read_text()
+        self.assertEqual(calls.count("api graphql --hostname github.com"), 1)
+        self.assertIn("n1=api", calls)
+
+    def test_many_pull_requests_fail_together_when_github_gives_nothing(self):
+        self.stub_gh('echo "HTTP 401: Bad credentials" >&2; exit 1\n')
+        with self.assertRaisesRegex(ValueError, "Bad credentials"):
+            delivery.pr_states({"root": str(self.repo), "urls": ["https://github.com/me/shop/pull/12"]})
+
     def found(self, state, head):
         self.stub_gh("cat <<'EOF'\n" + json.dumps({"url": "https://github.com/me/project/pull/7", "number": 7, "state": state, "headRefOid": head}) + "\nEOF\n")
         return delivery.pr_find(self.payload("pr_find"))["found"]

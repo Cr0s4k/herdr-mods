@@ -609,7 +609,7 @@ const prHost = (github = { state: "OPEN" }) => {
     async delivery(_context, payload) {
       world.scripts.push(["delivery", payload]);
       if (payload.op === "publish") return { url: "https://github.com/me/shop/pull/12", number: 12 };
-      if (payload.op === "pr_state") return typeof github === "function" ? github() : github;
+      if (payload.op === "pr_states") return { states: Object.fromEntries(payload.urls.map(url => [url, typeof github === "function" ? github() : github])) };
       return {};
     },
   });
@@ -660,8 +660,8 @@ test("a merged PR finishes the task and cleans up; a closed one returns it to re
   world.scripts = [];
   world.clock(1000); await settle(runner);
   assert.equal(row(world.state(), "T-1").status, "pr");
-  world.clock(30000); await settle(runner);
-  assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_state").length, 1, "asked once a minute");
+  world.clock(10000); await settle(runner);
+  assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_states").length, 1, "asked every fifteen seconds");
   github = { state: "MERGED" };
   world.clock(62000); await settle(runner);
   const task = row(world.state(), "T-1");
@@ -730,7 +730,7 @@ test("GitHub is asked every ten minutes about a pipeline that is off screen, and
   await reviewed(world, runner);
   world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
   await step(runner);
-  const asked = () => world.scripts.filter(([, payload]) => payload.op === "pr_state").length;
+  const asked = () => world.scripts.filter(([, payload]) => payload.op === "pr_states").length;
   world.clock(1000); await settle(runner);
   assert.equal(asked(), 1);
   world.clock(301000); await settle(runner);
@@ -738,18 +738,18 @@ test("GitHub is asked every ten minutes about a pipeline that is off screen, and
   world.clock(602000); await settle(runner);
   assert.equal(asked(), 2);
   shown = { space: "sp-project", viewing: false };
-  world.clock(630000); await settle(runner);
-  assert.equal(asked(), 2, "in its space, once a minute");
+  world.clock(610000); await settle(runner);
+  assert.equal(asked(), 2, "in its space, every fifteen seconds");
   shown = { space: "sp-project", viewing: true };
-  world.clock(631000); await settle(runner);
+  world.clock(613000); await settle(runner);
   assert.equal(asked(), 3, "opening the Pipeline tab asks again");
-  world.clock(640000); await settle(runner);
+  world.clock(620000); await settle(runner);
   assert.equal(asked(), 3);
   shown = { space: "sp-other", viewing: false };
   world.store = { [id]: reduce(reduce(world.state(), { type: "reviewLimit", value: 1 }, 0), { type: "create", title: "B" }, 0) };
   assert.equal(row(world.state(), "T-2").status, "queued", "held by the review limit until the pull request merges");
   world.clock(700000); await settle(runner);
-  assert.equal(asked(), 4, "queued work a merge could release keeps a running pipeline asked once a minute");
+  assert.equal(asked(), 4, "queued work a merge could release keeps a running pipeline asked every fifteen seconds");
 });
 
 test("an open PR keeps what it waits for from GitHub, without rewriting state when nothing changed", async () => {
@@ -1079,7 +1079,7 @@ test("ticket update settings are per provider and say what they will do", () => 
 test("a ticket moves when its agent starts, gets its pull request linked, and moves again on merge", async () => {
   let github = { state: "OPEN" };
   const world = updating({ start: { id: "doing", name: "In Progress" }, merge: { id: "done", name: "Done" }, link: true });
-  world.host.delivery = async (_context, payload) => payload.op === "publish" ? { url: "https://github.com/me/shop/pull/12", number: 12 } : payload.op === "pr_state" ? github : {};
+  world.host.delivery = async (_context, payload) => payload.op === "publish" ? { url: "https://github.com/me/shop/pull/12", number: 12 } : payload.op === "pr_states" ? { states: Object.fromEntries(payload.urls.map(url => [url, github])) } : {};
   const runner = new live.LiveRunner(world.host);
   await settle(runner);
   assert.equal(row(world.state(), "HMOD-4").status, "working");
@@ -1298,7 +1298,7 @@ const prsAcross = github => {
       world.scripts.push(["delivery", { ...payload, at: at.cwd }]);
       const repo = at.cwd.split("/").pop();
       if (payload.op === "publish") return world.skip?.includes(repo) ? { skipped: true } : { url: `https://github.com/me/${repo}/pull/${++n}`, number: n };
-      if (payload.op === "pr_state") return github(repo, payload.url);
+      if (payload.op === "pr_states") return { states: Object.fromEntries(payload.urls.map(url => [url, github(url.split("/")[4], url)])) };
       return {};
     },
   });
@@ -1349,6 +1349,8 @@ test("the card shows the most pressing need across pull requests; the task finis
   world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
   await step(runner);
   world.clock(1000); await settle(runner);
+  const batches = world.scripts.filter(([, payload]) => payload.op === "pr_states").map(([, payload]) => payload.urls.length);
+  assert.deepEqual(batches, [2], "both pull requests are read in one request");
   let task = row(world.state(), "T-1");
   assert.deepEqual([model.prNeeds(task).label, model.prNeeds(task).tone], ["api · Checks failing · 1", "blocked"]);
   assert.equal(model.prChecklist(task.prs.api, "main")[0].value, "1 failing: test", "the inspector lists each PR on its own");
@@ -1362,7 +1364,7 @@ test("the card shows the most pressing need across pull requests; the task finis
   assert.match(world.state().events[0].message, /shop #12 merged on GitHub\. Waiting for api #13\./);
   world.scripts = [];
   world.clock(184000); await settle(runner);
-  assert.equal(world.scripts.filter(([, payload]) => payload.op === "pr_state").length, 1, "a merged PR is no longer asked about");
+  assert.deepEqual(world.scripts.filter(([, payload]) => payload.op === "pr_states").map(([, payload]) => payload.urls), [["https://github.com/me/api/pull/13"]], "a merged PR is no longer asked about");
   states.api = { state: "MERGED" };
   world.clock(245000); await settle(runner);
   task = row(world.state(), "T-1");

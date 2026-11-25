@@ -292,7 +292,50 @@ def pr_state(payload):
     viewed = gh(payload["root"], "pr", "view", payload["url"], "--json", fields)
     if viewed.returncode:
         raise ValueError(viewed.stderr.strip() or "GitHub didn't answer about the pull request.")
-    pr = json.loads(viewed.stdout)
+    return pr_summary(json.loads(viewed.stdout))
+
+
+PR_FIELDS = """fragment pr on PullRequest {
+  state isDraft mergeable mergeStateStatus reviewDecision author { login }
+  reviews(last: 100) { nodes { state author { login } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+    __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state }
+  } } } } } }
+}"""
+
+
+# Every pull request on one GitHub host is read in a single GraphQL query, so asking often costs one request rather than one per pull request.
+def pr_states(payload):
+    hosts = {}
+    for url in dict.fromkeys(payload["urls"]):
+        match = re.match(r"https://([^/]+)/([^/]+)/([^/]+)/pull/(\d+)", url)
+        if match:
+            hosts.setdefault(match.group(1), []).append((url, match.group(2), match.group(3), int(match.group(4))))
+    states = {}
+    for host, prs in hosts.items():
+        names, fields, args = [], [], []
+        for index, (url, owner, name, number) in enumerate(prs):
+            names += [f"$o{index}: String!", f"$n{index}: String!", f"$p{index}: Int!"]
+            fields.append(f"r{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequest(number: $p{index}) {{ ...pr }} }}")
+            args += ["-f", f"o{index}={owner}", "-f", f"n{index}={name}", "-F", f"p{index}={number}"]
+        query = f"query({', '.join(names)}) {{\n{chr(10).join(fields)}\n}}\n{PR_FIELDS}"
+        asked = gh(payload["root"], "api", "graphql", "--hostname", host, "-H", "Accept: application/vnd.github.merge-info-preview+json", "-f", f"query={query}", *args)
+        try:
+            data = json.loads(asked.stdout or "{}").get("data") or {}
+        except ValueError:
+            data = {}
+        if not data and asked.returncode:
+            raise ValueError(asked.stderr.strip() or "GitHub didn't answer about the pull requests.")
+        for index, (url, *_rest) in enumerate(prs):
+            pr = ((data.get(f"r{index}") or {}).get("pullRequest"))
+            if pr:
+                commit = ((pr.get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {}
+                rollup = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
+                states[url] = pr_summary({**pr, "reviews": (pr.get("reviews") or {}).get("nodes") or [], "statusCheckRollup": rollup})
+    return {"states": states}
+
+
+def pr_summary(pr):
     author = (pr.get("author") or {}).get("login")
     # Reviews that say something, from anyone but the author: an agent can act on those even where none is required.
     comments = sum(1 for review in pr.get("reviews") or [] if review.get("state") in ("CHANGES_REQUESTED", "COMMENTED") and (review.get("author") or {}).get("login") != author)
@@ -493,7 +536,7 @@ def adopt_move(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_states": pr_states, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
                       "adopt_ask": adopt_ask, "adopt_read": adopt_read, "adopt_move": adopt_move}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
