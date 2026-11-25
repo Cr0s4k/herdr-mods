@@ -5,12 +5,12 @@ import { loadProcedures } from "./procedures.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
 
 const watching = () => panes().find(pane => pane.pane === focused()?.pane)?.mod === "pipeline";
-const scripts = {};
 loadProcedures(path => readTextFile(`${appHome()}/${path}`)).catch(() => null);
 async function python(file, context, payload, timeout = 120000) {
-  scripts[file] ??= await readTextFile(`${appHome()}/mods/${file}`);
-  if (!scripts[file]) throw new Error("A Pipeline helper is missing. Reinstall the mods.");
-  const result = await exec("python3", ["-c", scripts[file], JSON.stringify(payload)], { cwd: context.cwd, on: context.on, timeout });
+  // Read on every call: an install that changes only a helper doesn't reload this mod.
+  const script = await readTextFile(`${appHome()}/mods/${file}`);
+  if (!script) throw new Error("A Pipeline helper is missing. Reinstall the mods.");
+  const result = await exec("python3", ["-c", script, JSON.stringify(payload)], { cwd: context.cwd, on: context.on, timeout });
   let response;
   try { response = JSON.parse(result.stdout); }
   catch { throw new Error("Pipeline could not run Git there. Check Python 3 and Git on that machine."); }
@@ -50,8 +50,8 @@ export const liveHost = {
   // A watched plan runs in a tab of its own, so you see what it reads; the runner waits for its result file.
   async plan(context, job) {
     if (!job.watch) return python("pipeline/planner.py", context, { ...job, cwd: context.cwd }, 320000);
-    scripts["pipeline/planner.py"] ??= await readTextFile(`${appHome()}/mods/pipeline/planner.py`);
-    const out = `/tmp/herdr-pipeline-plan-${Date.now()}`, opening = { folder: context.cwd, argv: ["python3", "-c", scripts["pipeline/planner.py"], JSON.stringify({ ...job, cwd: context.cwd, out })] };
+    const planner = await readTextFile(`${appHome()}/mods/pipeline/planner.py`);
+    const out = `/tmp/herdr-pipeline-plan-${Date.now()}`, opening = { folder: context.cwd, argv: ["python3", "-c", planner, JSON.stringify({ ...job, cwd: context.cwd, out })] };
     if (job.space && spaces().some(row => row.id === job.space)) run("tab.new", { ...opening, space: job.space, name: "Planner" });
     else run("space.new", { ...opening, machine: context.on || "", tab: "Planner" });
     const waited = await exec("sh", ["-c", 'i=0; while [ ! -s "$1/result.json" ] && [ $i -lt 320 ]; do sleep 1; i=$((i+1)); done; cat "$1/result.json" && rm -rf "$1"', "sh", out], { on: context.on, timeout: 330000 });
