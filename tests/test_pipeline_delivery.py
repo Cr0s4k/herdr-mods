@@ -337,6 +337,17 @@ class DeliveryTest(unittest.TestCase):
         log = self.stub_gh('case "$*" in *--draft*) echo "Draft pull requests are not supported in this repository" >&2; exit 1;; *) echo "https://github.com/me/project/pull/13";; esac\n')
         self.assertEqual(delivery.publish(self.payload("publish", target="main", body="Details", draft=True))["number"], 13)
 
+    def test_an_approved_pull_request_merges_its_checked_commit_the_way_the_repository_allows(self):
+        view = '{"state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","headRefOid":"abc123","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","name":"test"}]}'
+        log = self.stub_gh('case "$1 $2" in "repo view") echo \'{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}\';; "pr merge") ;; *) echo \'' + view + '\';; esac\n')
+        url = "https://github.com/me/project/pull/12"
+        self.assertEqual(delivery.pr_merge({"root": str(self.repo), "url": url})["state"], "OPEN")
+        self.assertIn("repo view me/project", log.read_text())
+        self.assertIn("pr merge " + url + " --merge --match-head-commit abc123", log.read_text())
+        self.stub_gh("echo '" + view.replace("APPROVED", "REVIEW_REQUIRED") + "'\n")
+        with self.assertRaisesRegex(ValueError, "changed since it was approved"):
+            delivery.pr_merge({"root": str(self.repo), "url": url})
+
     def test_a_pull_request_is_marked_ready_or_draft_again_and_read_back(self):
         log = self.stub_gh('case "$2" in ready) ;; *) echo \'{"state":"OPEN","isDraft":false,"statusCheckRollup":[]}\';; esac\n')
         url = "https://github.com/me/project/pull/12"

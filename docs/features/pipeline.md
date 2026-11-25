@@ -303,10 +303,15 @@ nothing to finish.
    branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
    merge state. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
    reads **Waiting for review** rather than **Ready to merge**, even where GitHub requires no
-   review. With **Rebase on conflicts** (Settings, Delivery) a pull request that conflicts with its base
+   review. With **Merge once approved** (Settings, Delivery) Pipeline merges the pull request itself
+   with `gh` once someone approved it and its checks pass, with no repository setting needed: it
+   merges only the commit that was approved, squashing where the repository allows it, else with a
+   merge commit, else by rebasing. A task with several pull requests waits until every one is
+   ready, and none is merged while its agent is still working. When GitHub refuses, the inspector
+   says why, and Pipeline tries again once GitHub reports something new about the pull request. With **Rebase on conflicts** (Settings, Delivery) a pull request that conflicts with its base
    has its agent rebase and push by itself: an idle agent is asked once per conflict, a working
    one is left to finish first, and a closed one is reopened with the request. The setup card's
-   **Pull requests** row offers this, the approval rule and drafts when a folder is
+   **Pull requests** row offers this, the approval rule, merging once approved and drafts when a folder is
    first set up, and every pipeline of the folder shares them. With **Open them as drafts** (Settings, Delivery) each pull request opens as a
    draft, or as an ordinary one where the repository's plan has no drafts; **Mark ready** and
    **Back to draft** in the inspector change it without opening GitHub. The card stays on the

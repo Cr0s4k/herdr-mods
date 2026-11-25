@@ -309,6 +309,34 @@ def pr_ready(payload):
     return pr_state(payload)
 
 
+
+# Merges only the commit that was approved and checked, with the first way the repository allows: squash, merge commit, rebase.
+def pr_merge(payload):
+    url = payload["url"]
+    viewed = gh(payload["root"], "pr", "view", url, "--json", "state,isDraft,reviewDecision,headRefOid,statusCheckRollup")
+    if viewed.returncode:
+        raise ValueError(viewed.stderr.strip() or "GitHub didn't answer about the pull request.")
+    pr = json.loads(viewed.stdout)
+    if pr.get("state", "OPEN") != "OPEN":
+        return pr_state(payload)
+    rollup = checks(pr.get("statusCheckRollup"))
+    if pr.get("isDraft") or pr.get("reviewDecision") != "APPROVED" or rollup["failed"] or rollup["pending"]:
+        raise ValueError("It changed since it was approved with passing checks, so it was left open.")
+    repo = re.match(r"https://[^/]+/([^/]+/[^/]+)/pull/\d+", url)
+    if not repo:
+        raise ValueError("That isn't a GitHub pull request link.")
+    allowed = gh(payload["root"], "repo", "view", repo.group(1), "--json", "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed")
+    if allowed.returncode:
+        raise ValueError(allowed.stderr.strip() or "GitHub didn't say how this repository merges.")
+    ways = json.loads(allowed.stdout)
+    way = next((flag for key, flag in (("squashMergeAllowed", "--squash"), ("mergeCommitAllowed", "--merge"), ("rebaseMergeAllowed", "--rebase")) if ways.get(key)), None)
+    if not way:
+        raise ValueError("This repository allows no way to merge.")
+    merged = gh(payload["root"], "pr", "merge", url, way, "--match-head-commit", pr["headRefOid"])
+    if merged.returncode:
+        raise ValueError(merged.stderr.strip() or "GitHub didn't merge the pull request.")
+    return pr_state(payload)
+
 # A pull request someone opened by hand on the task's branch. An older one from a branch that had the same name doesn't count.
 def pr_find(payload):
     worktree = Path(payload["worktree"])
@@ -465,7 +493,7 @@ def adopt_move(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_ready": pr_ready, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
                       "adopt_ask": adopt_ask, "adopt_read": adopt_read, "adopt_move": adopt_move}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")

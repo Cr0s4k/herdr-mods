@@ -1,4 +1,4 @@
-import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, agentOpening, prConflict, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
+import { STORE, SOURCES, taskPort, newer, reduce, waitsFor, CHECK_FIXES, agentRun, agentResume, agentOpening, prConflict, prMergeReady, taskTuning, tuningLabel, workspacesOf, prList, liveNotices, stallFor, implementerFor, planKey, plannerHolds, plannerAgent, plannerTuning, PLANNERS, AGENT_OPTIONS, labelFor, ACTIVE, LIMITED, LIMIT_READ } from "./pipeline-model.js";
 import { procedure } from "./procedures.js";
 
 export const branchKey = task => `${task.id}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}`.replace(/-+$/, "");
@@ -324,16 +324,20 @@ export class LiveRunner {
         const now = this.task(id, task.id);
         if (now?.status !== "pr" || now.prs?.[repo]?.url !== pr.url) return;
         if (github === "OPEN" && status) this.apply(id, { type: "prStatus", id: task.id, repo, url: pr.url, status });
-        else if (github === "MERGED") {
-          this.apply(id, { type: "prMerged", id: task.id, repo, url: pr.url });
-          const after = this.task(id, task.id);
-          if (after?.status !== "done") return;
-          // A pull request followed from another branch never held this worktree's work, so nothing there is thrown away.
-          try { await this.clean(state.context, after, !Object.values(after.prs ?? {}).some(pr => pr.from)); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
-          this.apply(id, { type: "cleaned", id: task.id });
-        } else if (github === "CLOSED") this.apply(id, { type: "prClosed", id: task.id, repo, url: pr.url });
+        else if (github === "MERGED") await this.mergedOnGitHub(id, state, task.id, repo, pr.url);
+        else if (github === "CLOSED") this.apply(id, { type: "prClosed", id: task.id, repo, url: pr.url });
       } catch { /* Try again next minute. */ } finally { this.polling.delete(key); }
     });
+  }
+
+  async mergedOnGitHub(id, state, taskId, repo, url) {
+    if (this.task(id, taskId)?.prs?.[repo]?.merged) return;
+    this.apply(id, { type: "prMerged", id: taskId, repo, url });
+    const after = this.task(id, taskId);
+    if (after?.status !== "done") return;
+    // A pull request followed from another branch never held this worktree's work, so nothing there is thrown away.
+    try { await this.clean(state.context, after, !Object.values(after.prs ?? {}).some(pr => pr.from)); } catch { /* Merged on GitHub; a leftover worktree is harmless. */ }
+    this.apply(id, { type: "cleaned", id: taskId });
   }
 
   // With Rebase on conflicts, a conflicting pull request's agent is asked once it is idle, and reopened for it when its tab is closed.
@@ -381,6 +385,27 @@ export class LiveRunner {
     });
   }
 
+  // With Merge once approved, a task's pull requests are merged one by one once every one is approved with passing checks.
+  mergeApproved(id, state, task, cx) {
+    const key = `merge/${id}/${task.id}`;
+    if (!state.mergeApproved || this.polling.has(key) || !prMergeReady(task)) return;
+    this.polling.add(key);
+    cx.spawn(async () => {
+      try {
+        for (const [repo, pr] of Object.entries(task.prs).filter(([, pr]) => !pr.merged)) {
+          this.apply(id, { type: "prMerge", id: task.id, repo, url: pr.url });
+          const source = task.workspaces?.[repo]?.source ?? state.context.cwd;
+          try {
+            const { state: github } = await this.host.delivery({ cwd: source, on: state.context.on }, { op: "pr_merge", root: source, url: pr.url });
+            this.apply(id, { type: "prMergeDone", id: task.id, repo, url: pr.url });
+            if (github === "MERGED") await this.mergedOnGitHub(id, state, task.id, repo, pr.url);
+          } catch (error) { this.apply(id, { type: "prMergeDone", id: task.id, repo, url: pr.url, error: String(error?.message ?? error) }); break; }
+          finally { this.polled.delete(`pr/${id}/${task.id}/${repo}`); }
+        }
+      } finally { this.polling.delete(key); }
+    });
+  }
+
   // A pull request opened by hand on a task's branch is found here, so the task follows it like one Pipeline opened.
   watchBranch(id, state, task, cx) {
     const key = `find/${id}/${task.id}`, now = this.host.now(), workspaces = workspacesOf(task).filter(ws => !task.prs?.[ws.name]);
@@ -418,6 +443,8 @@ export class LiveRunner {
       if (task.status === "routing" && task.launch === "starting") this.apply(id, { type: "launchFailed", id: task.id,
         error: "Herdr restarted while its agent was starting. Check for its space, then retry or discard." });
       else if (task.status === "routing" && task.launch) this.apply(id, { type: "launch", id: task.id, phase: null });
+      // Whether a merge that a restart cut short went through, the next answer from GitHub tells.
+      for (const [repo, pr] of Object.entries(task.prs ?? {})) if (pr.merging) this.apply(id, { type: "prMergeDone", id: task.id, repo, url: pr.url });
     }
   }
 
@@ -537,6 +564,7 @@ export class LiveRunner {
     for (const [id, state] of this.pipelines()) for (const task of state.tasks) {
       if (task.status === "testing" && !task.discard) this.runCheck(id, task, cx);
       if (task.status === "pr" && !task.discard) for (const [repo, pr] of Object.entries(task.prs ?? {})) if (!pr.merged) { if (pr.readying) this.readyPullRequest(id, state, task, repo, cx); else this.watchPullRequest(id, state, task, repo, cx); }
+      if (task.status === "pr") this.mergeApproved(id, state, this.task(id, task.id) ?? task, cx);
       if (["review", "input", "failed"].includes(task.status) && !task.discard) this.watchBranch(id, state, task, cx);
     }
     for (const [id, state] of this.pipelines()) this.updateTickets(id, state, cx);

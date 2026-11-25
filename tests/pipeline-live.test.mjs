@@ -2335,6 +2335,45 @@ test("with Wait for an approval, a pull request nobody approved waits for review
   assert.ok(model.PROJECT_SETTINGS.includes("prApproval") && model.PROJECT_SETTINGS.includes("draftPr"), "the folder's pipelines share both");
 });
 
+test("with Merge once approved, an approved pull request with passing checks is merged, and a refused one is tried again only once GitHub tells something new", async () => {
+  const clean = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 2 };
+  let github = { state: "OPEN", status: clean }, merge = () => { throw new Error("Base branch was modified"); };
+  const world = prHost(() => github), plain = world.host.delivery;
+  world.host.delivery = async (context, payload) => {
+    if (payload.op !== "pr_merge") return plain(context, payload);
+    world.scripts.push(["delivery", payload]);
+    return merge();
+  };
+  const merges = () => world.scripts.filter(([, payload]) => payload?.op === "pr_merge").length;
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(reduce(world.state(), { type: "mergeApproved" }, 0), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.clock(1000); await settle(runner); await settle(runner);
+  assert.equal(merges(), 0, "nobody approved it");
+  github = { state: "OPEN", status: { ...clean, review: "APPROVED", pending: 1 } };
+  world.clock(70000); await settle(runner); await settle(runner);
+  assert.equal(merges(), 0, "its checks are still running");
+  github = { state: "OPEN", status: { ...clean, review: "APPROVED" } };
+  world.clock(140000); await settle(runner); await settle(runner); await settle(runner);
+  assert.equal(merges(), 1);
+  assert.equal(world.scripts.find(([, payload]) => payload?.op === "pr_merge")[1].url, "https://github.com/me/shop/pull/12");
+  const refused = row(world.state(), "T-1").prs.shop;
+  assert.deepEqual([refused.merging, refused.mergeTried, refused.mergeError], [undefined, true, "Base branch was modified"]);
+  assert.match(world.state().events[0].message, /#12 could not be merged/);
+  world.clock(210000); await settle(runner); await settle(runner);
+  assert.equal(merges(), 1, "the same answer from GitHub is not tried again");
+  github = { state: "OPEN", status: { ...clean, review: "APPROVED", passed: 3 } };
+  merge = () => { github = { state: "MERGED" }; return { state: "MERGED", status: github.status }; };
+  world.clock(280000); await settle(runner); await settle(runner); await settle(runner);
+  assert.equal(merges(), 2);
+  assert.equal(row(world.state(), "T-1").status, "done");
+  world.clock(350000); await settle(runner);
+  assert.equal(merges(), 2, "a merged pull request is left alone");
+  assert.ok(model.PROJECT_SETTINGS.includes("mergeApproved"));
+  assert.equal(model.prMergeReady({ status: "pr", repos: ["shop"], agentState: "working", prs: { shop: { number: 12, status: { ...clean, review: "APPROVED" } } } }), false, "an agent still working may push more");
+});
+
 test("with Rebase on conflicts, a conflicting PR's idle agent is asked once, and a closed one is reopened for it", async () => {
   const clean = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 1 };
   let github = { state: "OPEN", status: { ...clean, mergeable: "CONFLICTING", mergeState: "DIRTY" } };

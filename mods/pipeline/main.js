@@ -1373,10 +1373,11 @@ export default class Pipeline extends View {
         ...(state.delivery !== "pr" && this.github ? [use("pr", "Use pull requests", cx => this.act({ type: "deliver", value: "pr" }, cx),
           "This repository is on GitHub and gh is installed, so finished work can open a pull request instead")] : []),
         change("delivery", "delivery")], chose("delivery", state.delivery)),
-      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval || state.autoRebase ? ok : plain,
-        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}${state.autoRebase ? " · rebases on conflicts" : ""}`, [
+      ...(state.delivery !== "pr" ? [] : [row("prs", "Pull requests", state.draftPr || state.prApproval || state.mergeApproved || state.autoRebase ? ok : plain,
+        `${state.draftPr ? "Open as drafts" : "Open ready for review"} · ${state.prApproval ? "ready to merge once approved" : "ready to merge when GitHub says so"}${state.mergeApproved ? " · merges once approved" : ""}${state.autoRebase ? " · rebases on conflicts" : ""}`, [
         ...(!state.draftPr ? [use("draft", "Open as drafts", cx => this.act({ type: "draftPr" }, cx), "Each pull request opens as a draft; mark it ready from its task when it should be reviewed")] : []),
         ...(!state.prApproval ? [use("approval", "Wait for an approval", cx => this.act({ type: "prApproval" }, cx), "A pull request counts as ready to merge only once someone approved it, even where GitHub requires no review")] : []),
+        ...(!state.mergeApproved ? [use("merge", "Merge once approved", cx => this.act({ type: "mergeApproved" }, cx), "Once someone approves a pull request and its checks pass, Pipeline merges it on GitHub")] : []),
         ...(!state.autoRebase ? [use("rebase", "Rebase on conflicts", cx => this.act({ type: "autoRebase" }, cx), "When a pull request conflicts with its base, its agent rebases and pushes by itself")] : []),
         change("prs", "delivery")])]),
       ...(state.delivery === "pr" ? [] : [row("after", "After merge", state.afterMerge ? ok : plain, state.afterMerge ?? "Nothing to run", [
@@ -1884,6 +1885,8 @@ export default class Pipeline extends View {
         Boolean(state.draftPr), cx => this.act({ type: "draftPr" }, cx), t));
       if (state.delivery === "pr") body.child(this.switchRow("pr-approval", "Wait for an approval", state.prApproval ? "A pull request is ready to merge only once someone approved it" : "A pull request is ready to merge when GitHub says so, approved or not",
         Boolean(state.prApproval), cx => this.act({ type: "prApproval" }, cx), t));
+      if (state.delivery === "pr") body.child(this.switchRow("merge-approved", "Merge once approved", state.mergeApproved ? "Once someone approves it and its checks pass, Pipeline merges it on GitHub, the way the repository allows" : "Each pull request waits for someone to merge it on GitHub",
+        Boolean(state.mergeApproved), cx => this.act({ type: "mergeApproved" }, cx), t));
       if (state.delivery === "pr") body.child(this.switchRow("auto-rebase", "Rebase on conflicts", state.autoRebase ? "A pull request that conflicts has its agent rebase and push by itself, reopening the agent if its tab is closed" : "A conflicting pull request waits for you to ask its agent",
         Boolean(state.autoRebase), cx => this.act({ type: "autoRebase" }, cx), t));
       if (state.delivery === "pr" && state.evidence) body.child(this.switchRow("evidence-pr", "Link the walkthrough page in the pull request", "Adds one line to the description linking the before and after page. The screenshots themselves stay out of the repository",
@@ -1891,7 +1894,7 @@ export default class Pipeline extends View {
       if (state.delivery !== "pr") body.child(this.switchRow("push-after-merge", "Push after merging", `Pushes ${this.repo?.branch ?? "your branch"} to origin after each merge`,
         Boolean(state.pushAfterMerge), cx => this.act({ type: "pushAfterMerge" }, cx), t));
       body.child(this.label(state.delivery === "pr"
-        ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh, described by the agent. It waits while the agent has uncommitted changes. The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
+        ? `${state.autoPr ? "Once the agent finishes and checks pass, Pipeline" : "Approving"} pushes its branch to origin and opens a pull request into ${this.repo?.branch ?? "your branch"} with gh, described by the agent. It waits while the agent has uncommitted changes. ${state.mergeApproved ? "Once it is approved and its checks pass, Pipeline merges it with gh. " : ""}The task finishes when the PR is merged on GitHub; then its tab closes and the worktree and branch are removed. Needs gh, signed in.`
         : `${state.autoMerge ? "Once the agent finishes and checks pass, Pipeline" : "Merge"} rebases its branch onto ${this.repo?.branch ?? "your branch"} and fast-forwards, so history stays linear. It refuses while the agent or your project folder has uncommitted changes, or the branch conflicts; the task stays in review with the reason. ${state.pushAfterMerge ? `Then it pushes ${this.repo?.branch ?? "the branch"} to origin. It never forces or pulls: if origin refuses, the merge stays, the task is done, and the status bar offers Push now. ` : ""}Afterwards its tab closes and the worktree and branch are removed.`, t));
       if (state.delivery !== "pr") {
         body.child(div().h(1).bg(t.border));
@@ -2279,6 +2282,7 @@ export default class Pipeline extends View {
             hint: `${gone ? "Starts its agent again in the worktree, continuing its last conversation, and tells it" : "Tells its agent"} to ${VERBS[kind][1]}` }));
       });
       if (pr.readyError) body.child(div().id(`pipeline-pr-ready-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(pr.readyError));
+      if (pr.mergeError && !pr.merged) body.child(div().id(`pipeline-pr-merge-error-${task.id}${suffix}`).text_size(12).line_height(1.45).text_color(t.blocked).child(`Not merged: ${pr.mergeError} Pipeline tries again when GitHub tells something new about it.`));
       const draft = Boolean(pr.status?.draft);
       body.child(h_flex().gap(8).flex_wrap()
         .child(this.button(`pr-link-${task.id}${suffix}`, `Open pull request #${pr.number}`, () => this.openLink(pr.url), t, { icon: "eye", primary: !several && !draft && !asks.length, hint: pr.url }))
@@ -2294,6 +2298,7 @@ export default class Pipeline extends View {
     } else if (prAgent(task)) body.child(this.label(`${prAgent(task)} in its worktree. The card stays here until the pull request merges or closes.`, t));
     body.child(this.label(several ? "Pipeline asks GitHub about each one once a minute. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
       : "Pipeline asks GitHub once a minute. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
+    if (state.mergeApproved) body.child(this.label(`With Merge once approved, Pipeline merges ${several ? "them, one after another, once every one is" : "it once it is"} approved with passing checks.`, t));
   }
   revertDetail(body, state, task, t) {
     const where = [...new Set((task.landed ?? []).map(repo => repo.branch))].join(" + "), sure = this.confirm === `revert-${task.id}`, byPr = revertsByPr(task);

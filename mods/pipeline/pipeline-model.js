@@ -286,6 +286,7 @@ export const prList = prs => Object.entries(prs ?? {}).map(([name, pr]) => `${na
 export function prNeed(pr, target = "the base branch", rules = null) {
   const status = pr?.status;
   if (!status) return { label: `PR #${pr?.number} open`, tone: "wait", rank: 9 };
+  if (pr.merging) return { label: "Merging on GitHub", tone: "wait", rank: 9 };
   if (status.draft) return { label: "Draft · mark it ready", tone: "wait", rank: 0 };
   if (status.mergeable === "CONFLICTING" || status.mergeState === "DIRTY") return { label: `Conflicts with ${target}`, tone: "blocked", rank: 1 };
   if (status.failed) return { label: `Checks failing · ${status.failed}`, tone: "blocked", rank: 2 };
@@ -297,6 +298,10 @@ export function prNeed(pr, target = "the base branch", rules = null) {
   if (status.mergeState === "UNKNOWN") return { label: "GitHub is checking it", tone: "wait", rank: 8 };
   return { label: "Ready to merge", tone: "ready", rank: 10 };
 }
+// With Merge once approved: every open pull request of the task is approved and ready, and none was tried since GitHub last told something new.
+export const prMergeReady = task => task.status === "pr" && !task.discard && !task.reopen && task.agentState !== "working"
+  && Object.entries(task.prs ?? {}).some(([, pr]) => !pr.merged)
+  && Object.entries(task.prs).every(([name, pr]) => pr.merged || (!pr.readying && !pr.merging && !pr.mergeTried && prNeed(pr, task.workspaces?.[name]?.target, { prApproval: true }).tone === "ready"));
 export function prNeeds(task, rules = null) {
   const open = Object.entries(task.prs ?? {}).filter(([, pr]) => !pr.merged)
     .map(([name, pr]) => ({ name, ...prNeed(pr, task.workspaces?.[name]?.target, rules) }));
@@ -338,6 +343,8 @@ export function liveNotices(before, after) {
     else if (task.status === "review" && old.status === "testing" && needsApproval(task)) say("is ready for review", `${task.unchanged ? "No file changes" : "Checks passed"} · ${task.title}`, "success");
     else if (task.status === "done" && old.status === "pr") say("merged on GitHub", task.title, "success");
     else if (task.status === "done" && old.status === "merging" && after.autoMerge) say(task.unchanged ? "done" : "merged", task.title, "success");
+    else if (task.status === "pr" && Object.entries(task.prs ?? {}).some(([name, pr]) => pr.mergeError && !old.prs?.[name]?.mergeError))
+      say("pull request not merged", Object.values(task.prs).find(pr => pr.mergeError).mergeError, "error");
     else if (task.status === "pr" && old.status === "pr") {
       const need = prNeeds(task, after), last = prNeeds(old, before);
       if (need.label !== last.label && need.tone !== "wait" && need.tone !== last.tone) say(`pull request · ${need.label.toLowerCase()}`, task.title, need.tone === "ready" ? "success" : "warning");
@@ -576,7 +583,7 @@ export function ticketPrefix(text) {
 
 // What a project's pipelines share: a change in one space reaches every space on the same folder, and a new space starts with it.
 export const PROJECT_SETTINGS = ["agent", "tuning", "parallel", "reviewLimit", "check", "prepare", "tryout", "tryAuto", "delivery", "autoPr", "autoMerge", "pushAfterMerge", "afterMerge",
-  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "autoRebase", "autoTrust", "quiet", "planner", "implementer"];
+  "repositories", "ticketUpdates", "linear", "instructions", "evidence", "evidencePr", "draftPr", "prApproval", "mergeApproved", "autoRebase", "autoTrust", "quiet", "planner", "implementer"];
 const sameProject = (a, b) => Boolean(a?.live && b?.live && !newer(a) && !newer(b) && a.context?.cwd && a.context.cwd === b.context?.cwd && (a.context.on ?? null) === (b.context?.on ?? null));
 export const projectPipelines = (all, key) => Object.entries(all ?? {}).filter(([other, state]) => other !== key && sameProject(all[key], state));
 export function shareSettings(all, key, before, after) {
@@ -1306,6 +1313,7 @@ export function reduce(state, action, now = Date.now()) {
       break;
     }
     case "prApproval": if (!next.live) return state; next.prApproval = !next.prApproval; event(next, next.prApproval ? "Pull requests count as ready only once approved." : "Pull requests are ready when GitHub says so."); break;
+    case "mergeApproved": if (!next.live) return state; next.mergeApproved = !next.mergeApproved; event(next, next.mergeApproved ? "Pull requests merge on GitHub once approved with passing checks." : "Pull requests wait for someone to merge them on GitHub."); break;
     case "draftPr": if (!next.live) return state; next.draftPr = !next.draftPr; event(next, next.draftPr ? "Pull requests open as drafts." : "Pull requests open ready for review."); break;
     case "prepare": {
       if (!next.live) return state;
@@ -1426,6 +1434,8 @@ export function reduce(state, action, now = Date.now()) {
       task.prs = { ...task.prs, [action.repo]: { ...pr, status: action.status } };
       // Asked once per conflict: a new one, after this one is gone, may be asked about again.
       if (task.rebaseAsked && !prConflict(task)) delete task.rebaseAsked;
+      // A refused merge is tried again only once GitHub tells something new about the pull request.
+      if (pr.mergeTried) task.prs[action.repo] = { ...task.prs[action.repo], mergeTried: false, mergeError: null };
       break;
     }
     case "agentSeen": {
@@ -1467,6 +1477,21 @@ export function reduce(state, action, now = Date.now()) {
       task.prs = { ...task.prs, [action.repo]: { ...rest, ...(action.status ? { status: action.status } : {}), readyError: action.error ?? null } };
       event(next, action.error ? `${task.id} · #${pr.number} could not be ${readying === "draft" ? "made a draft" : "marked ready"}. ${action.error}`
         : `${task.id} · #${pr.number} ${readying === "draft" ? "is a draft again" : "is ready for review"}.`, task.id);
+      break;
+    }
+    case "prMerge": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr || pr.url !== action.url || pr.merged || pr.merging) return state;
+      task.prs = { ...task.prs, [action.repo]: { ...pr, merging: true, mergeError: null } };
+      event(next, `${task.id} · #${pr.number} is approved and its checks pass. Merging it on GitHub.`, task.id);
+      break;
+    }
+    case "prMergeDone": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || !pr || pr.url !== action.url || !pr.merging) return state;
+      const { merging, ...rest } = pr;
+      task.prs = { ...task.prs, [action.repo]: { ...rest, mergeTried: true, mergeError: action.error ?? null } };
+      if (action.error) event(next, `${task.id} · #${pr.number} could not be merged. ${action.error}`, task.id);
       break;
     }
     case "prMerged": {
