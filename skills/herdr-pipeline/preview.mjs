@@ -30,6 +30,9 @@ const SECTIONS = [
   ["An open pull request conflicts with its base", () => live.prConflictRequest(12, "main")],
   ["An open pull request has failing checks", () => live.prRequest("checks", { number: 12, status: { failing: ["test", "lint"] } }, "main")],
   ["An open pull request has review comments", () => live.prRequest("review", { number: 12 }, "main")],
+  ["Comments picked on an open pull request, with a note", () => live.prCommentsRequest({ number: 12 }, [
+    { author: "ana", kind: "comment", url: "https://github.com/acme/shop/pull/12#issuecomment-101", body: "## Review\n\n**Medium:** the toggle forgets the choice on reload.\n\n**Low:** the icon has no label." },
+    { author: "li", kind: "review", url: "https://github.com/acme/shop/pull/12#pullrequestreview-202", body: "src/toggle.js:8: Use setTheme() here." }], "Skip the Low one.")],
   ["Delivery found uncommitted changes", () => live.commitRequest()],
   ["A conversation is converted into a task", () => live.adoptAsk(task, "/tmp/herdr-adopt-T-7.json", "/work/shop")],
   ["A converted conversation's work moved to a new agent", () => procedure("adopt-moved", { task: task.id, folder: ws.cwd })],

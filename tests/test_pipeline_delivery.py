@@ -24,6 +24,14 @@ delivery = load("pipeline_delivery", ROOT / "mods/pipeline/delivery.py")
 worktrees = load("pipeline_worktrees", ROOT / "mods/linear/worktrees.py")
 
 
+def person(login, kind="User"):
+    return {"login": login, "__typename": kind}
+
+
+def graphql(pr):
+    return "printf '%s\\n' '" + json.dumps({"data": {"r0": {"pullRequest": pr}}}).replace("'", "'\\''") + "'"
+
+
 class DeliveryTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -339,7 +347,7 @@ class DeliveryTest(unittest.TestCase):
 
     def test_an_approved_pull_request_merges_its_checked_commit_the_way_the_repository_allows(self):
         view = '{"state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","headRefOid":"abc123","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS","name":"test"}]}'
-        log = self.stub_gh('case "$1 $2" in "repo view") echo \'{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}\';; "pr merge") ;; *) echo \'' + view + '\';; esac\n')
+        log = self.stub_gh('case "$1 $2" in "repo view") echo \'{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}\';; "pr merge") ;; "api graphql") ' + graphql({"state": "OPEN"}) + ';; *) echo \'' + view + '\';; esac\n')
         url = "https://github.com/me/project/pull/12"
         self.assertEqual(delivery.pr_merge({"root": str(self.repo), "url": url})["state"], "OPEN")
         self.assertIn("repo view me/project", log.read_text())
@@ -349,7 +357,7 @@ class DeliveryTest(unittest.TestCase):
             delivery.pr_merge({"root": str(self.repo), "url": url})
 
     def test_a_pull_request_is_marked_ready_or_draft_again_and_read_back(self):
-        log = self.stub_gh('case "$2" in ready) ;; *) echo \'{"state":"OPEN","isDraft":false,"statusCheckRollup":[]}\';; esac\n')
+        log = self.stub_gh('case "$2" in ready) ;; *) ' + graphql({"state": "OPEN", "isDraft": False}) + ';; esac\n')
         url = "https://github.com/me/project/pull/12"
         self.assertFalse(delivery.pr_ready({"root": str(self.repo), "url": url})["status"]["draft"])
         self.assertIn("pr ready " + url + "\n", log.read_text())
@@ -447,42 +455,60 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(self.git(remote, "log", "--format=%s", "main").splitlines(), ["Later", "Agent work", "Base"])
 
     def test_pull_request_state_comes_from_gh(self):
-        self.stub_gh('echo \'{"state":"MERGED"}\'\n')
+        self.stub_gh(graphql({"state": "MERGED"}))
         self.assertEqual(delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["state"], "MERGED")
 
     def test_pull_request_status_says_what_it_waits_for(self):
-        reply = {"state": "OPEN", "isDraft": False, "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY", "reviewDecision": "CHANGES_REQUESTED", "author": {"login": "me"},
-                 "reviews": [{"state": "CHANGES_REQUESTED", "author": {"login": "ana"}}, {"state": "COMMENTED", "author": {"login": "bot"}},
-                             {"state": "COMMENTED", "author": {"login": "me"}}, {"state": "APPROVED", "author": {"login": "li"}}],
-                 "statusCheckRollup": [
+        reply = {"state": "OPEN", "isDraft": False, "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY", "reviewDecision": "CHANGES_REQUESTED", "author": person("me"),
+                 "reviews": {"nodes": [{"state": "CHANGES_REQUESTED", "submittedAt": "2026-11-25T10:00:00Z", "author": person("ana")},
+                                       {"state": "COMMENTED", "submittedAt": "2026-11-25T10:01:00Z", "author": person("copilot", "Bot")},
+                                       {"state": "COMMENTED", "submittedAt": "2026-11-25T10:02:00Z", "author": person("me")},
+                                       {"state": "APPROVED", "submittedAt": "2026-11-25T10:03:00Z", "author": person("li")}]},
+                 "comments": {"nodes": [{"createdAt": "2026-11-25T09:00:00Z", "author": person("linear-code", "Bot")},
+                                        {"createdAt": "2026-11-25T11:00:00Z", "author": person("mikael")},
+                                        {"createdAt": "2026-11-25T11:30:00Z", "isMinimized": True, "author": person("mikael")}]},
+                 "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [
                      {"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"},
                      {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS"},
                      {"__typename": "CheckRun", "name": "skipped", "status": "COMPLETED", "conclusion": "SKIPPED"},
                      {"__typename": "CheckRun", "name": "build", "status": "IN_PROGRESS", "conclusion": ""},
                      {"__typename": "StatusContext", "context": "ci/legacy", "state": "ERROR"},
-                     {"__typename": "StatusContext", "context": "ci/deploy", "state": "PENDING"}]}
-        log = self.stub_gh("cat <<'EOF'\n" + json.dumps(reply) + "\nEOF\n")
+                     {"__typename": "StatusContext", "context": "ci/deploy", "state": "PENDING"}]}}}}]}}
+        log = self.stub_gh(graphql(reply))
         result = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})
         self.assertEqual(result, {"state": "OPEN", "status": {"draft": False, "mergeable": "CONFLICTING", "mergeState": "DIRTY", "review": "CHANGES_REQUESTED", "comments": 2,
-                                                              "failed": 2, "failing": ["test", "ci/legacy"], "pending": 2, "passed": 2}})
+                                                              "heard": [1795600800000, 1795604400000], "failed": 2, "failing": ["test", "ci/legacy"], "pending": 2, "passed": 2}})
         self.assertIn("statusCheckRollup", log.read_text())
 
     def test_pull_request_without_reviews_or_checks(self):
-        self.stub_gh('echo \'{"state":"OPEN","isDraft":true,"mergeable":"UNKNOWN","mergeStateStatus":"DRAFT","reviewDecision":"","statusCheckRollup":[]}\'\n')
+        self.stub_gh(graphql({"state": "OPEN", "isDraft": True, "mergeable": "UNKNOWN", "mergeStateStatus": "DRAFT", "reviewDecision": ""}))
         status = delivery.pr_state({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["status"]
-        self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "comments": 0, "failed": 0, "failing": [], "pending": 0, "passed": 0})
+        self.assertEqual(status, {"draft": True, "mergeable": "UNKNOWN", "mergeState": "DRAFT", "review": None, "comments": 0, "heard": [], "failed": 0, "failing": [], "pending": 0, "passed": 0})
+
+    def test_a_pull_requests_comments_are_listed_whole_oldest_first(self):
+        reply = {"author": person("me"),
+                 "reviews": {"nodes": [{"id": "R1", "url": "u/r1", "state": "COMMENTED", "submittedAt": "2026-11-25T10:00:00Z", "body": "", "author": person("ana"),
+                                        "comments": {"nodes": [{"path": "src/a.js", "line": 8, "body": "Use setTheme()."}, {"path": "src/b.js", "line": None, "originalLine": 3, "body": "Gone?"}]}},
+                                       {"id": "R2", "url": "u/r2", "state": "APPROVED", "submittedAt": "2026-11-25T10:05:00Z", "body": "LGTM", "author": person("li")},
+                                       {"id": "R3", "url": "u/r3", "state": "COMMENTED", "submittedAt": "2026-11-25T10:06:00Z", "body": "", "author": person("li"), "comments": {"nodes": []}}]},
+                 "comments": {"nodes": [{"id": "C1", "url": "u/c1", "createdAt": "2026-11-25T09:00:00Z", "body": "## Review\n\nMedium: flaky.", "author": person("mikael")},
+                                        {"id": "C2", "url": "u/c2", "createdAt": "2026-11-25T08:00:00Z", "body": "linkback", "author": person("linear-code", "Bot")}]}}
+        self.stub_gh(graphql(reply))
+        comments = delivery.pr_comments({"root": str(self.repo), "url": "https://github.com/me/project/pull/12"})["comments"]
+        self.assertEqual([(item["id"], item["kind"], item["author"], item["body"]) for item in comments],
+                         [("C1", "comment", "mikael", "## Review\n\nMedium: flaky."), ("R1", "review", "ana", "src/a.js:8: Use setTheme().\n\nsrc/b.js:3: Gone?")])
 
     def test_many_pull_requests_are_read_in_one_query_per_host(self):
-        node = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED", "author": {"login": "me"},
-                "reviews": {"nodes": [{"state": "COMMENTED", "author": {"login": "ana"}}]},
+        node = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED", "author": person("me"),
+                "reviews": {"nodes": [{"state": "COMMENTED", "submittedAt": "2026-11-25T10:00:00Z", "author": person("ana")}]},
                 "commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}]}}}}]}}
         reply = {"data": {"r0": {"pullRequest": node}, "r1": {"pullRequest": {**node, "state": "MERGED", "commits": {"nodes": []}}}, "r2": None},
                  "errors": [{"message": "Could not resolve to a Repository"}]}
         log = self.stub_gh("cat <<'EOF'\n" + json.dumps(reply) + "\nEOF\nexit 1\n")
         urls = ["https://github.com/me/shop/pull/12", "https://github.com/me/api/pull/3", "https://github.com/me/gone/pull/1", "https://github.com/me/shop/pull/12"]
         states = delivery.pr_states({"root": str(self.repo), "urls": urls})["states"]
-        self.assertEqual(states, {"https://github.com/me/shop/pull/12": {"state": "OPEN", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "failed": 1, "failing": ["test"], "pending": 0, "passed": 0}},
-                                  "https://github.com/me/api/pull/3": {"state": "MERGED", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "failed": 0, "failing": [], "pending": 0, "passed": 0}}})
+        self.assertEqual(states, {"https://github.com/me/shop/pull/12": {"state": "OPEN", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "heard": [1795600800000], "failed": 1, "failing": ["test"], "pending": 0, "passed": 0}},
+                                  "https://github.com/me/api/pull/3": {"state": "MERGED", "status": {"draft": False, "mergeable": "MERGEABLE", "mergeState": "BLOCKED", "review": "REVIEW_REQUIRED", "comments": 1, "heard": [1795600800000], "failed": 0, "failing": [], "pending": 0, "passed": 0}}})
         calls = log.read_text()
         self.assertEqual(calls.count("api graphql --hostname github.com"), 1)
         self.assertIn("n1=api", calls)

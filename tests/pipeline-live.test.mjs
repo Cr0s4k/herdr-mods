@@ -774,6 +774,62 @@ test("an open PR keeps what it waits for from GitHub, without rewriting state wh
   assert.equal(reduce(world.state(), { type: "prStatus", id: "T-1", repo: "shop", url: "https://github.com/me/shop/pull/99", status: waiting }, 0), world.state(), "another PR's answer is ignored");
 });
 
+test("comments from others after the person last looked are new until the task is opened, and sent ones are remembered", async () => {
+  const quiet = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 2, comments: 0, heard: [] };
+  let github = { state: "OPEN", status: quiet };
+  const world = prHost(() => github);
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.clock(1000); await settle(runner);
+  assert.equal(model.prNew(row(world.state(), "T-1")), 0);
+  const before = world.state();
+  github = { state: "OPEN", status: { ...quiet, comments: 2, heard: [5000, 6000] } };
+  world.clock(20000); await settle(runner);
+  assert.equal(model.prNew(row(world.state(), "T-1")), 2);
+  assert.deepEqual(model.liveNotices(before, world.state()).map(notice => notice.title), ["T-1 has a new comment on its pull request"]);
+  const seen = reduce(world.state(), { type: "prSeen", id: "T-1" }, 0);
+  assert.deepEqual([model.prNew(row(seen, "T-1")), row(seen, "T-1").prs.shop.seen], [0, 6000]);
+  assert.equal(reduce(seen, { type: "prSeen", id: "T-1" }, 0), seen, "nothing new leaves the store alone");
+  const more = reduce(seen, { type: "prStatus", id: "T-1", repo: "shop", url: "https://github.com/me/shop/pull/12", status: { ...quiet, comments: 3, heard: [5000, 6000, 9000] } }, 0);
+  assert.equal(model.prNew(row(more, "T-1")), 1, "only the one after the last look is new");
+  const sent = reduce(reduce(more, { type: "prSent", id: "T-1", repo: "shop", ids: ["C1", "C2"] }, 0), { type: "prSent", id: "T-1", repo: "shop", ids: ["C2", "C3"] }, 0);
+  assert.deepEqual(row(sent, "T-1").prs.shop.sent, ["C1", "C2", "C3"]);
+  assert.match(sent.events[0].message, /sent 2 comments on #12 to its agent/);
+  assert.equal(model.liveNotices(seen, reduce(seen, { type: "prStatus", id: "T-1", repo: "shop", url: "https://github.com/me/shop/pull/12", status: { ...quiet, comments: 1, heard: [5000] } }, 0)).length, 0, "a deleted comment says nothing");
+});
+
+test("an older status without comment times gives no burst of notices once they appear", () => {
+  const pr = { url: "https://github.com/me/shop/pull/12", number: 12 }, plain = { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 2 };
+  let state = reduce(reduce(typed("A"), { type: "run" }, 0), { type: "launch", id: "T-1", phase: "creating", repo: "shop", workspace: { root: "/wt/a", cwd: "/wt/a", branch: "a", base: "b" } }, 0);
+  state = reduce(reduce(state, { type: "launched", id: "T-1", space: "s", tab: "t", terminal: "t9" }, 0), { type: "observe", id: "T-1", status: "review" }, 0);
+  state = reduce(reduce(state, { type: "prFound", id: "T-1", prs: { shop: { ...pr, merged: false } } }, 0), { type: "prStatus", id: "T-1", repo: "shop", url: pr.url, status: { ...plain, comments: 0 } }, 0);
+  const after = reduce(state, { type: "prStatus", id: "T-1", repo: "shop", url: pr.url, status: { ...plain, comments: 1, heard: [5000] } }, 0);
+  assert.deepEqual([model.liveNotices(state, after).length, model.prNew(row(after, "T-1"))], [0, 1], "still counted new on the card");
+});
+
+test("picked comments go to the agent in full with the person's note, and a closed agent is reopened with them", async () => {
+  const text = live.prCommentsRequest({ number: 12 }, [{ author: "ana", kind: "comment", url: "u/1", body: "Medium: flaky.\n\nLow: naming." }], "Skip the Low one.");
+  assert.match(text, /^Pull request #12 of this branch has one comment I want addressed\./);
+  assert.match(text, /1\. ana, u\/1\n\n> Medium: flaky\.\n>\n> Low: naming\./);
+  assert.match(text, /My note on them: Skip the Low one\./);
+  assert.doesNotMatch(live.prCommentsRequest({ number: 12 }, [{ author: "li", kind: "review", url: "u/2", body: "x" }, { author: "li", kind: "comment", url: "u/3", body: "y" }]), /My note/);
+
+  const world = prHost(() => ({ state: "OPEN" }));
+  const runner = new live.LiveRunner(world.host);
+  await reviewed(world, runner);
+  world.store = { [id]: reduce(world.state(), { type: "approve", id: "T-1" }, 0) };
+  await step(runner);
+  world.store = { [id]: reduce(reduce(world.state(), { type: "agentSeen", id: "T-1", state: "gone" }, 0), { type: "reopen", id: "T-1", ask: "comments", repo: "shop", text }, 0) };
+  assert.deepEqual(row(world.state(), "T-1").reopenAsk, { kind: "comments", repo: "shop", text });
+  let opening = null;
+  world.host.resume = (_context, _task, _ws, given) => { opening = given; return "tab"; };
+  world.host.knownAgents = async () => [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }];
+  await step(runner);
+  assert.ok(JSON.stringify(opening).includes("Skip the Low one."), "the reopened agent's first message is the picked comments");
+});
+
 test("a PR's most pressing need comes first", () => {
   const needs = status => model.prNeeds({ repos: ["shop"], prs: { shop: { number: 3, status: status && { draft: false, mergeable: "MERGEABLE", mergeState: "CLEAN", review: null, failed: 0, failing: [], pending: 0, passed: 0, ...status } } }, workspaces: { shop: { target: "main" } } });
   assert.deepEqual(needs(null), { label: "PR #3 open", tone: "wait" });

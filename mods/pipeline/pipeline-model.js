@@ -77,6 +77,10 @@ export const agentResume = agent => [...agent.run, ...(AGENT_OPTIONS[agent.key]?
 // What the agent of a task with an open pull request does: the card stays on the pull request, so this is said beside it.
 export const prAgent = task => task.status !== "pr" ? null : { working: "Agent working", input: "Agent needs you", gone: "Agent closed" }[task.agentState] ?? null;
 // The first of a task's open pull requests that can't merge for conflicts, as [repository, pull request].
+// Comments from others that came after the person last opened the task: what the card's dot counts.
+export const prUnheard = pr => pr.merged ? 0 : (pr.status?.heard ?? []).filter(at => at > (pr.seen ?? 0)).length;
+export const prNew = task => Object.values(task.prs ?? {}).reduce((sum, pr) => sum + prUnheard(pr), 0);
+const prLatest = task => Math.max(0, ...Object.values(task.prs ?? {}).flatMap(pr => pr.status?.heard ?? []));
 export const prConflict = task => Object.entries(task.prs ?? {}).find(([, pr]) => !pr.merged && (pr.status?.mergeable === "CONFLICTING" || pr.status?.mergeState === "DIRTY")) ?? null;
 // The two usual answers to "who merges this?", as the settings each one means. A pipeline set any other way is `mixed`.
 export const FLOWS = { solo: { delivery: "merge", draftPr: false, prApproval: false, autoRebase: false }, team: { delivery: "pr", draftPr: true, prApproval: true, autoRebase: true } };
@@ -348,6 +352,7 @@ export function liveNotices(before, after) {
     else if (task.status === "pr" && old.status === "pr") {
       const need = prNeeds(task, after), last = prNeeds(old, before);
       if (need.label !== last.label && need.tone !== "wait" && need.tone !== last.tone) say(`pull request · ${need.label.toLowerCase()}`, task.title, need.tone === "ready" ? "success" : "warning");
+      else if (prLatest(task) > prLatest(old) && Object.values(old.prs ?? {}).some(pr => pr.status?.heard)) say("has a new comment on its pull request", task.title, "info");
     }
   }
   for (const entry of afterFailed(after)) if (!afterFailed(before).some(old => old.root === entry.root && old.task === entry.task))
@@ -1448,7 +1453,20 @@ export function reduce(state, action, now = Date.now()) {
     case "reopen": {
       const task = row(action.id);
       if (!next.live || task?.status !== "pr" || task.reopen || !workspacesOf(task).length) return state;
-      Object.assign(task, { reopen: true, reopenAsk: action.ask ? { kind: action.ask, repo: action.repo ?? null } : null, reopenError: null, ...(action.ask === "rebase" ? { rebaseAsked: true } : {}) });
+      Object.assign(task, { reopen: true, reopenAsk: action.ask ? { kind: action.ask, repo: action.repo ?? null, ...(action.text ? { text: action.text } : {}) } : null, reopenError: null, ...(action.ask === "rebase" ? { rebaseAsked: true } : {}) });
+      break;
+    }
+    case "prSeen": {
+      const task = row(action.id);
+      if (!next.live || task?.status !== "pr" || !prNew(task)) return state;
+      task.prs = Object.fromEntries(Object.entries(task.prs).map(([name, pr]) => [name, prUnheard(pr) ? { ...pr, seen: Math.max(...pr.status.heard) } : pr]));
+      break;
+    }
+    case "prSent": {
+      const task = row(action.id), pr = task?.prs?.[action.repo];
+      if (!next.live || task?.status !== "pr" || !pr || !action.ids?.length) return state;
+      task.prs = { ...task.prs, [action.repo]: { ...pr, sent: [...new Set([...(pr.sent ?? []), ...action.ids])].slice(-200) } };
+      event(next, `${task.id} · sent ${action.ids.length === 1 ? "a comment" : `${action.ids.length} comments`} on #${pr.number} to its agent.`, task.id);
       break;
     }
     case "reopened": {

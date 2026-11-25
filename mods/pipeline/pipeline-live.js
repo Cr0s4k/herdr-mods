@@ -289,6 +289,11 @@ export const rebaseRequest = (target, error) => procedure("merge-refused", { tar
 export const prConflictRequest = (number, target) => procedure("pr-conflict", { number, target: target || "its base branch" });
 export const prRequest = (kind, pr, target) => kind === "checks" ? procedure("pr-checks", { number: pr.number, checks: (pr.status?.failing ?? []).join(", ") || "see the pull request" })
   : kind === "review" ? procedure("pr-review", { number: pr.number }) : prConflictRequest(pr.number, target);
+const quoted = text => String(text ?? "").trim().split("\n").map(line => line ? `> ${line}` : ">").join("\n");
+export const prCommentsRequest = (pr, comments, note = "") => procedure("pr-comments", {
+  number: pr.number, count: comments.length === 1 ? "one comment" : `${comments.length} comments`,
+  comments: comments.map((comment, n) => `${n + 1}. ${comment.author}${comment.kind === "review" ? "'s review" : ""}, ${comment.url}\n\n${quoted(comment.body)}`).join("\n\n"),
+  note: note.trim() ? `\nMy note on them: ${note.trim()}\n` : "" });
 export const fixRequest = (command, output) => procedure("check-failed", { command, output: output || "(no output)" });
 
 const PR_READ = 15000, PR_READ_AWAY = 600000, FIND_READ = 60000;
@@ -378,7 +383,7 @@ export class LiveRunner {
         if (!agent) throw new Error("No coding agent is installed on that machine.");
         const before = host.panes().map(row => row.terminal).filter(Boolean);
         const ask = task.reopenAsk, repo = ask && (ask.repo ?? prConflict(task)?.[0] ?? Object.keys(task.prs ?? {})[0]), pr = repo && task.prs?.[repo], run = agentResume(agent);
-        const opening = pr ? agentOpening({ ...agent, run }, prRequest(ask.kind, pr, task.workspaces?.[repo]?.target)) : { argv: run };
+        const opening = pr ? agentOpening({ ...agent, run }, ask.text ?? prRequest(ask.kind, pr, task.workspaces?.[repo]?.target)) : { argv: run };
         const own = host.resume(state.context, task, ws, opening, state.space ?? task.space);
         const opened = await host.locate(state.context, ws, cx, before);
         if (!opened) throw new Error("Its agent was asked to start, but its terminal never appeared.");

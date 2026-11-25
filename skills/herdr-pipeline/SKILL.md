@@ -36,6 +36,7 @@ One file each in `procedures/`. `{{name}}` marks a value the mod fills in.
 | pr-conflict.md | an open pull request conflicts with its base, from the inspector; also the first message of an agent reopened for it | `number`: the pull request; `target`: its base branch |
 | pr-checks.md | an open pull request has failing checks, from the inspector (or a reopened agent's first message) | `number`: the pull request; `checks`: the failing checks' names |
 | pr-review.md | an open pull request has review comments, from the inspector (or a reopened agent's first message) | `number`: the pull request |
+| pr-comments.md | comments picked in a pull request's list in the inspector, with **Send to agent** (or a reopened agent's first message) | `number`: the pull request; `count`: how many; `comments`: each numbered with who wrote it, its link and its text quoted; `note`: what the person added, or nothing |
 | uncommitted.md | delivery found uncommitted changes | nothing |
 | adopt-ask.md | a running conversation is converted into a task | `task`: its id; `file`: the JSON file to write; `root`: the project folder |
 | adopt-moved.md | the converted work went to a new agent | `task`, `folder`: its worktree |

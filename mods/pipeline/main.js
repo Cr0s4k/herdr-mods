@@ -1,9 +1,9 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
-import { h_flex, v_flex, Button, Input, InputState, Textarea, TextareaState, Switch, TextView } from "gpui-base";
+import { h_flex, v_flex, Button, Checkbox, Input, InputState, Textarea, TextareaState, Switch, TextView } from "gpui-base";
 import { shared, setShared, theme, props, exec, hc, run, focused, panes, spaces, knownAgents, nextCommand, settings, appHome, readTextFile, openOverlay, window as appWindow } from "herdr";
-import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, flowOf, guessFlow, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
+import { STORE, LIVE, VERSION, IMAGES, SOURCES, UPDATE_KINDS, guessUpdates, guessWatch, updatesLabel, ticketRef, ticketPrefix, shareSettings, inheritSettings, adoptSettings, resetSettings, forgettable, projectPipelines, taskPort, newer, openIssue, ACTIVE, MOVING, LABELS, REPOS, SPEEDS, AGENT_OPTIONS, agentRun, tuningFor, taskTuning, tuningLabel, codexModels, opencodeModels, createPipeline, createLive, labelFor, migrate, reduce, parseTime, nextScheduled, activeTasks, dependencies, waitsFor, canWaitFor, waitingReason, needsApproval, needsInput, prNeed, prNeeds, prAgent, prAsks, prNew, prUnheard, flowOf, guessFlow, prChecklist, prList, pushNote, unpushedLabel, afterFailed, canRevert, revertsByPr, workspacesOf, targetOf, quotaHeld, progress, duration, queueOrder, timing, planned, planSig, plannerHolds, PLANNERS, plannerAgent, plannerTuning, IMPLEMENTERS, implementerAgent, implementerTuning, implementerFor, elapsed, taskLog, usageText, compact, LIMITED, limitHold, limitHolding, limitUsed, limitAgent, resetTime, LIMIT_HOLD, TITLE, outsideAgents, adoptStep } from "./pipeline-model.js";
 import { CARD, SUN, RING, layoutScene, cardWidth, samples } from "./geometry.js";
-import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
+import { trustKeys, screenQuestion, answerKeys, replyKeys, fixRequest, rebaseRequest, prRequest, prCommentsRequest, commitRequest, changedFiles, setupArgs, readSetup, openTry, evidenceRequest } from "./pipeline-live.js";
 import { loadProcedures, procedure } from "./procedures.js";
 import { readTickets, fullTickets } from "./ticket-source.js";
 
@@ -142,6 +142,9 @@ export default class Pipeline extends View {
     this.message = InputState.new({ placeholder: "Message the agent" });
     this.message.on("change", (_e, cx) => cx.notify());
     this.message.on("submit", (_e, cx) => this.send(this.state()?.tasks.find(task => task.id === this.selected), cx));
+    this.commentNote = InputState.new({ placeholder: "Add a note for the agent (optional)" });
+    this.commentNote.on("change", (_e, cx) => cx.notify());
+    this.prComments = {}; this.chosen = new Set(); this.unfolded = new Set(); this.seenBefore = {};
     this.checkInput = InputState.new({ placeholder: "No checks. For example: npm test" });
     this.checkInput.on("submit", (_e, cx) => this.saveCheck(cx));
     this.checkInput.on("blur", (_e, cx) => this.saveCheck(cx));
@@ -233,7 +236,7 @@ export default class Pipeline extends View {
     });
   }
 
-  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.details.release(); this.rename.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
+  close() { this.search.release(); this.title.release(); this.reply.release(); this.message.release(); this.commentNote.release(); this.details.release(); this.rename.release(); this.ticketSearch.release(); this.projectSearch.release(); this.teamSearch.release(); this.plannerModelInput.release(); this.implementerModelInput.release(); this.taskModelInput.release(); this.checkInput.release(); this.tryInput.release(); this.afterInput.release(); this.modelInput.release(); this.times.start.release(); this.times.pause.release(); this.repoInput.release(); this.instructions.release(); this.prepareInput.release(); this.handle.release(); }
   storeKey() { return this.mode === "live" ? LIVE + this.id : this.id; }
   state() { return shared(STORE)?.[this.storeKey()]; }
   // A log of what was pressed, kept on this computer only, to see later which parts of Pipeline are used. No titles or text go in it.
@@ -421,6 +424,78 @@ export default class Pipeline extends View {
       this.track("prAsk", { task: task.id, kind });
       cx.notify();
     });
+  }
+  // A pull request's comments are read when its inspector shows them, and again once GitHub reports a newer one.
+  loadComments(task, name, pr, cx) {
+    const key = `${task.id}/${name}`, latest = Math.max(0, ...(pr.status?.heard ?? [])), have = this.prComments[key];
+    if (have && (have.loading || have.latest === latest)) return;
+    this.prComments[key] = { ...have, latest, loading: true };
+    const root = task.workspaces?.[name]?.source ?? this.context.cwd;
+    cx.spawn(async cx => {
+      let entry;
+      try {
+        const script = await readTextFile(`${appHome()}/mods/pipeline/delivery.py`);
+        const ran = await exec("python3", ["-c", script, JSON.stringify({ op: "pr_comments", root, url: pr.url })], { cwd: root, on: this.context.on, timeout: 60000 });
+        const reply = JSON.parse(ran.stdout);
+        entry = reply.error ? { latest, error: reply.error, list: have?.list } : { latest, list: reply.data.comments };
+      } catch (error) { entry = { latest, error: String(error?.message ?? error), list: have?.list }; }
+      this.prComments[key] = entry;
+      cx.notify();
+    });
+  }
+  sendComments(task, name, pr, cx) {
+    const list = (this.prComments[`${task.id}/${name}`]?.list ?? []).filter(comment => this.chosen.has(comment.id));
+    if (!list.length) return;
+    const text = prCommentsRequest(pr, list, this.commentNote.value()), ids = list.map(comment => comment.id), gone = task.agentState === "gone" || !task.terminal;
+    this.track("prComments", { task: task.id, count: ids.length, gone });
+    const done = cx => { this.chosen = new Set(); this.commentNote.set_value(""); this.act({ type: "prSent", id: task.id, repo: name, ids }, cx); };
+    if (gone) { this.act({ type: "reopen", id: task.id, ask: "comments", repo: name, text }, cx); done(cx); return; }
+    cx.spawn(async cx => {
+      const sent = await hc(["send", task.terminal, text]).then(result => result.code === 0, () => false);
+      if (sent) { this.prAsked = `${task.id}/comments`; done(cx); } else this.focusAgent(task);
+      cx.notify();
+    });
+  }
+  commentList(body, task, name, pr, t, suffix, cx) {
+    if (pr.merged || !pr.status?.comments) return;
+    this.loadComments(task, name, pr, cx);
+    const entry = this.prComments[`${task.id}/${name}`], list = entry?.list ?? [], before = this.seenBefore.task === task.id ? this.seenBefore.prs?.[name] ?? 0 : pr.seen ?? 0;
+    const sent = new Set(pr.sent ?? []), unheard = list.filter(comment => comment.at > before).length;
+    body.child(this.heading(`Comments · ${list.length || pr.status.comments}${unheard ? ` · ${unheard} new` : ""}`));
+    if (!list.length) { body.child(this.label(entry?.error ? `Couldn't read them: ${entry.error}` : "Reading them from GitHub…", t)); return; }
+    for (const comment of list) {
+      const picked = this.chosen.has(comment.id), open = this.unfolded.has(comment.id), fresh = comment.at > before;
+      const flat = comment.body.replace(/\*\*|__|`|^#+ /gm, "").replace(/\s+/g, " ").trim(), long = flat.length > 220 || comment.body.includes("\n");
+      body.child(h_flex().id(`pipeline-comment-${comment.id}`).gap(9).items_start().p(8).rounded(6).border_1().border_color(picked ? t.accent : t.border).bg(picked ? t.selected : t.surface)
+        .child(Checkbox.new(`pipeline-comment-pick-${comment.id}`).checked(picked).tab_index(0).accessibility_label(`Pick ${comment.author}'s ${comment.kind}`)
+          .on_change((_value, cx) => { if (picked) this.chosen.delete(comment.id); else this.chosen.add(comment.id); cx.notify(); })
+          .child(div().size(16).mt(1).flex_none().flex().items_center().justify_center().rounded(4).border_1().cursor_pointer()
+            .border_color(picked ? t.accent : t.border).bg(picked ? t.accent : t.input).text_color(t.accent_foreground)
+            .when(picked, el => el.child(icon("check", 11)))))
+        .child(v_flex().flex_1().min_w(0).gap(4)
+          .child(h_flex().gap(6).items_center().text_size(11.5).min_w(0)
+            .when(fresh, el => el.child(dot(t.accent)))
+            .child(div().font_medium().truncate().child(comment.author))
+            .child(div().flex_none().text_color(t.muted).child(`${comment.kind === "review" ? "review · " : ""}${stamp(comment.at)}`))
+            .when(fresh, el => el.child(div().flex_none().text_color(t.accent).child("new")))
+            .when(sent.has(comment.id), el => el.child(div().flex_none().text_color(t.muted).child("· sent to agent")))
+            .child(div().flex_1())
+            .child(div().id(`pipeline-comment-link-${comment.id}`).flex_none().text_color(t.muted).cursor_pointer().hover(el => el.text_color(t.foreground)).child("Open")
+              .on_click((_e, cx) => { cx.stop_propagation(); this.openLink(comment.url); })))
+          .child(open ? this.copyable(`comment-body-${comment.id}`, comment.body).text_size(12).line_height(1.45)
+            : div().text_size(12).line_height(1.45).text_color(t.muted).child(flat.length > 220 ? `${flat.slice(0, 220)}…` : flat))
+          .when(long, el => el.child(div().id(`pipeline-comment-fold-${comment.id}`).text_size(11.5).text_color(t.accent).cursor_pointer()
+            .child(open ? "Show less" : "Show all").on_click((_e, cx) => { if (open) this.unfolded.delete(comment.id); else this.unfolded.add(comment.id); cx.notify(); })))));
+    }
+    const picks = list.filter(comment => this.chosen.has(comment.id)).length, gone = task.agentState === "gone" || !task.terminal, asked = this.prAsked === `${task.id}/comments`;
+    body.child(h_flex().gap(8).items_center().flex_wrap()
+      .child(this.button(`comments-all-${task.id}${suffix}`, picks === list.length ? "Clear" : "Pick all", cx => { this.chosen = picks === list.length ? new Set() : new Set([...this.chosen, ...list.map(comment => comment.id)]); cx.notify(); }, t, { small: true }))
+      .when(Boolean(unheard) && picks !== unheard, el => el.child(this.button(`comments-new-${task.id}${suffix}`, "Pick the new ones", cx => { this.chosen = new Set(list.filter(comment => comment.at > before).map(comment => comment.id)); cx.notify(); }, t, { small: true }))));
+    if (picks) body.child(Input.new(this.commentNote).id(`pipeline-comment-note-${task.id}${suffix}`).w_full().h(32).px(9).bg(t.input).border_1().border_color(t.border).rounded(6).text_size(12).accessibility_label("A note for the agent"));
+    body.child(this.button(`comments-send-${task.id}${suffix}`, task.reopen ? "Reopening…" : asked && !picks ? "Sent. It pushes when done" : !picks ? "Pick comments to send" : `${gone ? "Reopen agent with" : "Send"} ${picks || ""} ${picks === 1 ? "comment" : "comments"}${gone ? "" : " to the agent"}`.replace(/\s+/g, " "),
+      cx => this.sendComments(task, name, pr, cx), t,
+      { icon: "reset", primary: picks > 0, disabled: !picks || Boolean(task.reopen) || task.agentState === "working",
+        hint: `${gone ? "Starts its agent again in the worktree and gives it" : "Gives its agent"} the picked comments in full, with your note, to change the code and push` }));
   }
   resolve(task, cx, ask = "rebase") {
     if (!task?.terminal || !task.error) return;
@@ -753,6 +828,12 @@ export default class Pipeline extends View {
     const task = this.state()?.tasks.find(task => task.id === id);
     if (task) this.track("inspect", { task: id, status: task.status });
     this.selected = id; this.drawer = "task"; this.confirm = null; this.sent = null; this.imageNote = null;
+    if (this.seenBefore.task !== id) { this.chosen = new Set(); this.unfolded = new Set(); this.commentNote.set_value(""); }
+    if (task?.status === "pr" && this.seenBefore.task !== id) {
+      // New marks stay on the comments while the inspector is open, though opening it counts them as seen.
+      this.seenBefore = { task: id, prs: Object.fromEntries(Object.entries(task.prs ?? {}).map(([name, pr]) => [name, pr.seen ?? 0])) };
+      if (prNew(task)) this.act({ type: "prSeen", id }, cx);
+    }
     this.detailsFor = task?.status === "queued" && this.state()?.live ? id : null;
     if (this.detailsFor) { this.details.set_value(task.description ?? ""); this.rename.set_value(task.title); this.taskModelInput.set_value(task.tune?.model ?? ""); }
     cx.notify();
@@ -1453,6 +1534,7 @@ export default class Pipeline extends View {
     else if (kind !== "comet") {
       const agent = state.live && task.status === "pr" ? task.agentState : null, lead = agent === "working" ? t.accent : agent === "input" ? t.blocked : color;
       const busy = (agent === "working" || (ACTIVE.includes(task.status) && !asking)) && motion, linked = kind === "review" && state.live && task.status === "pr" && Boolean(task.prs);
+      const fresh = linked ? prNew(task) : 0, news = () => h_flex().id(`pipeline-pr-new-${task.id}`).gap(4).items_center().flex_none().font_medium().text_color(t.accent).child(dot(t.accent)).child(`${fresh} new`);
       card.child(v_flex().size_full().p(kind === "review" || asking ? 9 : 10).gap(4)
         .child(h_flex().gap(6).items_center()
           .child(busy ? svg("mods/pipeline/satellite.svg").id(`pipeline-sat-${task.id}`).size(11).flex_none().text_color(lead).spin(task.status === "testing" ? 800 : 1500) : dot(lead))
@@ -1466,9 +1548,13 @@ export default class Pipeline extends View {
             ? h_flex().id(`pipeline-pr-agent-${task.id}`).gap(6).items_center().min_w(0).text_size(11)
               .child(agent === "input" ? div().px(6).h(18).flex_none().rounded(4).bg(t.blocked + "26").text_color(t.blocked).font_semibold().flex().items_center().child("Needs you")
                 : div().flex_none().font_medium().text_color(t.accent).child("Agent working"))
+              .when(fresh > 0, el => el.child(news()))
               .child(div().flex_1().min_w(0).truncate().text_color(toneColor(prNeeds(task, state).tone, t)).child(prNeeds(task, state).label))
-            : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task, state).tone, t) : t.muted).truncate()
-              .when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
+            : fresh > 0
+              ? h_flex().gap(6).items_center().min_w(0).text_size(11).child(news())
+                .child(div().flex_1().min_w(0).truncate().text_color(toneColor(prNeeds(task, state).tone, t)).child(cardStatus(state, task)))
+              : div().text_size(11).text_color(task.status === "failed" || task.stalled ? t.blocked : task.status === "pr" && state.live ? toneColor(prNeeds(task, state).tone, t) : t.muted).truncate()
+                .when(kind === "review" && (needsApproval(task) || task.status === "failed"), el => el.pr(80)).child(cardStatus(state, task))));
     }
     wrap.child(card);
     if (ACTIVE.includes(task.status) && kind === "card" && !asking && !state.live) wrap.child(div().absolute().left(10).bottom(6).w(cw - 20).h(2).rounded(1).bg(t.raised)
@@ -2111,7 +2197,7 @@ export default class Pipeline extends View {
       .when(Boolean(timing(task)), el => el.child(div().text_size(12).text_color(t.muted).child(`· ${timing(task)}`))));
     if (task.agent) body.child(div().id(`pipeline-agent-line-${task.id}`).w_full().min_w(0).text_size(12).line_height(1.45).text_color(t.muted).child(`${task.agent}${task.tuning ? ` · ${task.tuning}` : ""}${task.implementer ? ` · code by ${task.implementer}` : ""}`));
     if (task.error) body.child(this.copyable(`error-${task.id}`, task.error).text_size(12).line_height(1.45).text_color(t.blocked));
-    if (task.status === "pr" && task.prs) this.prDetail(body, state, task, t, several);
+    if (task.status === "pr" && task.prs) this.prDetail(body, state, task, t, several, cx);
     if (adoptStep(task) && !task.discard) {
       const pane = panes().find(row => row.terminal === task.adopt.terminal), agent = task.adopt.agent ?? "Its agent";
       body.child(this.label(!task.adopt.files ? `${agent} was asked what it is working on and which uncommitted files are its own. It answers when its current turn ends; then Pipeline makes the worktree and moves those files.`
@@ -2262,7 +2348,7 @@ export default class Pipeline extends View {
       .child(div().flex_1().min_w(0).child(this.copyable(`history-${task.id}-${n}`, String(item.message ?? item).replace(new RegExp(`^${task.id.replace(/[^\\w-]/g, "")}( · | )`), "")).text_size(11.5).line_height(1.45))))));
   }
   // An open pull request comes first in its task: what it waits for, and what can be done about it from here.
-  prDetail(body, state, task, t, several) {
+  prDetail(body, state, task, t, several, cx) {
     for (const [name, pr] of Object.entries(task.prs)) {
       const prTarget = task.workspaces?.[name]?.target, need = prNeed(pr, prTarget, state), suffix = several ? `-${name}` : "", prefix = several ? `${name} · ` : "";
       body.child(this.heading(pr.merged ? `${prefix}Pull request #${pr.number} · Merged` : pr.status ? `${prefix}Pull request #${pr.number} · ${need.label}` : `${prefix}Pull request #${pr.number}`));
@@ -2289,6 +2375,7 @@ export default class Pipeline extends View {
         .when(!pr.merged && Boolean(pr.status), el => el.child(this.button(`pr-ready-${task.id}${suffix}`, pr.readying ? "Asking GitHub…" : draft ? "Mark ready" : "Back to draft",
           cx => this.act({ type: "prReady", id: task.id, repo: name, undo: !draft }, cx), t,
           { icon: draft ? "check" : null, primary: draft && !pr.readying, disabled: Boolean(pr.readying), hint: draft ? "Marks it ready for review on GitHub (gh pr ready)" : "Makes it a draft again on GitHub (gh pr ready --undo)" }))));
+      this.commentList(body, task, name, pr, t, suffix, cx);
     }
     if (task.agentState === "gone" || task.reopen) {
       body.child(this.label(`Its agent's tab is closed, so nobody is there to fix what the pull request needs. Its worktree${several ? "s are" : " is"} still here.`, t));
@@ -2296,8 +2383,8 @@ export default class Pipeline extends View {
       body.child(this.button(`reopen-${task.id}`, task.reopen ? "Reopening…" : "Reopen agent", cx => this.act({ type: "reopen", id: task.id }, cx), t,
         { icon: "reset", disabled: Boolean(task.reopen), hint: `Starts ${task.agent ?? "its agent"} again in the worktree, continuing its last conversation there` }));
     } else if (prAgent(task)) body.child(this.label(`${prAgent(task)} in its worktree. The card stays here until the pull request merges or closes.`, t));
-    body.child(this.label(several ? "Pipeline asks GitHub about each one once a minute. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
-      : "Pipeline asks GitHub once a minute. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
+    body.child(this.label(several ? "Pipeline asks GitHub about each one every fifteen seconds while its space is on screen. It finishes the task when every pull request is merged, and returns it to review if one is closed; the others stay open."
+      : "Pipeline asks GitHub every fifteen seconds while its space is on screen. It finishes the task when the PR is merged, and returns it to review if it's closed.", t));
     if (state.mergeApproved) body.child(this.label(`With Merge once approved, Pipeline merges ${several ? "them, one after another, once every one is" : "it once it is"} approved with passing checks.`, t));
   }
   revertDetail(body, state, task, t) {

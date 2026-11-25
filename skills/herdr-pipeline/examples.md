@@ -114,6 +114,28 @@ Pull request #12 of this branch has review comments to address.
 Read the reviews and their comments (`gh pr view 12 --comments`, and `gh api repos/{owner}/{repo}/pulls/12/comments` for the ones on lines), make the changes they ask for, commit, push the branch, and stop. Change the code only: post no comments or replies on the pull request. Say on the summary's Unsure line what you chose not to change, and why.
 ````
 
+## Comments picked on an open pull request, with a note
+
+````text
+Pull request #12 of this branch has 2 comments I want addressed. Each one names who wrote it and links to it, then quotes it in full.
+
+1. ana, https://github.com/acme/shop/pull/12#issuecomment-101
+
+> ## Review
+>
+> **Medium:** the toggle forgets the choice on reload.
+>
+> **Low:** the icon has no label.
+
+2. li's review, https://github.com/acme/shop/pull/12#pullrequestreview-202
+
+> src/toggle.js:8: Use setTheme() here.
+
+My note on them: Skip the Low one.
+
+Make the changes they ask for, commit, push the branch, and stop. Change the code only: post no comments or replies on the pull request. Where you disagree with a point or can't do it, leave that code as it is and say why. When you are done, say in one line per comment what you did, and say on the summary's Unsure line what you chose not to change.
+````
+
 ## Delivery found uncommitted changes
 
 ````text

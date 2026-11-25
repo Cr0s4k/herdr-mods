@@ -301,7 +301,11 @@ nothing to finish.
    puts the most pressing reason on the card: **Draft**, **Conflicts with main**, **Checks failing · 2**,
    **Changes requested**, **Checks running**, **Waiting for review**, **Behind main**, **Blocked by
    branch rules** or **Ready to merge**. Its inspector lists checks (naming the failing ones), review and
-   merge state. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
+   merge state. Comments from anyone but you count too, whether a review or a plain comment on the conversation (bots such as
+   Linear's link-back don't): one that came after you last opened the task puts a dot and **N new** on its card and
+   a notification on screen. The inspector lists the comments, new ones marked; tick the ones to act on, add a note
+   if you like ("skip the Low ones"), and **Send** gives them to its agent in full, or reopens a closed agent with
+   them. With **Wait for an approval** (Settings, Delivery) a pull request nobody approved
    reads **Waiting for review** rather than **Ready to merge**, even where GitHub requires no
    review. With **Merge once approved** (Settings, Delivery) Pipeline merges the pull request itself
    with `gh` once someone approved it and its checks pass, with no repository setting needed: it

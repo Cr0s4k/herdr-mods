@@ -1,4 +1,5 @@
 """Deliver a finished Pipeline task branch (merge it locally and maybe push, or push it and open a pull request), and clean up after it."""
+from datetime import datetime
 import json
 import os
 import re
@@ -288,38 +289,44 @@ def checks(rollup):
 
 
 def pr_state(payload):
-    fields = "state,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,author"
-    viewed = gh(payload["root"], "pr", "view", payload["url"], "--json", fields)
-    if viewed.returncode:
-        raise ValueError(viewed.stderr.strip() or "GitHub didn't answer about the pull request.")
-    return pr_summary(json.loads(viewed.stdout))
+    state = pr_states({"root": payload["root"], "urls": [payload["url"]]})["states"].get(payload["url"])
+    if not state:
+        raise ValueError("GitHub didn't answer about the pull request.")
+    return state
 
 
-PR_FIELDS = """fragment pr on PullRequest {
-  state isDraft mergeable mergeStateStatus reviewDecision author { login }
-  reviews(last: 100) { nodes { state author { login } } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
-    __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state }
-  } } } } } }
-}"""
+WHO = "author { login __typename }"
+PR_FIELDS = f"""fragment pr on PullRequest {{
+  state isDraft mergeable mergeStateStatus reviewDecision {WHO}
+  reviews(last: 100) {{ nodes {{ state submittedAt {WHO} }} }}
+  comments(last: 100) {{ nodes {{ createdAt isMinimized {WHO} }} }}
+  commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ contexts(first: 100) {{ nodes {{
+    __typename ... on CheckRun {{ name status conclusion }} ... on StatusContext {{ context state }}
+  }} }} }} }} }} }}
+}}"""
+COMMENT_FIELDS = f"""fragment pr on PullRequest {{
+  {WHO}
+  reviews(last: 100) {{ nodes {{ id url state submittedAt body {WHO} comments(first: 50) {{ nodes {{ path line originalLine body }} }} }} }}
+  comments(last: 100) {{ nodes {{ id url createdAt body isMinimized {WHO} }} }}
+}}"""
 
 
 # Every pull request on one GitHub host is read in a single GraphQL query, so asking often costs one request rather than one per pull request. A host that fails leaves out only its own.
-def pr_states(payload):
+def ask_prs(root, urls, fragment):
     hosts = {}
-    for url in dict.fromkeys(payload["urls"]):
+    for url in dict.fromkeys(urls):
         match = re.match(r"https://([^/]+)/([^/]+)/([^/]+)/pull/(\d+)", url)
         if match:
             hosts.setdefault(match.group(1), []).append((url, match.group(2), match.group(3), int(match.group(4))))
-    states, errors = {}, []
+    found, errors = {}, []
     for host, prs in hosts.items():
         names, fields, args = [], [], []
         for index, (url, owner, name, number) in enumerate(prs):
             names += [f"$o{index}: String!", f"$n{index}: String!", f"$p{index}: Int!"]
             fields.append(f"r{index}: repository(owner: $o{index}, name: $n{index}) {{ pullRequest(number: $p{index}) {{ ...pr }} }}")
             args += ["-f", f"o{index}={owner}", "-f", f"n{index}={name}", "-F", f"p{index}={number}"]
-        query = f"query({', '.join(names)}) {{\n{chr(10).join(fields)}\n}}\n{PR_FIELDS}"
-        asked = gh(payload["root"], "api", "graphql", "--hostname", host, "-H", "Accept: application/vnd.github.merge-info-preview+json", "-f", f"query={query}", *args)
+        query = f"query({', '.join(names)}) {{\n{chr(10).join(fields)}\n}}\n{fragment}"
+        asked = gh(root, "api", "graphql", "--hostname", host, "-H", "Accept: application/vnd.github.merge-info-preview+json", "-f", f"query={query}", *args)
         try:
             data = json.loads(asked.stdout or "{}").get("data") or {}
         except ValueError:
@@ -327,24 +334,69 @@ def pr_states(payload):
         if not data and asked.returncode:
             errors.append(asked.stderr.strip() or f"{host} didn't answer about the pull requests.")
         for index, (url, *_rest) in enumerate(prs):
-            pr = ((data.get(f"r{index}") or {}).get("pullRequest"))
+            pr = (data.get(f"r{index}") or {}).get("pullRequest")
             if pr:
-                commit = ((pr.get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {}
-                rollup = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
-                states[url] = pr_summary({**pr, "reviews": (pr.get("reviews") or {}).get("nodes") or [], "statusCheckRollup": rollup})
+                found[url] = pr
     if errors and len(errors) == len(hosts):
         raise ValueError(errors[0])
+    return found
+
+
+def pr_states(payload):
+    states = {}
+    for url, pr in ask_prs(payload["root"], payload["urls"], PR_FIELDS).items():
+        commit = ((pr.get("commits") or {}).get("nodes") or [{}])[0].get("commit") or {}
+        rollup = ((commit.get("statusCheckRollup") or {}).get("contexts") or {}).get("nodes") or []
+        states[url] = pr_summary({**pr, "reviews": nodes(pr, "reviews"), "comments": nodes(pr, "comments"), "statusCheckRollup": rollup})
     return {"states": states}
 
 
-def pr_summary(pr):
+def nodes(pr, key):
+    return (pr.get(key) or {}).get("nodes") or []
+
+
+def stamp(text):
+    try:
+        return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp() * 1000)
+    except (AttributeError, ValueError):
+        return 0
+
+
+# What someone other than the pull request's author said: its conversation comments and the reviews that say something. Bots, like a tracker's link-back, don't count.
+def heard(pr):
     author = (pr.get("author") or {}).get("login")
-    # Reviews that say something, from anyone but the author: an agent can act on those even where none is required.
-    comments = sum(1 for review in pr.get("reviews") or [] if review.get("state") in ("CHANGES_REQUESTED", "COMMENTED") and (review.get("author") or {}).get("login") != author)
+    def other(item):
+        who = item.get("author") or {}
+        return who.get("login") != author and who.get("__typename") != "Bot" and not str(who.get("login") or "").endswith("[bot]")
+    reviews = [review for review in pr.get("reviews") or [] if review.get("state") in ("CHANGES_REQUESTED", "COMMENTED") and other(review)]
+    comments = [comment for comment in pr.get("comments") or [] if not comment.get("isMinimized") and other(comment)]
+    return reviews, comments
+
+
+def pr_summary(pr):
+    reviews, comments = heard(pr)
+    times = sorted([stamp(review.get("submittedAt")) for review in reviews] + [stamp(comment.get("createdAt")) for comment in comments])
     status = {"draft": bool(pr.get("isDraft")), "mergeable": pr.get("mergeable") or "UNKNOWN",
               "mergeState": pr.get("mergeStateStatus") or "UNKNOWN", "review": pr.get("reviewDecision") or None,
-              "comments": comments, **checks(pr.get("statusCheckRollup"))}
+              "comments": len(times), "heard": times, **checks(pr.get("statusCheckRollup"))}
     return {"state": pr.get("state", "OPEN"), "status": status}
+
+
+# The comments the inspector lists, oldest first, each whole: a review with its comments on lines.
+def pr_comments(payload):
+    pr = ask_prs(payload["root"], [payload["url"]], COMMENT_FIELDS).get(payload["url"])
+    if not pr:
+        raise ValueError("GitHub didn't answer about the pull request.")
+    reviews, comments = heard({**pr, "reviews": nodes(pr, "reviews"), "comments": nodes(pr, "comments")})
+    found = []
+    for review in reviews:
+        lines = [f"{line.get('path')}:{line.get('line') or line.get('originalLine') or '?'}: {line.get('body', '').strip()}" for line in nodes(review, "comments")]
+        body = "\n\n".join(part for part in [(review.get("body") or "").strip(), *lines] if part)
+        if body:
+            found.append({"id": review["id"], "kind": "review", "author": review["author"]["login"], "at": stamp(review.get("submittedAt")), "url": review.get("url"), "body": body})
+    for comment in comments:
+        found.append({"id": comment["id"], "kind": "comment", "author": comment["author"]["login"], "at": stamp(comment.get("createdAt")), "url": comment.get("url"), "body": (comment.get("body") or "").strip()})
+    return {"comments": sorted(found, key=lambda item: item["at"])}
 
 
 def pr_ready(payload):
@@ -538,7 +590,7 @@ def adopt_move(payload):
 def main():
     try:
         payload = json.loads(sys.argv[1])
-        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_states": pr_states, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
+        operations = {"merge": merge, "push": push, "remove": remove, "publish": publish, "pr_state": pr_state, "pr_states": pr_states, "pr_comments": pr_comments, "pr_ready": pr_ready, "pr_merge": pr_merge, "pr_find": pr_find, "pr_edit": pr_edit, "revert": revert, "pr_revert": pr_revert, "summary": summary, "changed": changed,
                       "adopt_ask": adopt_ask, "adopt_read": adopt_read, "adopt_move": adopt_move}
         if payload.get("op") not in operations:
             raise ValueError("Unknown delivery operation.")
