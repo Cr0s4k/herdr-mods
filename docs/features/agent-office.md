@@ -8,9 +8,9 @@ at their desks, type, wait for a human and walk to the coffee counter.
 - **The corner**: a small live office at the bottom right of the terminals. Click it to open
   the dialog. Drag it to another edge or corner; Herdr keeps it there.
 
-The dialog's picture is live, about five times a second while Herdr is in front and once a
-second behind another app. The corner refreshes every few seconds. Both only look: to claim a
-desk or join, use **Open in browser**.
+The dialog's picture is live, ten times a second while Herdr is in front and twice a second
+behind another app. The corner refreshes every second. Both move at real speed and only look:
+to claim a desk or join, use **Open in browser**.
 
 ## Which office
 
@@ -49,6 +49,8 @@ invisible window and saves what it shows as pictures, which the mod displays.
 - Pictures go to `~/.config/herdr-app/agent-office/frames/` under new names (Herdr caches an
   image by its path), keeping the last four; `status.json` names the newest and the page's
   state.
-- Between the corner's pictures the page's animation is paused, so the corner costs a few
-  percent of one core. The dialog's five pictures a second cost about a third of one, only
-  while it's open and Herdr is in front.
+- Pictures are taken on their own timer and saved in the background, so saving one never
+  delays the next. The page draws at most 30 times a second for the dialog and 12 for the
+  corner, which is drawn small (550 by 450) since it's shown at 176 wide. The corner costs
+  about 5% of one core; the dialog's ten pictures a second about half of one, only while it's
+  open and Herdr is in front.

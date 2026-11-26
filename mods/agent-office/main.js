@@ -65,18 +65,22 @@ export default class AgentOffice extends View {
         this.watching = watchFolder(watchPath());
         await this.refresh(cx);
         await this.watching;
-        await cx.sleep(80);
+        await cx.sleep(30);
       }
     });
   }
 
   async refresh(cx) {
     const status = await readStatus();
+    const seen = `${status?.state}|${status?.detail}|${status?.url}|${alive(status)}`;
+    let changed = seen !== this.seen;
     this.status = status;
+    this.seen = seen;
     if (status?.frame && status.url === this.address?.url && status.frame !== this.frames.at(-1)) {
       this.frames = [...this.frames.slice(-1), status.frame];
+      changed = true;
     }
-    cx.notify();
+    if (changed) cx.notify();
   }
 
   wanted() {

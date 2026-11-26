@@ -2,9 +2,9 @@ import { exec, readTextFile, writeTextFile, home, appHome, shared } from "herdr"
 
 export const SETTINGS = "agentOffice";
 export const FOLDER = "agent-office";
-export const CORNER = { width: 1100, height: 900 };
+export const CORNER = { width: 550, height: 450 };
 export const CORNER_WIDTH = 176;
-export const FAST = 200, IDLE = 1000, SLOW = 2500;
+export const FAST = 100, IDLE = 500, SLOW = 1000;
 
 const LAUNCH = `dir=$1 src=$2 name=$3 bin="$HOME/.cache/herdr-agent-office/herdr-agent-office"
 mkdir -p "$dir/frames" "\${bin%/*}" || exit 1

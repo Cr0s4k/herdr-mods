@@ -64,7 +64,7 @@ test("no office is found without a hook or an address, and a broken settings fil
 
 test("a request names the page, its size in whole pixels and how often to draw it", () => {
   const sent = JSON.parse(office.want({ url: "https://o/", width: 1540.4, height: 879.6, shot: 193.6, every: office.SLOW, at: 5 }));
-  assert.deepEqual(sent, { at: 5, url: "https://o/", width: 1540, height: 880, shot: 194, every: 2500, signin: 0, reload: 0 });
+  assert.deepEqual(sent, { at: 5, url: "https://o/", width: 1540, height: 880, shot: 194, every: 1000, signin: 0, reload: 0 });
 });
 
 test("the viewer counts as running while its status is fresh", () => {

@@ -26,17 +26,26 @@ try? FileManager.default.createDirectory(at: frames, withIntermediateDirectories
 let lock = open(folder.appendingPathComponent(".lock").path, O_CREAT | O_RDWR, 0o644)
 if lock < 0 || flock(lock, LOCK_EX | LOCK_NB) != 0 { exit(0) }
 
-// The page's animation runs on requestAnimationFrame. Holding it back between slow frames
-// keeps the office from drawing sixty times a second for a picture taken every few seconds.
+// Capped at 12 frames a second the office still moves at real speed (it steps at most a tenth
+// of a second per frame) and costs a fifth of drawing sixty.
 let gate = """
 (() => {
   const raf = window.requestAnimationFrame.bind(window), caf = window.cancelAnimationFrame.bind(window);
-  let run = true, held = new Map(), next = -1;
-  window.requestAnimationFrame = cb => { if (run) return raf(cb); const id = next--; held.set(id, cb); return id; };
+  let gap = 0, last = 0, timer = 0, next = -1;
+  const held = new Map();
+  const flush = () => { timer = 0; raf(t => { last = t; const all = [...held.values()]; held.clear(); all.forEach(cb => cb(t)); }); };
+  window.requestAnimationFrame = cb => {
+    if (!gap) return raf(cb);
+    const id = next--;
+    held.set(id, cb);
+    if (!timer) timer = setTimeout(flush, Math.max(0, gap - (performance.now() - last)));
+    return id;
+  };
   window.cancelAnimationFrame = id => id < 0 ? held.delete(id) : caf(id);
-  window.__herdrRun = on => { run = on; if (!on) return; const all = [...held.values()]; held.clear(); all.forEach(cb => raf(cb)); };
+  window.__herdrFps = fps => { gap = fps > 0 ? 1000 / fps : 0; };
 })();
 """
+let encoder = DispatchQueue(label: "agent-office.encode", qos: .userInitiated)
 
 final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
   let started = now()
@@ -49,7 +58,11 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
   var reload = 0.0
   var signing = false
   var busy = false
-  var last = 0.0
+  var encoding = false
+  var current: Want?
+  var shots: Timer?
+  var every = 0.0
+  var paced = -1
   var beat = 0.0
   var retry = 0.0
   var state = "loading"
@@ -117,14 +130,18 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     if state == "offline" && time >= retry { load() }
     if state == "loading" && time >= retry { failed("The office took too long to answer") }
     if time - beat > 4000 { write() }
-    guard !signing, !busy, state == "ready" else { return }
-    let slow = want.every >= 1000
-    run(!slow || time - last >= want.every - 400)
-    if time - last >= want.every { shoot(want, slow) }
-  }
-
-  func run(_ on: Bool) {
-    web.evaluateJavaScript("window.__herdrRun && window.__herdrRun(\(on))", completionHandler: nil)
+    current = want
+    let fps = want.every <= 150 ? 30 : 12
+    if fps != paced {
+      paced = fps
+      web.evaluateJavaScript("window.__herdrFps && window.__herdrFps(\(fps))", completionHandler: nil)
+    }
+    if want.every != every {
+      every = want.every
+      shots?.invalidate()
+      shots = Timer.scheduledTimer(withTimeInterval: max(0.05, every / 1000), repeats: true) { _ in self.shoot() }
+      shots?.tolerance = 0.01
+    }
   }
 
   func load() {
@@ -138,28 +155,24 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     state = "loading"
     detail = ""
     retry = now() + 15000
-    run(true)
     web.load(URLRequest(url: target))
     write()
   }
 
-  func shoot(_ want: Want, _ slow: Bool) {
+  func shoot() {
+    guard let want = current, !signing, !busy, !encoding, state == "ready" else { return }
     busy = true
     let config = WKSnapshotConfiguration()
     config.snapshotWidth = NSNumber(value: want.shot)
     web.takeSnapshot(with: config) { image, _ in
-      guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-        self.busy = false
-        return
-      }
-      if slow { self.run(false) }
-      let time = now()
-      self.last = time
-      DispatchQueue.global(qos: .userInitiated).async {
-        let name = String(format: "%.0f.png", time)
+      self.busy = false
+      guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+      self.encoding = true
+      let name = String(format: "%.0f.png", now())
+      encoder.async {
         let saved = save(cg, frames.appendingPathComponent(name))
         DispatchQueue.main.async {
-          self.busy = false
+          self.encoding = false
           guard saved else { return }
           self.frame = name
           self.write()
@@ -194,7 +207,6 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
       return
     }
     signing = true
-    run(true)
     window.styleMask = [.titled, .closable, .resizable]
     window.title = "Sign in to Agent Office"
     window.alphaValue = 1
@@ -221,6 +233,7 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    paced = -1
     guard state != "offline" else { return }
     state = office(webView.url) ? "ready" : "signin"
     if signing && state == "ready" { closeSignin() }
