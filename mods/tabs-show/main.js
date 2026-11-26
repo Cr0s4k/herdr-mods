@@ -13,6 +13,7 @@ import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 import { brighter, spin, watchMotion } from "./ui.js";
 import { popupSize as togglesSize } from "./toggles.js";
+import { BLOCK as OFFICE_BLOCK, SETTINGS as OFFICE, findAddress, sidebarWanted } from "./office.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -57,6 +58,17 @@ export default class Tabs extends View {
     this.pipeline.start(cx);
     this.watchers = new WatchersTracker();
     this.watchers.start(cx);
+    this.office = { own: undefined, found: undefined, at: 0 };
+    cx.spawn(async cx => {
+      for (;;) {
+        const own = shared(OFFICE)?.url ?? null;
+        if (own !== this.office.own || Date.now() - this.office.at > 60000) {
+          Object.assign(this.office, { own, at: Date.now(), found: Boolean(await findAddress(own).catch(() => null)) });
+          cx.notify();
+        }
+        await cx.sleep(2000);
+      }
+    });
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
@@ -98,6 +110,16 @@ export default class Tabs extends View {
     if (shared("features")?.agentOffice === false || window()?.platform !== "macos") return;
     track("agent-office", "tab-bar");
     openOverlay({ mod: "agent-office", kind: "dialog", width: 0.9, height: 0.9, props: {} });
+  }
+
+  // The office at the bottom of the sidebar has a fixed height, so it's hidden, not emptied, when it has nothing to show.
+  syncOffice(root, sidebar, w) {
+    const block = find(root, OFFICE_BLOCK), office = this.office;
+    if (!block || office?.found === undefined) return;
+    const want = sidebarWanted({ sidebar, features: shared("features") ?? {}, found: office.found, platform: w?.platform });
+    if (want === !block.hidden || (office.asked === want && Date.now() - office.askedAt < 1000)) return;
+    Object.assign(office, { asked: want, askedAt: Date.now() });
+    run(want ? "layout.show" : "layout.hide", { id: OFFICE_BLOCK });
   }
 
   // Pipeline hears commands only while it's on screen, and a new one only once it has started.
@@ -206,6 +228,7 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
+    this.syncOffice(root, sidebar, w);
     const loopsOn = shared("features")?.loops !== false;
     const skillsOn = shared("features")?.skills !== false;
     const watchersOn = shared("features")?.watchers !== false;

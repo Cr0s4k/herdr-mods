@@ -108,7 +108,11 @@ function element() {
   } });
   return el;
 }
+let officeSource = (await readFile(new URL("../mods/agent-office/office.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
+officeSource = "const exec = null, readTextFile = null, writeTextFile = null, home = null, appHome = null, shared = null;\n" + officeSource;
+const office = await import("data:text/javascript," + encodeURIComponent(officeSource));
 Object.assign(globalThis.__reviewNative, {
+  OFFICE_BLOCK: office.BLOCK, OFFICE: office.SETTINGS, findAddress: async () => null, sidebarWanted: office.sidebarWanted,
   View: class {}, div: element, svg: element, image: element, h_flex: element, ReviewPanes,
   Button: { new: id => element().id(id) },
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
@@ -128,7 +132,7 @@ source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "u
 source = "const { exec } = globalThis.__reviewNative;\n" + source;
 Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
+source = "const { OFFICE_BLOCK, OFFICE, findAddress, sidebarWanted, View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -141,6 +145,26 @@ function find(el, id) {
   return el?.styles?.id?.[0] === id ? el : (el?.nodes ?? []).map(child => find(child, id)).find(Boolean);
 }
 function text(el) { return typeof el === "string" ? el : (el?.nodes ?? []).map(text).join(" "); }
+
+test("the sidebar's office shows only with an office found, its switches on and the sidebar wide", () => {
+  const tabs = setupTabs();
+  const block = { id: "agent-office", hidden: true }, sidebar = { id: "sidebar", size: { px: 268 }, children: [block] };
+  world.layout.children.push(sidebar);
+  const asked = () => world.calls.filter(([, args]) => args?.id === "agent-office");
+  const step = (change) => { change(); tabs.office.askedAt = 0; world.calls = []; tabs.render(); return asked(); };
+
+  assert.deepEqual(step(() => {}), []);
+  assert.deepEqual(step(() => { tabs.office.found = false; }), []);
+  assert.deepEqual(step(() => { tabs.office.found = true; }), [["layout.show", { id: "agent-office" }]]);
+  block.hidden = false;
+  assert.deepEqual(step(() => {}), []);
+  assert.deepEqual(step(() => preferences.set("features", { agentOfficeSidebar: false })), [["layout.hide", { id: "agent-office" }]]);
+  assert.deepEqual(step(() => preferences.set("features", { agentOffice: false })), [["layout.hide", { id: "agent-office" }]]);
+  preferences.delete("features");
+  assert.deepEqual(step(() => { sidebar.size.px = 76; }), [["layout.hide", { id: "agent-office" }]]);
+  block.hidden = true;
+  assert.deepEqual(step(() => {}), []);
+});
 
 test("Files, Changes, Show, Loops, Brief, Skills, Watchers and Tasks toggle side panels without creating panes", () => {
   const tabs = setupTabs(), root = tabs.render();

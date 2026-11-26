@@ -2,8 +2,8 @@ import { exec, readTextFile, writeTextFile, home, appHome, shared } from "herdr"
 
 export const SETTINGS = "agentOffice";
 export const FOLDER = "agent-office";
-export const CORNER = { width: 550, height: 450 };
-export const CORNER_WIDTH = 176;
+export const BLOCK = "agent-office";
+export const MINI_VIEW = 420;
 export const FAST = 100, IDLE = 500, SLOW = 1000;
 
 const LAUNCH = `dir=$1 src=$2 name=$3 bin="$HOME/.cache/herdr-agent-office/herdr-agent-office"
@@ -16,6 +16,11 @@ fi
 nohup "$bin" "$dir" < /dev/null > /dev/null 2>&1 &`;
 
 const folder = () => `${appHome()}/${FOLDER}`;
+
+export function sidebarWanted({ sidebar, features = {}, found, platform }) {
+  return Boolean(found) && platform === "macos" && features.agentOffice !== false && features.agentOfficeSidebar !== false
+    && !sidebar?.hidden && (sidebar?.size?.px ?? Infinity) >= 160;
+}
 
 export const valid = (url) => typeof url === "string" && /^https?:\/\/[^\s/?#]+/i.test(url.trim());
 

@@ -34,6 +34,20 @@
         },
         {
           "content": {
+            "mod": "agent-office",
+            "props": {
+              "mini": true
+            }
+          },
+          "hidden": true,
+          "id": "agent-office",
+          "size": {
+            "px": 164
+          },
+          "type": "block"
+        },
+        {
+          "content": {
             "mod": "workspace-chrome",
             "props": {
               "footer": true
@@ -96,19 +110,6 @@
                 },
                 "tab": "active"
               },
-              "floating": [
-                {
-                  "align": "end",
-                  "content": {
-                    "mod": "agent-office",
-                    "props": {
-                      "corner": true
-                    }
-                  },
-                  "edge": "bottom",
-                  "id": "agent-office"
-                }
-              ],
               "id": "main",
               "type": "block"
             },

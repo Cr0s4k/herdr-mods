@@ -1,23 +1,32 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
-import { theme, shared, setShared, settings, window, props, openOverlay, closeOverlay, watchFolder, notify, exec, checking } from "herdr";
+import { theme, shared, setShared, settings, window, props, layout, openOverlay, closeOverlay, watchFolder, notify, exec, checking } from "herdr";
 import { track } from "./usage.js";
 import { openInBrowser } from "./github.js";
 import { spin, watchMotion } from "./ui.js";
 import {
-  SETTINGS, CORNER, CORNER_WIDTH, FAST, IDLE, SLOW,
+  SETTINGS, BLOCK, MINI_VIEW, FAST, IDLE, SLOW,
   valid, hostOf, findAddress, want, readStatus, alive, launch, post, frameFile, watchPath,
 } from "./office.js";
 
 const ICON = "mods/agent-office/building.svg";
 const BACKDROP = "#15121c";
 
+function find(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = find(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
 export const openOffice = () => openOverlay({ mod: "agent-office", kind: "dialog", width: 0.9, height: 0.9, props: {} });
 
 export default class AgentOffice extends View {
   init(_props, cx) {
-    this.corner = Boolean(props()?.corner);
-    this.name = this.corner ? "mini" : "modal";
+    this.mini = Boolean(props()?.mini);
+    this.name = this.mini ? "mini" : "modal";
     this.address = undefined;
     this.status = null;
     this.frames = [];
@@ -28,13 +37,13 @@ export default class AgentOffice extends View {
     this.retryAt = 0;
     this.launching = false;
     this.editing = false;
-    if (!this.corner) {
+    if (!this.mini) {
       this.input = InputState.new({ placeholder: "https://office.example.com/" });
       this.input.on("submit", (_e, cx) => this.saveAddress(cx));
     }
     if (checking()) return;
     watchMotion(cx);
-    if (!this.corner) track("agent-office", "open");
+    if (!this.mini) track("agent-office", "open");
     this.locate(cx);
     this.watch(cx);
     cx.timer.every(3000, cx => this.beat(cx));
@@ -43,7 +52,7 @@ export default class AgentOffice extends View {
   async close() {
     this.closed = true;
     this.watching?.cancel();
-    if (!this.corner && this.address?.url) {
+    if (!this.mini && this.address?.url) {
       await post(this.name, want({ url: this.address.url, width: 1, height: 1, shot: 1, every: SLOW, at: 0 })).catch(() => {});
     }
   }
@@ -52,7 +61,7 @@ export default class AgentOffice extends View {
     this.own = shared(SETTINGS)?.url ?? null;
     cx.spawn(async cx => {
       this.address = await findAddress(this.own);
-      if (!this.address && !this.corner) this.edit(cx);
+      if (!this.address && !this.mini) this.edit(cx);
       this.beat(cx);
       cx.notify();
     });
@@ -86,19 +95,24 @@ export default class AgentOffice extends View {
   wanted() {
     const w = window(), features = shared("features") ?? {};
     if (w?.platform !== "macos" || !w.visible || !valid(this.address?.url)) return false;
-    return !this.corner || (features.agentOffice !== false && features.agentOfficeCorner !== false);
+    if (!this.mini) return true;
+    const block = find(layout(), BLOCK);
+    return Boolean(block) && !block.hidden && features.agentOffice !== false && features.agentOfficeSidebar !== false;
   }
 
   request() {
     const zoom = settings()?.zoom ?? 1;
-    if (this.corner) return { ...CORNER, shot: CORNER_WIDTH * zoom, every: SLOW };
     if (!this.size) return null;
+    if (this.mini) {
+      const { width, height } = this.size;
+      return { width: MINI_VIEW * width / height, height: MINI_VIEW, shot: width * zoom, every: SLOW };
+    }
     const width = this.size.width * zoom;
     return { width, height: this.size.height * zoom, shot: width, every: window()?.active ? FAST : IDLE };
   }
 
   beat(cx) {
-    if (this.corner && this.own !== (shared(SETTINGS)?.url ?? null)) { this.locate(cx); return; }
+    if (this.mini && this.own !== (shared(SETTINGS)?.url ?? null)) { this.locate(cx); return; }
     if (this.closed || this.launching || !this.wanted()) return;
     const ask = this.request();
     if (!ask) return;
@@ -164,25 +178,23 @@ export default class AgentOffice extends View {
   }
 
   render() {
-    return this.corner ? this.renderCorner() : this.renderDialog();
+    return this.mini ? this.renderMini() : this.renderDialog();
   }
 
-  renderCorner() {
-    const t = theme();
-    if (!this.wanted()) return div();
-    const height = Math.round(CORNER_WIDTH * CORNER.height / CORNER.width);
-    const phase = this.phase();
-    const box = div().id("agent-office-corner").w(CORNER_WIDTH).h(height).relative().rounded(6).overflow_hidden().cursor_pointer()
-      .tooltip("Open Agent Office").accessibility_label("Open Agent Office")
-      .on_click(() => { track("agent-office", "corner"); openOffice(); });
-    if (phase === "ready" && this.frames.length) {
-      return box.bg(BACKDROP).children(this.frames.map(f => image(frameFile(f)).absolute().top(0).left(0).size_full()));
-    }
+  renderMini() {
+    const t = theme(), phase = this.phase();
+    const live = phase === "ready" && this.frames.length > 0;
     const words = { signin: "Sign in to see it", "signing-in": "Signing in…", offline: "Can't reach it", error: "Viewer didn't start" }[phase] ?? "Opening…";
-    return box.bg(t.background).hover(s => s.bg(t.hover)).child(v_flex().size_full().items_center().justify_center().gap(6)
-      .child(svg(ICON).size(18).text_color(t.muted))
-      .child(div().text_size(12).text_color(t.foreground).child("Agent Office"))
-      .child(div().text_size(11).text_color(t.muted).child(words)));
+    const box = div().id("agent-office-mini").size_full().relative().rounded(8).overflow_hidden().border_1().border_color(t.border)
+      .cursor_pointer().tooltip("Open Agent Office").accessibility_label("Open Agent Office")
+      .on_size_change((size, cx) => { this.size = size; this.beat(cx); cx.notify(); })
+      .on_click(() => { track("agent-office", "sidebar"); openOffice(); })
+      .when(live, el => el.bg(BACKDROP).children(this.frames.map(f => image(frameFile(f)).absolute().top(0).left(0).size_full())))
+      .when(!live, el => el.bg(t.background).hover(s => s.bg(t.hover)).child(v_flex().size_full().items_center().justify_center().gap(6)
+        .child(svg(ICON).size(18).text_color(t.muted))
+        .child(div().text_size(12).text_color(t.foreground).child("Agent Office"))
+        .child(div().text_size(11).text_color(t.muted).child(words))));
+    return div().size_full().px(10).pt(4).pb(10).child(box);
   }
 
   renderDialog() {

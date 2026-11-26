@@ -67,6 +67,17 @@ test("a request names the page, its size in whole pixels and how often to draw i
   assert.deepEqual(sent, { at: 5, url: "https://o/", width: 1540, height: 880, shot: 194, every: 1000, signin: 0, reload: 0 });
 });
 
+test("the sidebar's office wants an office, macOS, both switches and a sidebar wider than its rail", () => {
+  const base = { sidebar: { size: { px: 268 } }, features: {}, found: true, platform: "macos" };
+  assert.ok(office.sidebarWanted(base));
+  assert.ok(!office.sidebarWanted({ ...base, found: false }));
+  assert.ok(!office.sidebarWanted({ ...base, platform: "linux" }));
+  assert.ok(!office.sidebarWanted({ ...base, features: { agentOffice: false } }));
+  assert.ok(!office.sidebarWanted({ ...base, features: { agentOfficeSidebar: false } }));
+  assert.ok(!office.sidebarWanted({ ...base, sidebar: { size: { px: 76 } } }));
+  assert.ok(!office.sidebarWanted({ ...base, sidebar: { hidden: true, size: { px: 268 } } }));
+});
+
 test("the viewer counts as running while its status is fresh", () => {
   assert.ok(office.alive({ at: 1000 }, 5000));
   assert.ok(!office.alive({ at: 1000 }, 12000));

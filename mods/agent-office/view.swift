@@ -59,6 +59,8 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
   var signing = false
   var busy = false
   var encoding = false
+  var previous: Data?
+  var skipped = 0
   var current: Want?
   var shots: Timer?
   var every = 0.0
@@ -131,7 +133,7 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     if state == "loading" && time >= retry { failed("The office took too long to answer") }
     if time - beat > 4000 { write() }
     current = want
-    let fps = want.every <= 150 ? 30 : 12
+    let fps = want.every <= 150 ? 20 : 12
     if fps != paced {
       paced = fps
       web.evaluateJavaScript("window.__herdrFps && window.__herdrFps(\(fps))", completionHandler: nil)
@@ -167,6 +169,9 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     web.takeSnapshot(with: config) { image, _ in
       self.busy = false
       guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+      let pixels = cg.dataProvider?.data as Data?
+      if pixels != nil && pixels == self.previous { self.skipped += 1; return }
+      self.previous = pixels
       self.encoding = true
       let name = String(format: "%.0f.png", now())
       encoder.async {
@@ -186,7 +191,7 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     beat = now()
     let body: [String: Any] = [
       "state": signing ? "signing-in" : state, "detail": detail, "frame": frame, "url": url,
-      "at": beat, "pid": Int(getpid()), "width": size.width, "height": size.height,
+      "at": beat, "pid": Int(getpid()), "width": size.width, "height": size.height, "skipped": skipped,
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
     let tmp = folder.appendingPathComponent(".status.json")
