@@ -1,6 +1,7 @@
-import { spaces, focused, agents, layout, shared, setShared, openOverlay, run } from "herdr";
+import { spaces, panes, focused, agents, layout, shared, setShared, openOverlay, run } from "herdr";
 import { popupSize as togglesSize } from "./toggles.js";
 import { STORE, taskJumps } from "./jump.js";
+import { homeTab } from "./home-model.js";
 
 export const GROUPS = ["Panel", "Pipeline", "Review"];
 
@@ -93,6 +94,9 @@ export function more() {
     else if (space) list.push({ ...command("Space", "Focus this space", "spaces.focus", "only sidebar filter"), do: () => setShared("spaces.focus", space.id) });
   }
   list.push(overlay("Space", "New space from a project…", "projects folder add workspace", { mod: "space-new", width: 460, height: 500, props: { projects: true } }));
+  const base = space && homeTab(space, panes());
+  if (base) list.push({ ...command("Space", "Go to this space's Home", "tab.select", "home start overview list agents terminals", { id: base.id }),
+    do: () => { run("tab.select", { id: base.id }); run("pane.focus", { pane: base.pane }); } });
   if (space) list.push(overlay("Space", "Hide this space for a while…", "snooze later timed", { mod: "space-hide", width: 330, height: 350, props: { id: space.id } }));
   list.push(overlay("Space", "Hidden spaces…", "snoozed restore", { mod: "space-hide", width: 350, height: 420, props: { list: true } }));
 

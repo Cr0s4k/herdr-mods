@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, Button, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand, checking } from "herdr";
 import { track } from "./usage.js";
 import { ReviewPanes } from "./review.js";
 import { GitHubRepo, repositoryContext } from "./github.js";
@@ -13,6 +13,7 @@ import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 import { brighter, spin, watchMotion } from "./ui.js";
 import { popupSize as togglesSize } from "./toggles.js";
+import { homeTabs, upkeep } from "./home-model.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -47,6 +48,7 @@ export default class Tabs extends View {
     try { this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}"); } catch { this.panels = {}; }
     if (!this.panels || typeof this.panels !== "object" || Array.isArray(this.panels)) this.panels = {};
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
+    this.homeAsked = {};
     this.review = new ReviewPanes();
     this.github = new GitHubRepo();
     this.brief = new BriefTracker();
@@ -105,6 +107,22 @@ export default class Tabs extends View {
     });
   }
 
+  keepHomes(all, ps) {
+    if (checking()) return;
+    for (const [name, args] of upkeep(all, ps, { on: shared("features")?.home !== false, asked: this.homeAsked })) {
+      try { run(name, args); } catch { /* Its machine is away; the next render asks again. */ }
+    }
+  }
+
+  homeItem(c, t) {
+    return h_flex().id(`tab-${c.id}`).h(29).w(32).rounded(7).items_center().justify_center().flex_none()
+      .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
+      .hover(s => s.bg(t.hover)).tooltip("Home: what is open in this space").accessibility_label("Home")
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_up("left", () => { this.pressed = null; run("tab.select", { id: c.id }); })
+      .child(svg("mods/space-home/home.svg").size(14));
+  }
+
   // One tab per wheel notch. A touchpad or smooth-scrolling mouse sends many
   // small events per gesture: a short swipe or one smoothed notch (about
   // 25 px) switches one tab, a longer swipe keeps going a tab per 60 px, at
@@ -159,7 +177,10 @@ export default class Tabs extends View {
   render() {
     this.brief.observe();
     const t = theme();
-    const space = spaces().find(p => p.active);
+    const all = spaces(), ps = panes();
+    this.keepHomes(all, ps);
+    const space = all.find(p => p.active);
+    const homes = new Set(homeTabs(space, ps).map(tab => tab.id));
     const shown = space?.tabs ?? [];
     const active = shown.findIndex(tab => tab.active);
     const selected = shown[active]?.id;
@@ -172,6 +193,7 @@ export default class Tabs extends View {
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
+      if (homes.has(c.id)) return this.homeItem(c, t);
       const lead = panes().find(p => p.tab === c.id && p.program?.agent) ?? panes().find(p => p.tab === c.id);
       const program = lead?.program;
       const name = label(c, lead);

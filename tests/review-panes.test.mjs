@@ -122,13 +122,14 @@ Object.assign(globalThis.__reviewNative, {
   WatchersTracker: class { start() {} }, WATCHERS: "watchers.items", watching: () => [],
   PipelineTracker: class { start() {} }, PIPELINES: "pipeline.prototype.v1", ...await import("../mods/pipeline/pipeline-model.js").then(({ pipelineId, spaceKey }) => ({ pipelineId, spaceKey })),
   ACTIVITY: "brief.activity", REPORTS: "brief.reports", entriesFor: () => [], unreadFor: () => [], receipt: id => `brief.read.${id}`,
+  checking: () => false, ...await import("../mods/space-home/model.js").then(({ homeTabs, upkeep }) => ({ homeTabs, upkeep })),
 });
 globalThis.localStorage = { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) };
 source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 source = "const { exec } = globalThis.__reviewNative;\n" + source;
 Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
+source = "const { View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion, checking, homeTabs, upkeep } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -229,4 +230,49 @@ test("the Pipeline button counts this space's live tasks waiting for an answer",
   });
   try { assert.match(text(find(tabs.render(), "open-pipeline")), /Needs you 2/); }
   finally { preferences.delete("pipeline.prototype.v1"); }
+});
+
+test("every space gets one Home tab, first in its tab bar, drawn as an icon that can't be closed, renamed or moved", () => {
+  const tabs = setupTabs();
+  world.spaces.push({ id: "other", active: false, tabs: [{ id: "far", active: true }] });
+  world.panes.push({ pane: "far-pane", terminal: "far-terminal", tab: "far" });
+  tabs.render();
+  const made = id => ["tab.new", { space: id, name: "Home", mod: "space-home", props: { space: id }, focus: false }];
+  assert.deepEqual(world.calls, [made("space"), made("other")]);
+  world.calls = [];
+  tabs.render();
+  assert.deepEqual(world.calls, [], "a Home that was just asked for isn't asked for again");
+
+  world.spaces[0].tabs.push({ id: "home", name: "Home", named: true, active: false });
+  world.panes.push({ pane: "home-pane", mod: "space-home", tab: "home" });
+  tabs.homeAsked = {};
+  tabs.render();
+  assert.deepEqual(world.calls, [["tab.move", { id: "home", index: 1 }], made("other")]);
+
+  world.spaces[0].tabs.reverse();
+  tabs.homeAsked = { other: Date.now() };
+  world.calls = [];
+  const root = tabs.render(), home = find(root, "tab-home");
+  assert.deepEqual(world.calls, []);
+  assert.equal(text(home), "");
+  assert.equal(find(root, "close-home"), undefined);
+  home.handlers.mouse_down({ click_count: 2 }, { stop_propagation() {} });
+  home.handlers.mouse_up({}, cx);
+  assert.deepEqual(world.calls, [["tab.select", { id: "home" }]]);
+});
+
+test("with Home switched off its tab closes wherever the space has another tab", () => {
+  const tabs = setupTabs();
+  preferences.set("features", { home: false });
+  tabs.render();
+  assert.deepEqual(world.calls, []);
+  world.spaces[0].tabs.unshift({ id: "home", name: "Home", named: true, active: false });
+  world.panes.push({ pane: "home-pane", mod: "space-home", tab: "home" });
+  tabs.render();
+  assert.deepEqual(world.calls, [["tab.close", { id: "home", confirmed: true }]]);
+  world.spaces[0].tabs = [world.spaces[0].tabs[0]];
+  tabs.homeAsked = {};
+  world.calls = [];
+  tabs.render();
+  assert.deepEqual(world.calls, [], "a space's last tab stays: closing it would close the space");
 });

@@ -65,9 +65,10 @@ source = (await readFile(new URL("../mods/spaces-pin/recent.js", import.meta.url
 source = "const { div, svg, h_flex } = globalThis.__spacesNative;\n" + source;
 const recent = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, recent, { readTextFile: async () => "script", appHome: () => "/home", knownAgents: async () => world.known ?? [] });
+globalThis.__spacesNative.homeTab = (await import("../mods/space-home/model.js")).homeTab;
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, terminals, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, terminals, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec, homeTab } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -861,4 +862,17 @@ test("an open agent hides the conversation its terminal has open; without that k
   assert.deepEqual(left([agent("t4", "codex")]), ["new", "mine", "cx1"], "another Codex is still a guess");
   assert.deepEqual(left([agent("t3", "claude")], [{ agent: "claude", id: "a" }, { agent: "claude", id: "b" }]), ["b"], "without process knowledge Claude Code is a guess too");
   assert.deepEqual(left([agent("t1", "claude")], sessions, []), ["mine", "cx2", "cx1"], "and without terminals");
+});
+
+test("a click on the space already shown goes to its Home tab; another space opens where it was left", () => {
+  const view = setup();
+  world.spaces[0].tabs.unshift({ id: "app-home", name: "Home", named: true });
+  world.spaces[1].tabs.unshift({ id: "other-home", name: "Home", named: true });
+  world.panes = [{ pane: "app-home-pane", mod: "space-home", tab: "app-home" }, { pane: "other-home-pane", mod: "space-home", tab: "other-home" }];
+  const press = id => { const row = find(view.render(cx), `space-${id}`); row.handlers["mouse_down-left"]({}, cx); row.handlers["mouse_up-left"]({}, cx); };
+  press("other");
+  assert.deepEqual(world.calls, [["space.select", { id: "other" }]]);
+  world.calls = [];
+  press("app");
+  assert.deepEqual(world.calls, [["tab.select", { id: "app-home" }], ["pane.focus", { pane: "app-home-pane" }]]);
 });

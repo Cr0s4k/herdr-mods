@@ -102,6 +102,32 @@ a worktree space moves with its checkout. Nothing moves until you click it again
 it hasn't watched yet, the last use is its folder's last commit or checkout, or its newest
 Claude session, whichever is later.
 
+## Home
+
+Every space has a **Home** tab, the house at the left of its tab bar. It lists what is open in the
+space, most urgent first, and every row takes you there:
+
+- **Needs you**: agents waiting for you or finished while you were away, and Pipeline tasks that
+  are stopped, ready for review or asking in their terminal.
+- **Agents**: the others, working ones first, each with its Pipeline task or its last brief, else
+  its folder and branch.
+- **Pipeline**: **Open Pipeline** with its counts, then the tasks that have no agent open (queued
+  ones, for instance). A task opens in Pipeline's inspector.
+- **Terminals and tabs**: terminals that aren't agents, with what runs in them, and tabs holding
+  a panel.
+- **Recent conversations**: the last eight closed conversations of the space's folder; click one
+  to resume it in a new tab.
+
+A click on a space in the sidebar returns you to the tab you left there. A click on the space
+already shown goes to its Home; so does **Go to this space's Home** in the
+[command palette](palette.md). On Home, **↑ ↓** (or **J K**) move and **Enter** goes.
+
+Herdr closes a space when its last tab closes. Home can't be closed from the tab bar, so closing
+Pipeline or the last terminal leaves the space open on Home; close the space itself to remove it.
+Home is always the first tab: one closed another way comes back, and one moved goes back to the
+left. Switch **Home tab** off in the tab bar's [feature toggles](tab-bar.md#feature-toggles) to
+remove it; a space with nothing else open keeps its Home until it has another tab.
+
 ## Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;

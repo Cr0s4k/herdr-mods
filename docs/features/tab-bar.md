@@ -19,6 +19,8 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 - **Skills**: the Skills button in the tab bar and its side panel.
 - **Watchers**: the Watchers button in the tab bar and its side panel. Off, watchers still
   check and notify.
+- **Home tab**: the [Home](spaces.md#home) tab first in every space. Off, the Home tabs close,
+  and closing a space's last tab closes the space again.
 - **Needs you**: the filter button at the top of the Spaces sidebar. Off, the sidebar always
   shows every space.
 - **Terminals in the sidebar**: the terminals listed under their space, after its agents.

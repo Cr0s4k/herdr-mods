@@ -18,6 +18,7 @@ export const FEATURES = [
   ["loops", "Loops", "Loops button and side panel"],
   ["skills", "Skills", "Skills button and side panel"],
   ["watchers", "Watchers", "Watchers button and side panel; watchers keep checking"],
+  ["home", "Home tab", "A Home tab first in every space that lists what is open in it; a space stays open when its other tabs close"],
   ["needsYou", "Needs you", "Filter button at the top of the Spaces sidebar"],
   ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["recent", "Recent conversations", "Closed agent conversations under their space, to resume"],

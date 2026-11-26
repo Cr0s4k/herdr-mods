@@ -8,7 +8,7 @@ import { STORE as PIPELINES } from "../mods/pipeline/pipeline-model.js";
 const world = {};
 globalThis.__moreNative = {
   STORE, taskJumps, run: (name, args) => world.calls.push([name, args]),
-  spaces: () => world.spaces, focused: () => world.focus, agents: () => world.agents, layout: () => world.layout,
+  spaces: () => world.spaces, panes: () => world.panes ?? [], homeTab: (await import("../mods/space-home/model.js")).homeTab, focused: () => world.focus, agents: () => world.agents, layout: () => world.layout,
   shared: key => world.shared[key], setShared: (key, value) => { world.shared[key] = value; },
   openOverlay: spec => world.overlays.push(spec), togglesSize: () => ({ width: 420, height: 400 }),
 };
@@ -127,4 +127,14 @@ test("unfinished Pipeline tasks are listed by ticket, pull request and branch, a
   setup({ tabBar: false });
   world.shared[STORE] = { "live:a": { live: true, context: { cwd: undefined }, space: "space", tasks: [{ id: "T-1", title: "x", status: "review" }] } };
   assert.equal(more().filter(e => e.title.startsWith("Go to ")).length, 0);
+});
+
+test("a space with a Home tab offers to go to it", () => {
+  setup();
+  assert.equal(titled("Go to this space's Home"), undefined);
+  world.spaces = [{ id: "space", active: true, tabs: [{ id: "home" }, { id: "tab" }] }];
+  world.panes = [{ pane: "home-pane", mod: "space-home", tab: "home" }];
+  titled("Go to this space's Home").do();
+  assert.deepEqual(world.calls, [["tab.select", { id: "home" }], ["pane.focus", { pane: "home-pane" }]]);
+  world.panes = [];
 });

@@ -15,6 +15,7 @@ import { spacePipeline, pipelineRow, openPipeline, taskStages } from "./pipeline
 import { spaceTerminals, terminalRow } from "./terminal-row.js";
 import { touch, quietSpaces, TRACES, sessions } from "./tidy.js";
 import { recentHeader, sessionRow, closedSessions, resumeArgs } from "./recent.js";
+import { homeTab } from "./home-model.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -23,6 +24,14 @@ function find(node, id) {
     if (found) return found;
   }
   return null;
+}
+
+// A click on the space already on screen goes to its Home tab.
+function showSpace(w) {
+  const home = w.active ? homeTab(w, panes()) : null;
+  if (!home) { run("space.select", { id: w.id }); return; }
+  run("tab.select", { id: home.id });
+  run("pane.focus", { pane: home.pane });
 }
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
@@ -199,7 +208,7 @@ export default class Spaces extends View {
       case "home": move(0); break;
       case "end": move(nav.length - 1); break;
       case "enter": case "space":
-        if (space) run("space.select", { id: item.w.id });
+        if (space) showSpace(item.w);
         else if (item.kind === "pipeline") openPipeline(item.w, item.pipe);
         else if (item.act) item.act(cx);
         else run("pane.focus", { pane: item.a.pane });
@@ -936,7 +945,7 @@ export default class Spaces extends View {
           if (pinned !== pins.includes(from)) setShared("space.pinned", pinned ? [...pins, from] : pins.filter((id) => id !== from));
           const index = spaces().findIndex(s => s.id === w.id);
           if (index !== -1) run("space.move", { id: from, index: index + 1 });
-        } else if (from === w.id) run("space.select", { id: w.id });
+        } else if (from === w.id) showSpace(w);
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
@@ -1016,7 +1025,7 @@ export default class Spaces extends View {
       .when(w.active, (el) => el.bg(t.selected))
       .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
       .tooltip(name)
-      .on_click(() => run("space.select", { id: w.id }))
+      .on_click(() => showSpace(w))
       .on_mouse_down("right", () => this.menu(w))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
       .when(cursor, (el) => el.child(this.ring(t, 6))));
@@ -1045,7 +1054,7 @@ export default class Spaces extends View {
       .child(h_flex().id("spaces-focus-title").h(36).px(16).gap(8).flex_none().items_center().min_w(0)
         .when(collapsed, el => el.justify_center())
         .tooltip(`${name}${s.machine ? ` · ${s.machine}` : ""} · Click to show this space`)
-        .on_click(() => run("space.select", { id: s.id }))
+        .on_click(() => showSpace(s))
         .on_mouse_down("right", () => this.menu(s))
         .child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(11).font_bold().text_color(ink(fill)).child([...name][0]?.toUpperCase() ?? "?"))
         .when(!collapsed, el => el.child(div().min_w(0).flex_1().truncate().font_medium().text_color(t.foreground).child(name))
