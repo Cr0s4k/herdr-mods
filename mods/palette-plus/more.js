@@ -80,6 +80,7 @@ export function more() {
       list.push({ ...command("Pipeline", jump.title, `tabs-show.pipeline-task-${jump.task}`, jump.words, { space: jump.space }),
         do: () => { run("space.select", { id: jump.space }); run(`tabs-show.pipeline-task-${jump.task}`); } });
     }
+    if (features.agentOffice !== false) list.push(command("Agent", "Agent Office", "tabs-show.agent-office", "office team building floor world desks"));
     list.push(command("Review", "Open Changes + terminal", "tabs-show.review", "review diff git commit"));
     list.push(command("Review", "Open on GitHub", "tabs-show.github", "browser repository pull request"));
     if (features.watchers !== false) list.push(command("Review", "Watch this branch's pull request", "tabs-show.watch-pr", "watcher notify tell me wait review approved changes requested"));
@@ -100,6 +101,7 @@ export function more() {
   const agent = where?.terminal && agents().find(a => a.address === where.terminal);
   if (agent) list.push(command("Agent", agent.pinned ? "Unpin agent" : "Pin agent", "terminal.pin", "top agent lists", { terminal: agent.address, pinned: !agent.pinned }));
 
+  if (features.agentOffice !== false) list.push(overlay("Agent", "Agent Office address…", "office url link change team", { mod: "agent-office", width: 520, height: 230, props: {} }));
   list.push(overlay("App", "Feature toggles", "switches enable disable on off loops skills watchers", { mod: "toggles", ...togglesSize() }));
   return list;
 }

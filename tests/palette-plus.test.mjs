@@ -105,6 +105,18 @@ test("Find file is listed even without the tab bar, and opens the find-file popu
   assert.deepEqual(titled("Find file…"), { name: "mod.open", args: { name: "find-file" }, group: "Panel", title: "Find file…", words: "go to file open search fuzzy quick name" });
 });
 
+test("Agent Office opens through the tab bar, its address in a dialog, and both stay out when switched off", () => {
+  setup();
+  assert.equal(titled("Agent Office").name, "tabs-show.agent-office");
+  titled("Agent Office address…").do();
+  assert.deepEqual(world.overlays.pop(), { kind: "dialog", mod: "agent-office", width: 520, height: 230, props: {} });
+  setup({ tabBar: false });
+  assert.equal(titled("Agent Office"), undefined);
+  assert.ok(titled("Agent Office address…"));
+  world.shared.features = { agentOffice: false };
+  assert.equal(titled("Agent Office address…"), undefined);
+});
+
 test("unfinished Pipeline tasks are listed by ticket, pull request and branch, and open in their own space", () => {
   setup();
   assert.equal(STORE, PIPELINES);

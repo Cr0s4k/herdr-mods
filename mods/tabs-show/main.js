@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, Button, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { spaces, panes, focused, run, openOverlay, notify, theme, window, shared, layout, settings, nextCommand } from "herdr";
 import { track } from "./usage.js";
 import { ReviewPanes } from "./review.js";
 import { GitHubRepo, repositoryContext } from "./github.js";
@@ -13,6 +13,7 @@ import { STORE as PIPELINES, pipelineId, spaceKey } from "./pipeline-model.js";
 import { ACTIVITY, REPORTS, entriesFor, unreadFor, receipt } from "./model.js";
 import { brighter, spin, watchMotion } from "./ui.js";
 import { popupSize as togglesSize } from "./toggles.js";
+import { BLOCK as OFFICE_BLOCK, SETTINGS as OFFICE, findAddress, showOffice, sidebarWanted } from "./office.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -57,12 +58,24 @@ export default class Tabs extends View {
     this.pipeline.start(cx);
     this.watchers = new WatchersTracker();
     this.watchers.start(cx);
+    this.office = { own: undefined, found: undefined, at: 0 };
+    cx.spawn(async cx => {
+      for (;;) {
+        const own = shared(OFFICE)?.url ?? null;
+        if (own !== this.office.own || Date.now() - this.office.at > 60000) {
+          Object.assign(this.office, { own, at: Date.now(), found: Boolean(await findAddress(own).catch(() => null)) });
+          cx.notify();
+        }
+        await cx.sleep(2000);
+      }
+    });
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
         if (command === "review") { track("review-panes", "open"); this.review.open(cx); }
         else if (command === "github") track("github", "open"), this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
         else if (command === "pipeline") this.openPipeline();
+        else if (command === "agent-office") this.openOffice(cx);
         else if (command.startsWith("pipeline-")) this.pipelineCommand(command.slice("pipeline-".length), cx);
         else if ((command === "loops" || command === "skills" || command === "watchers") && shared("features")?.[command] === false) continue;
         else if (command === "watch-pr" && shared("features")?.watchers === false) continue;
@@ -91,6 +104,27 @@ export default class Tabs extends View {
       context: key ? { ...all[key].context, space: space.id }
         : { id: pipelineId(on, cwd, space.id), cwd, on, name: cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || space.name, space: space.id },
     } });
+  }
+
+  openOffice(cx) {
+    if (shared("features")?.agentOffice === false || window()?.platform !== "macos") return;
+    track("agent-office", "tab-bar");
+    cx.spawn(async () => {
+      const found = await findAddress(shared(OFFICE)?.url ?? null).catch(() => null);
+      if (!found) { openOverlay({ mod: "agent-office", kind: "dialog", width: 520, height: 230, props: {} }); return; }
+      const error = await showOffice(found.url).catch(error => error?.message ?? String(error));
+      if (error) notify({ title: "Agent Office didn't open", body: error, level: "error" });
+    });
+  }
+
+  // The office at the bottom of the sidebar has a fixed height, so it's hidden, not emptied, when it has nothing to show.
+  syncOffice(root, sidebar, w) {
+    const block = find(root, OFFICE_BLOCK), office = this.office;
+    if (!block || office?.found === undefined) return;
+    const want = sidebarWanted({ sidebar, features: shared("features") ?? {}, found: office.found, platform: w?.platform });
+    if (want === !block.hidden || (office.asked === want && Date.now() - office.askedAt < 1000)) return;
+    Object.assign(office, { asked: want, askedAt: Date.now() });
+    run(want ? "layout.show" : "layout.hide", { id: OFFICE_BLOCK });
   }
 
   // Pipeline hears commands only while it's on screen, and a new one only once it has started.
@@ -199,6 +233,7 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
+    this.syncOffice(root, sidebar, w);
     const loopsOn = shared("features")?.loops !== false;
     const skillsOn = shared("features")?.skills !== false;
     const watchersOn = shared("features")?.watchers !== false;
@@ -254,6 +289,11 @@ export default class Tabs extends View {
       .child(svg("mods/pipeline/pipeline.svg").size(14)).child("Pipeline")
       .when(questions > 0, el => el.child(div().px(5).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold()
         .flex().items_center().child(`Needs you ${questions}`)));
+    const officeOn = shared("features")?.agentOffice !== false && w?.platform === "macos";
+    const officeButton = Button.new("open-agent-office").h(26).px(8).flex_none().flex().items_center().rounded(6)
+      .text_color(t.muted).tooltip("Agent Office").accessibility_label("Open Agent Office")
+      .hover(s => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openOffice(cx))
+      .child(svg("mods/agent-office/building.svg").size(14));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => this.wheel(e))
@@ -263,6 +303,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .child(githubButton)
       .child(pipelineButton)
+      .when(officeOn, el => el.child(officeButton))
       .child(togglesButton)
       .when(enabled.includes("changes"), el => el.child(reviewButton)
         .child(div().w(1).h(16).mx(7).flex_none().bg(t.border)))

@@ -34,6 +34,20 @@
         },
         {
           "content": {
+            "mod": "agent-office",
+            "props": {
+              "mini": true
+            }
+          },
+          "hidden": true,
+          "id": "agent-office",
+          "size": {
+            "px": 164
+          },
+          "type": "block"
+        },
+        {
+          "content": {
             "mod": "workspace-chrome",
             "props": {
               "footer": true
