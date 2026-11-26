@@ -9,7 +9,7 @@ follows the newest Herdr release (0.1.16 at the time of writing) and is used dai
 only; read [Things to know](#things-to-know) before installing. Take the whole thing, or copy
 the mods you like.
 
-https://github.com/user-attachments/assets/7d1e9dad-f5c5-4045-be1a-3c84ae14315e
+https://github.com/user-attachments/assets/3936e8f8-3868-4cce-b914-343cce7adda6
 
 Real runs, sped up, on a throwaway repository: Pipeline first, then a few seconds of each panel.
 
