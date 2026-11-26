@@ -26,7 +26,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 | **Watchers** | Get told when a pull request is reviewed, checked or merged, or when a shell command succeeds. | [watchers.md](docs/features/watchers.md) |
 | **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
 | **Skills** | A searchable inventory of the agent skills available in a folder and on the machine. | [skills.md](docs/features/skills.md) |
-| **Agent Office** | Your team's agent office page, live: a building button opens it in a dialog, and a small copy sits at the bottom of the sidebar. | [agent-office.md](docs/features/agent-office.md) |
+| **Agent Office** | Your team's agent office page, live: a building button opens it in its own window over Herdr, and a small copy sits at the bottom of the sidebar. | [agent-office.md](docs/features/agent-office.md) |
 | **Tab bar** | A GitHub button for the current project, and on/off switches for most of the above. | [tab-bar.md](docs/features/tab-bar.md) |
 | **Command palette** | `cmd-shift-p` lists the panels, Pipeline, review and space actions beside Herdr's own commands. | [palette.md](docs/features/palette.md) |
 
@@ -118,7 +118,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/show/main.js` | Show: the panel and the markup editor |
 | `mods/show/herdr-show` | Show: the command that posts images and saves markups (Python) |
 | `mods/show/render.swift` | Show: burns the drawn marks into a PNG; compiled on first use to `~/.cache/herdr-show/render` |
-| `mods/agent-office/` | Agent Office: the dialog and the sidebar's office (`main.js`), shown or hidden by the tab bar (`mods/tabs-show/office.js` is a symlink), and `view.swift`, which draws the office page with WebKit and saves it as pictures; compiled on first use to `~/.cache/herdr-agent-office/herdr-agent-office` |
+| `mods/agent-office/` | Agent Office: the sidebar's office and the address dialog (`main.js`), shown or hidden by the tab bar (`mods/tabs-show/office.js` is a symlink), and `view.swift`, which runs the office page in WebKit, in its own window and as pictures for the sidebar; compiled on first use to `~/.cache/herdr-agent-office/herdr-agent-office` |
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Git (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |

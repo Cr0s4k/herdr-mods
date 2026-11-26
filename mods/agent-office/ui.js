@@ -1,1 +1,0 @@
-../tabs-show/ui.js

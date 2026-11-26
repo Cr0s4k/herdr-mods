@@ -112,7 +112,8 @@ let officeSource = (await readFile(new URL("../mods/agent-office/office.js", imp
 officeSource = "const exec = null, readTextFile = null, writeTextFile = null, home = null, appHome = null, shared = null;\n" + officeSource;
 const office = await import("data:text/javascript," + encodeURIComponent(officeSource));
 Object.assign(globalThis.__reviewNative, {
-  OFFICE_BLOCK: office.BLOCK, OFFICE: office.SETTINGS, findAddress: async () => null, sidebarWanted: office.sidebarWanted,
+  OFFICE_BLOCK: office.BLOCK, OFFICE: office.SETTINGS, findAddress: async () => world.office ?? null, sidebarWanted: office.sidebarWanted,
+  showOffice: async url => { world.shownOffice = url; return world.officeError ?? null; }, openOverlay: spec => world.overlays.push(spec),
   View: class {}, div: element, svg: element, image: element, h_flex: element, ReviewPanes,
   Button: { new: id => element().id(id) },
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
@@ -132,7 +133,7 @@ source = (await readFile(new URL("../mods/tabs-show/ui.js", import.meta.url), "u
 source = "const { exec } = globalThis.__reviewNative;\n" + source;
 Object.assign(globalThis.__reviewNative, await import("data:text/javascript," + encodeURIComponent(source)));
 source = (await readFile(new URL("../mods/tabs-show/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
-source = "const { OFFICE_BLOCK, OFFICE, findAddress, sidebarWanted, View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
+source = "const { OFFICE_BLOCK, OFFICE, findAddress, showOffice, sidebarWanted, openOverlay, notify, View, div, svg, image, h_flex, Button, ScrollHandle, spaces, panes, focused, run, theme, window, shared, layout, settings, ReviewPanes, GitHubRepo, repositoryContext, BriefTracker, LaunchTracker, PipelineTracker, WatchersTracker, WATCHERS, watching, PIPELINES, pipelineId, spaceKey, ACTIVITY, REPORTS, entriesFor, unreadFor, receipt, brighter, spin, watchMotion } = globalThis.__reviewNative;\n" + source;
 const { default: Tabs } = await import("data:text/javascript," + encodeURIComponent(source));
 function setupTabs() {
   setup();
@@ -164,6 +165,21 @@ test("the sidebar's office shows only with an office found, its switches on and 
   assert.deepEqual(step(() => { sidebar.size.px = 76; }), [["layout.hide", { id: "agent-office" }]]);
   block.hidden = true;
   assert.deepEqual(step(() => {}), []);
+});
+
+test("the building button opens the office's window, or asks for its address when there is none", async () => {
+  const tabs = setupTabs();
+  world.overlays = [];
+  world.office = null;
+  find(tabs.render(), "open-agent-office").handlers.click({}, cx);
+  await Promise.all(world.tasks);
+  assert.deepEqual(world.overlays, [{ mod: "agent-office", kind: "dialog", width: 520, height: 230, props: {} }]);
+  world.tasks = [];
+  world.office = { url: "https://office.example.com/", from: "hook" };
+  find(tabs.render(), "open-agent-office").handlers.click({}, cx);
+  await Promise.all(world.tasks);
+  assert.equal(world.shownOffice, "https://office.example.com/");
+  assert.equal(world.overlays.length, 1);
 });
 
 test("Files, Changes, Show, Loops, Brief, Skills, Watchers and Tasks toggle side panels without creating panes", () => {

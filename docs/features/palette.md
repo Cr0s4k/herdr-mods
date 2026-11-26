@@ -19,8 +19,8 @@ What it adds:
 - **Review**: Changes + terminal in this tab, the project on GitHub,
   [Watch this branch's pull request](watchers.md) (not when Watchers is switched off), and
   [Clean up worktrees…](files-and-changes.md#clean-up-worktrees).
-- **Agent**: [Find conversation…](spaces.md#find-conversation) and [Agent Office](agent-office.md)
-  (not when it's switched off), beside Herdr's own agent commands.
+- **Agent**: [Find conversation…](spaces.md#find-conversation), and [Agent Office](agent-office.md)
+  and its address (not when it's switched off), beside Herdr's own agent commands.
 - **Space**: a new space from `~/Projects`, hide this space for a while, hidden spaces, Focus
   this space (or All spaces again), Tidy, the Needs you filter, and keyboard focus in the
   sidebar.

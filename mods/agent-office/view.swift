@@ -10,14 +10,17 @@ struct Want: Decodable {
   let height: Double
   let shot: Double
   let every: Double
-  let signin: Double?
-  let reload: Double?
+}
+
+struct Show: Decodable {
+  let at: Double
+  let url: String
 }
 
 func now() -> Double { Date().timeIntervalSince1970 * 1000 }
 
 guard CommandLine.arguments.count == 2 else {
-  FileHandle.standardError.write("usage: view <folder>\n".data(using: .utf8)!)
+  FileHandle.standardError.write("usage: herdr-agent-office <folder>\n".data(using: .utf8)!)
   exit(2)
 }
 let folder = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -45,22 +48,30 @@ let gate = """
   window.__herdrFps = fps => { gap = fps > 0 ? 1000 / fps : 0; };
 })();
 """
+
+// Runs before the page's own handlers, so Esc still closes its DESKS and JOIN panels first.
+let escape = """
+window.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !document.querySelector(".deskmode.open, .join.open")) window.webkit.messageHandlers.herdr.postMessage("close");
+}, true);
+"""
+
+let backdrop = NSColor(srgbRed: 0x15 / 255.0, green: 0x12 / 255.0, blue: 0x1c / 255.0, alpha: 1)
 let encoder = DispatchQueue(label: "agent-office.encode", qos: .userInitiated)
 
-final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
+final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSWindowDelegate {
   let started = now()
   var window: NSWindow!
   var web: WKWebView!
   var activity: NSObjectProtocol?
   var url = ""
-  var size = NSSize.zero
-  var signin = 0.0
-  var reload = 0.0
-  var signing = false
+  var size = NSSize(width: 1280, height: 720)
+  var shown = false
+  var asked = 0.0
+  var titled = false
   var busy = false
   var encoding = false
   var previous: Data?
-  var skipped = 0
   var current: Want?
   var shots: Timer?
   var every = 0.0
@@ -70,88 +81,185 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
   var state = "loading"
   var detail = ""
   var frame = ""
+  var notice: WKNavigation?
 
   func applicationDidFinishLaunching(_ note: Notification) {
-    activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Agent Office frames")
-    signin = started - 30000
-    reload = started - 30000
+    activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Agent Office")
+    asked = started - 30000
     let config = WKWebViewConfiguration()
     config.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
     config.userContentController.addUserScript(WKUserScript(source: gate, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-    web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 720), configuration: config)
+    config.userContentController.addUserScript(WKUserScript(source: escape, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    config.userContentController.add(self, name: "herdr")
+    web = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: config)
     web.navigationDelegate = self
     web.uiDelegate = self
-    window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 720), styleMask: [.borderless], backing: .buffered, defer: false)
+    window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.delegate = self
     window.contentView = web
-    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
     conceal()
+    NSEvent.addLocalMonitorForEvents(matching: .keyDown) { self.key($0) }
+    NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
+      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+      if self.shown && app?.processIdentifier != getpid() { self.conceal() }
+    }
     Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.tick() }
     tick()
   }
 
   // Off screen or ordered out, WebKit stops drawing; see-through and click-through, it keeps going.
   func conceal() {
+    shown = false
     window.styleMask = [.borderless]
     window.alphaValue = 0
     window.ignoresMouseEvents = true
     window.hasShadow = false
     window.level = .floating
-    window.setContentSize(size == .zero ? NSSize(width: 1280, height: 720) : size)
-    let screen = NSScreen.main?.visibleFrame ?? .zero
-    window.setFrameOrigin(screen.origin)
+    window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+    window.setContentSize(size)
+    window.setFrameOrigin(NSScreen.main?.visibleFrame.origin ?? .zero)
     window.orderFrontRegardless()
+    pace()
+    write()
   }
 
-  func want(_ name: String) -> Want? {
-    guard let data = try? Data(contentsOf: folder.appendingPathComponent("want-\(name).json")) else { return nil }
-    return try? JSONDecoder().decode(Want.self, from: data)
+  func present() {
+    shown = true
+    let area = herdr() ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1400, height: 900)
+    window.styleMask = [.titled, .closable, .resizable]
+    window.title = "Agent Office"
+    window.titlebarAppearsTransparent = true
+    window.backgroundColor = backdrop
+    window.appearance = NSAppearance(named: .darkAqua)
+    if !titled { addButtons() }
+    window.alphaValue = 1
+    window.ignoresMouseEvents = false
+    window.hasShadow = true
+    window.level = .normal
+    window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+    window.setFrame(area.insetBy(dx: area.width * 0.05, dy: area.height * 0.05), display: true)
+    NSApp.activate(ignoringOtherApps: true)
+    window.makeKeyAndOrderFront(nil)
+    window.makeFirstResponder(web)
+    pace()
+    if state == "offline" { load() }
+    write()
+  }
+
+  func herdr() -> NSRect? {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    let top = NSScreen.screens.first?.frame.maxY ?? 0
+    for info in list where info[kCGWindowOwnerName as String] as? String == "Herdr" && info[kCGWindowLayer as String] as? Int == 0 {
+      guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+            let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary), rect.width > 400, rect.height > 300 else { continue }
+      return NSRect(x: rect.minX, y: top - rect.maxY, width: rect.width, height: rect.height)
+    }
+    return nil
+  }
+
+  func addButtons() {
+    titled = true
+    let reload = NSButton(title: "Reload", target: self, action: #selector(reloadPage))
+    let browser = NSButton(title: "Open in browser", target: self, action: #selector(openBrowser))
+    for button in [reload, browser] {
+      button.bezelStyle = .recessed
+      button.controlSize = .small
+    }
+    let row = NSStackView(views: [reload, browser])
+    row.spacing = 6
+    row.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 10)
+    row.setFrameSize(NSSize(width: row.fittingSize.width, height: 28))
+    let accessory = NSTitlebarAccessoryViewController()
+    accessory.view = row
+    accessory.layoutAttribute = .trailing
+    window.addTitlebarAccessoryViewController(accessory)
+  }
+
+  @objc func reloadPage() { load() }
+
+  @objc func openBrowser() {
+    guard let target = URL(string: url) else { return }
+    if let firefox = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "org.mozilla.firefox") {
+      NSWorkspace.shared.open([target], withApplicationAt: firefox, configuration: NSWorkspace.OpenConfiguration())
+    } else {
+      NSWorkspace.shared.open(target)
+    }
+  }
+
+  func key(_ event: NSEvent) -> NSEvent? {
+    guard shown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else { return event }
+    let actions = ["w": "performClose:", "r": "reloadPage", "c": "copy:", "v": "paste:", "x": "cut:", "a": "selectAll:", "z": "undo:"]
+    guard let name = actions[event.charactersIgnoringModifiers ?? ""] else { return event }
+    if name == "reloadPage" { load() } else if name == "performClose:" { conceal() } else { NSApp.sendAction(Selector(name), to: nil, from: self) }
+    return nil
+  }
+
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    if shown && message.body as? String == "close" { conceal() }
+  }
+
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    conceal()
+    return false
+  }
+
+  func read<T: Decodable>(_ name: String, as: T.Type) -> T? {
+    guard let data = try? Data(contentsOf: folder.appendingPathComponent(name)) else { return nil }
+    return try? JSONDecoder().decode(T.self, from: data)
   }
 
   func tick() {
     let time = now()
-    guard let want = ["modal", "mini"].compactMap(want).first(where: { time - $0.at < 15000 }) else { exit(0) }
-    if want.url != url {
-      url = want.url
-      load()
+    if let show = read("show.json", as: Show.self), show.at > asked {
+      asked = show.at
+      if show.url != url {
+        url = show.url
+        load()
+      }
+      present()
     }
-    let size = NSSize(width: max(320, want.width.rounded()), height: max(200, want.height.rounded()))
-    if size != self.size {
-      self.size = size
-      if !signing { window.setContentSize(size) }
-    }
-    if let asked = want.signin, asked > signin {
-      signin = asked
-      openSignin()
-    }
-    if let asked = want.reload, asked > reload {
-      reload = asked
-      load()
+    let want = read("want-mini.json", as: Want.self).flatMap { time - $0.at < 15000 ? $0 : nil }
+    guard want != nil || shown else { exit(0) }
+    if let want {
+      if want.url != url && !shown {
+        url = want.url
+        load()
+      }
+      let size = NSSize(width: max(320, want.width.rounded()), height: max(200, want.height.rounded()))
+      if size != self.size {
+        self.size = size
+        if !shown { window.setContentSize(size) }
+      }
     }
     if state == "offline" && time >= retry { load() }
     if state == "loading" && time >= retry { failed("The office took too long to answer") }
     if time - beat > 4000 { write() }
     current = want
-    let fps = want.every <= 150 ? 20 : 12
-    if fps != paced {
-      paced = fps
-      web.evaluateJavaScript("window.__herdrFps && window.__herdrFps(\(fps))", completionHandler: nil)
-    }
-    if want.every != every {
-      every = want.every
+    pace()
+    let interval = want?.every ?? 0
+    if interval != every {
+      every = interval
       shots?.invalidate()
-      shots = Timer.scheduledTimer(withTimeInterval: max(0.05, every / 1000), repeats: true) { _ in self.shoot() }
-      shots?.tolerance = 0.01
+      shots = nil
+      if interval > 0 {
+        shots = Timer.scheduledTimer(withTimeInterval: max(0.05, interval / 1000), repeats: true) { _ in self.shoot() }
+        shots?.tolerance = 0.01
+      }
     }
+  }
+
+  func pace() {
+    let fps = shown ? 30 : 12
+    guard fps != paced else { return }
+    paced = fps
+    web.evaluateJavaScript("window.__herdrFps && window.__herdrFps(\(fps))", completionHandler: nil)
   }
 
   func load() {
     guard let target = URL(string: url), target.scheme == "https" || target.scheme == "http" else {
-      state = "offline"
-      detail = "Not a web address: \(url)"
+      failed("Not a web address: \(url)")
       retry = .infinity
-      write()
       return
     }
     state = "loading"
@@ -162,7 +270,7 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
   }
 
   func shoot() {
-    guard let want = current, !signing, !busy, !encoding, state == "ready" else { return }
+    guard let want = current, !busy, !encoding, state == "ready" else { return }
     busy = true
     let config = WKSnapshotConfiguration()
     config.snapshotWidth = NSNumber(value: want.shot)
@@ -170,7 +278,7 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
       self.busy = false
       guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
       let pixels = cg.dataProvider?.data as Data?
-      if pixels != nil && pixels == self.previous { self.skipped += 1; return }
+      if pixels != nil && pixels == self.previous { return }
       self.previous = pixels
       self.encoding = true
       let name = String(format: "%.0f.png", now())
@@ -190,8 +298,8 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
   func write() {
     beat = now()
     let body: [String: Any] = [
-      "state": signing ? "signing-in" : state, "detail": detail, "frame": frame, "url": url,
-      "at": beat, "pid": Int(getpid()), "width": size.width, "height": size.height, "skipped": skipped,
+      "state": state, "detail": detail, "frame": frame, "url": url, "shown": shown,
+      "at": beat, "pid": Int(getpid()), "width": size.width, "height": size.height,
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
     let tmp = folder.appendingPathComponent(".status.json")
@@ -205,43 +313,11 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     return page.host == home.host && page.path != "/login" && !page.path.hasPrefix("/auth/")
   }
 
-  func openSignin() {
-    if signing {
-      NSApp.activate(ignoringOtherApps: true)
-      window.makeKeyAndOrderFront(nil)
-      return
-    }
-    signing = true
-    window.styleMask = [.titled, .closable, .resizable]
-    window.title = "Sign in to Agent Office"
-    window.alphaValue = 1
-    window.ignoresMouseEvents = false
-    window.hasShadow = true
-    window.setContentSize(NSSize(width: 960, height: 720))
-    window.center()
-    NSApp.activate(ignoringOtherApps: true)
-    window.makeKeyAndOrderFront(nil)
-    if office(web.url) || state != "signin" { load() }
-    write()
-  }
-
-  func closeSignin() {
-    signing = false
-    conceal()
-    NSApp.deactivate()
-    write()
-  }
-
-  func windowShouldClose(_ sender: NSWindow) -> Bool {
-    if signing { closeSignin() }
-    return false
-  }
-
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     paced = -1
-    guard state != "offline" else { return }
+    pace()
+    guard navigation !== notice, state != "offline" else { return }
     state = office(webView.url) ? "ready" : "signin"
-    if signing && state == "ready" { closeSignin() }
     write()
   }
 
@@ -272,6 +348,11 @@ final class Office: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUID
     detail = message
     retry = now() + 10000
     write()
+    guard shown else { return }
+    let host = URL(string: url)?.host ?? url
+    let text = "<p style='font-size:16px;color:#eeeae2'>Can't reach \(host)</p><p>\(message)</p><p>Trying again every 10 seconds.</p>"
+    let page = "<body style='margin:0;height:100vh;display:grid;place-content:center;text-align:center;background:#15121c;color:#a9a4b8;font:13px -apple-system'>\(text)</body>"
+    notice = web.loadHTMLString(page, baseURL: nil)
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

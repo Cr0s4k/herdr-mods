@@ -63,8 +63,8 @@ test("no office is found without a hook or an address, and a broken settings fil
 });
 
 test("a request names the page, its size in whole pixels and how often to draw it", () => {
-  const sent = JSON.parse(office.want({ url: "https://o/", width: 1540.4, height: 879.6, shot: 193.6, every: office.SLOW, at: 5 }));
-  assert.deepEqual(sent, { at: 5, url: "https://o/", width: 1540, height: 880, shot: 194, every: 1000, signin: 0, reload: 0 });
+  const sent = JSON.parse(office.want({ url: "https://o/", width: 1540.4, height: 879.6, shot: 193.6, every: office.EVERY, at: 5 }));
+  assert.deepEqual(sent, { at: 5, url: "https://o/", width: 1540, height: 880, shot: 194, every: 1000 });
 });
 
 test("the sidebar's office wants an office, macOS, both switches and a sidebar wider than its rail", () => {
@@ -86,10 +86,10 @@ test("the viewer counts as running while its status is fresh", () => {
 
 test("launching passes the folder, the Swift source and the request to the shell", async () => {
   reset();
-  assert.equal(await office.launch("mini", "{}"), null);
+  assert.equal(await office.launch("want-mini.json", "{}"), null);
   const [call] = world.calls;
   assert.equal(call.command, "sh");
-  assert.deepEqual(call.args.slice(2), ["sh", STATE, "/home/me/.config/herdr-app/mods/agent-office/view.swift", "mini", "{}"]);
+  assert.deepEqual(call.args.slice(2), ["sh", STATE, "/home/me/.config/herdr-app/mods/agent-office/view.swift", "want-mini.json", "{}"]);
   assert.match(call.args[1], /swiftc -O/);
   assert.match(call.args[1], /nohup/);
 });
@@ -97,16 +97,26 @@ test("launching passes the folder, the Swift source and the request to the shell
 test("a failed build says what Swift reported", async () => {
   reset({ [`${STATE}/build.log`]: "view.swift:3:1: error: cannot find 'x' in scope\n" });
   world.result = { code: 3, stdout: "", stderr: "" };
-  assert.match(await office.launch("modal", "{}"), /did not build.*error: cannot find 'x'/);
+  assert.match(await office.launch("show.json", "{}"), /did not build.*error: cannot find 'x'/);
   world.result = { code: 1, stdout: "", stderr: "mkdir: denied" };
-  assert.equal(await office.launch("modal", "{}"), "mkdir: denied");
+  assert.equal(await office.launch("show.json", "{}"), "mkdir: denied");
 });
 
-test("each copy rewrites its own request file over what is there", async () => {
+test("a request file is rewritten over what is there", async () => {
   reset();
-  await office.post("modal", "one");
-  await office.post("modal", "two");
-  assert.equal(world.files[`${STATE}/want-modal.json`], "two");
-  assert.deepEqual(world.writes, [`${STATE}/want-modal.json`, `${STATE}/want-modal.json`]);
+  await office.post("want-mini.json", "one");
+  await office.post("want-mini.json", "two");
+  assert.equal(world.files[`${STATE}/want-mini.json`], "two");
+  assert.deepEqual(world.writes, [`${STATE}/want-mini.json`, `${STATE}/want-mini.json`]);
   assert.equal(office.frameFile("1.png"), "agent-office/frames/1.png");
+});
+
+test("showing the office asks a running viewer, or starts one with the request", async () => {
+  reset({ [`${STATE}/status.json`]: JSON.stringify({ at: Date.now(), state: "ready" }) });
+  assert.equal(await office.showOffice("https://o/", 7), null);
+  assert.deepEqual(JSON.parse(world.files[`${STATE}/show.json`]), { at: 7, url: "https://o/" });
+  assert.equal(world.calls.length, 0);
+  reset({ [`${STATE}/status.json`]: JSON.stringify({ at: 1, state: "ready" }) });
+  assert.equal(await office.showOffice("https://o/", 8), null);
+  assert.deepEqual(world.calls[0].args.slice(5), ["show.json", JSON.stringify({ at: 8, url: "https://o/" })]);
 });

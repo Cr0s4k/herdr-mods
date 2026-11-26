@@ -22,7 +22,7 @@ export const FEATURES = [
   ["terminals", "Terminals in the sidebar", "Terminals listed under their space, after its agents"],
   ["recent", "Recent conversations", "Closed agent conversations under their space, to resume"],
   ["briefReplies", "Briefs from last replies", "Since you left takes an agent's last reply when it finishes while you're away and left no brief"],
-  ["agentOffice", "Agent Office", "Building button in the tab bar that opens your team's office"],
+  ["agentOffice", "Agent Office", "Building button in the tab bar that opens your team's office in a window"],
   ["agentOfficeSidebar", "Agent Office in the sidebar", "Small live office at the bottom of the sidebar; click it to open the office"],
   ["usageLog", "Usage log", "Notes which panels, popups and Pipeline buttons you use, in files on this computer only"],
 ];
