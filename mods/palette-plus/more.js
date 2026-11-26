@@ -100,6 +100,7 @@ export function more() {
   const agent = where?.terminal && agents().find(a => a.address === where.terminal);
   if (agent) list.push(command("Agent", agent.pinned ? "Unpin agent" : "Pin agent", "terminal.pin", "top agent lists", { terminal: agent.address, pinned: !agent.pinned }));
 
+  if (features.agentOffice !== false) list.push(overlay("Agent", "Agent Office", "office team building floor world desks", { mod: "agent-office", width: 0.9, height: 0.9, props: {} }));
   list.push(overlay("App", "Feature toggles", "switches enable disable on off loops skills watchers", { mod: "toggles", ...togglesSize() }));
   return list;
 }

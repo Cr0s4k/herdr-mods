@@ -26,6 +26,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 | **Watchers** | Get told when a pull request is reviewed, checked or merged, or when a shell command succeeds. | [watchers.md](docs/features/watchers.md) |
 | **Loops** | Lists Codex, Claude and OpenCode `/goal` goals and Claude's scheduled `/loop` tasks. | [loops.md](docs/features/loops.md) |
 | **Skills** | A searchable inventory of the agent skills available in a folder and on the machine. | [skills.md](docs/features/skills.md) |
+| **Agent Office** | Your team's agent office page, live: a building button opens it in a dialog, and a small copy sits in the corner. | [agent-office.md](docs/features/agent-office.md) |
 | **Tab bar** | A GitHub button for the current project, and on/off switches for most of the above. | [tab-bar.md](docs/features/tab-bar.md) |
 | **Command palette** | `cmd-shift-p` lists the panels, Pipeline, review and space actions beside Herdr's own commands. | [palette.md](docs/features/palette.md) |
 
@@ -35,7 +36,7 @@ You need Herdr with its `herdr-app` command, macOS, Git, Python 3 and `jq`. Some
 more:
 
 - pull requests and Watchers: GitHub's `gh`, signed in
-- Show: the Swift toolchain (Xcode command line tools)
+- Show and Agent Office: the Swift toolchain (Xcode command line tools)
 - highlighted diffs: [`bat`](https://github.com/sharkdp/bat)
 
 ```sh
@@ -78,6 +79,10 @@ is no telemetry. Three features read credentials on your machine:
 Loops, Skills, the sidebar's Recent row and Pipeline's token counts also read your agents'
 local session files (Claude Code, Codex, OpenCode), read-only.
 
+**Agent Office** opens only the office Claude Code's office hook reports to (`OFFICE_URL` in
+`~/.claude/settings.json`; nothing else in that file is used) or the address you give it. Its
+sign-in is kept in WebKit's own storage for its viewer, as a browser keeps one.
+
 **A local log.** The mods note what you open and press, so you can see later what you use
 and what you don't. It never leaves your computer.
 
@@ -113,6 +118,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/show/main.js` | Show: the panel and the markup editor |
 | `mods/show/herdr-show` | Show: the command that posts images and saves markups (Python) |
 | `mods/show/render.swift` | Show: burns the drawn marks into a PNG; compiled on first use to `~/.cache/herdr-show/render` |
+| `mods/agent-office/` | Agent Office: the dialog and the corner (`main.js`), and `view.swift`, which draws the office page with WebKit and saves it as pictures; compiled on first use to `~/.cache/herdr-agent-office/herdr-agent-office` |
 | `mods/files-modal/` | Herdr's Files panel, cloned: the panel is the tree, a file opens in a dialog |
 | `mods/files-modal/icons.js` | File and folder icon lookup, shared with Git (`mods/changes-modal/icons.js` is a symlink; install copies it) |
 | `scripts/icons.sh` | Downloads Material Icon Theme into `mods/files-modal/icons/` at a pinned version |
@@ -127,7 +133,7 @@ the working notes agents follow in this repository; they are useful to people to
 | `mods/files-pane/`, `mods/show-pane/`, `mods/loops-pane/` | Normal pane versions of the existing panels, sharing their views through symlinks |
 | `mods/tabs-show/panel-actions.js` | Shared Move to pane action and keyboard-focus handling |
 | `mods/pane-titles/` | Herdr's pane header, cloned, with a readable Git title for review panes |
-| `mods/tabs-show/` | Herdr's tab bar, cloned, with Show and Loops buttons added |
+| `mods/tabs-show/` | Herdr's tab bar, cloned, with Show, Loops and Agent Office buttons added |
 | `mods/loops/` | Codex, Claude and OpenCode goals and scheduled loops panel, with Python readers |
 | `mods/skills/`, `mods/skills-pane/` | Skills inventory and reader, with shared-file deduplication, scope and agent filters, and a normal pane view |
 | `mods/brief/`, `mods/brief-pane/` | Since you left: per-space activity, persistent handoffs, unread history and pane view |

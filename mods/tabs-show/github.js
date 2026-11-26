@@ -31,8 +31,12 @@ export async function openRepository(context, platform, path = "") {
   if (!remote) throw new Error("This repository has no GitHub remote. Add a GitHub remote, then try again.");
 
   // Open the browser on this computer, even when Git ran on a remote machine.
+  await openInBrowser(remote.url + path, platform);
+}
+
+export async function openInBrowser(url, platform) {
   // -n delivers --new-tab even when Firefox is already running; Firefox forwards it.
-  const mac = platform === "macos", url = remote.url + path;
+  const mac = platform === "macos";
   const attempts = [
     mac ? ["open", ["-na", "Firefox", "--args", "--new-tab", url]] : ["firefox", ["--new-tab", url]],
     [mac ? "open" : "xdg-open", [url]],

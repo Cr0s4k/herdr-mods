@@ -63,6 +63,7 @@ export default class Tabs extends View {
         if (command === "review") { track("review-panes", "open"); this.review.open(cx); }
         else if (command === "github") track("github", "open"), this.github.open(cx, repositoryContext(spaces(), panes(), focused()), window()?.platform);
         else if (command === "pipeline") this.openPipeline();
+        else if (command === "agent-office") this.openOffice();
         else if (command.startsWith("pipeline-")) this.pipelineCommand(command.slice("pipeline-".length), cx);
         else if ((command === "loops" || command === "skills" || command === "watchers") && shared("features")?.[command] === false) continue;
         else if (command === "watch-pr" && shared("features")?.watchers === false) continue;
@@ -91,6 +92,12 @@ export default class Tabs extends View {
       context: key ? { ...all[key].context, space: space.id }
         : { id: pipelineId(on, cwd, space.id), cwd, on, name: cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || space.name, space: space.id },
     } });
+  }
+
+  openOffice() {
+    if (shared("features")?.agentOffice === false || window()?.platform !== "macos") return;
+    track("agent-office", "tab-bar");
+    openOverlay({ mod: "agent-office", kind: "dialog", width: 0.9, height: 0.9, props: {} });
   }
 
   // Pipeline hears commands only while it's on screen, and a new one only once it has started.
@@ -254,6 +261,11 @@ export default class Tabs extends View {
       .child(svg("mods/pipeline/pipeline.svg").size(14)).child("Pipeline")
       .when(questions > 0, el => el.child(div().px(5).h(18).rounded(4).bg(t.blocked + "26").text_color(t.blocked).text_size(11).font_semibold()
         .flex().items_center().child(`Needs you ${questions}`)));
+    const officeOn = shared("features")?.agentOffice !== false && w?.platform === "macos";
+    const officeButton = Button.new("open-agent-office").h(26).px(8).flex_none().flex().items_center().rounded(6)
+      .text_color(t.muted).tooltip("Agent Office").accessibility_label("Open Agent Office")
+      .hover(s => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openOffice())
+      .child(svg("mods/agent-office/building.svg").size(14));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => this.wheel(e))
@@ -263,6 +275,7 @@ export default class Tabs extends View {
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .child(githubButton)
       .child(pipelineButton)
+      .when(officeOn, el => el.child(officeButton))
       .child(togglesButton)
       .when(enabled.includes("changes"), el => el.child(reviewButton)
         .child(div().w(1).h(16).mx(7).flex_none().bg(t.border)))

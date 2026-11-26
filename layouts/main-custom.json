@@ -96,6 +96,19 @@
                 },
                 "tab": "active"
               },
+              "floating": [
+                {
+                  "align": "end",
+                  "content": {
+                    "mod": "agent-office",
+                    "props": {
+                      "corner": true
+                    }
+                  },
+                  "edge": "bottom",
+                  "id": "agent-office"
+                }
+              ],
               "id": "main",
               "type": "block"
             },

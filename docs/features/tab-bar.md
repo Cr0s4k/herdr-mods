@@ -25,6 +25,9 @@ of the mods. Everything is on until you switch it off, and changes apply at once
 - **Recent conversations**: the Recent row under each space, with its folder's closed conversations.
 - **Briefs from last replies**: [Since you left](brief.md#when-the-agent-leaves-no-brief) takes an agent's last
   reply as a brief when it finishes while you're away and left none.
+- **Agent Office**: the building button in the tab bar, its dialog and the corner office
+  ([Agent Office](agent-office.md)).
+- **Agent Office corner**: only the small office in the bottom right corner.
 - **Usage log**: the local note of which panels, popups and actions you use (`herdr-usage` reads it) and which
   Pipeline buttons you press (`herdr-pipeline --usage`).
 

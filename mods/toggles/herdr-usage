@@ -14,6 +14,7 @@ FEATURES = {
     "github": "GitHub button", "palette": "Command palette", "find-file": "Find file", "find-chat": "Find conversation",
     "worktree-cleanup": "Clean up worktrees", "recent": "Recent conversations in the sidebar", "spaces": "Spaces sidebar",
     "space-new": "New space menu", "space-hide": "Hide a space", "toggles": "Feature toggles", "status-bar": "Push and pull in the status bar",
+    "agent-office": "Agent Office",
 }
 
 
