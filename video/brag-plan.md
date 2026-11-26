@@ -10,13 +10,13 @@ No mock-up and no demo mode: every shot is the real Herdr window on a throwaway 
 gets two to three seconds, one panel at a time. The brag is how much fits in one window.
 
 ## Hook (first 2-3 seconds)
-"Herdr, extended." then "Ten features, one window." over the dimmed Pipeline starfield.
+"Herdr, extended." then "Eleven features, one window." over the dimmed Pipeline starfield.
 
 ## Key moments (the middle)
 - Pipeline: the four tasks drop into the queue, the planner orders them, three work slots fill,
   then the review column and the merges.
 - Show: a screenshot arrives, the marked-up copy with a red circle and a note, then the fix.
-- Changes: the diff of an uncommitted change, split view.
+- Git: the diff of an uncommitted change, split view.
 - Files: a source file, highlighted, in the dialog.
 - Since you left: an agent's handoff with a question for you.
 - Watchers: the toast as the tests pass.

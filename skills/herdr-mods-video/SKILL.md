@@ -1,6 +1,6 @@
 ---
 name: herdr-mods-video
-description: Re-record and re-render the video at the top of the herdr-mods README (docs/herdr-mods.mp4): a real Pipeline run, then Show, Changes, Files, Since you left and Watchers, all on a throwaway repository.
+description: Re-record and re-render the video at the top of the herdr-mods README (docs/herdr-mods.mp4): a real Pipeline run, then Show, Git, Files, Since you left and Watchers, all on a throwaway repository.
 disable-model-invocation: true
 ---
 
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 The video at the top of the README is about thirty seconds of real Herdr footage, not the demo
 mode. It opens on a Pipeline run: four small tasks on a throwaway repository called `tiny-shop`,
-worked by real Claude Code agents. Then it gives a few seconds each to Show, Changes, Files, Since
+worked by real Claude Code agents. Then it gives a few seconds each to Show, Git, Files, Since
 you left and Watchers, filmed in the same kind of throwaway space. The two halves are separate
 recordings, so either can be redone alone. Everything lives in `video/` in the herdr-mods
 repository (`~/Projects/herdr-mods` unless the user says otherwise); run every command from the

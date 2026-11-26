@@ -64,7 +64,7 @@ Run it in the background; it ends with `N frames, 14 events` after about a minut
 non-zero when the watcher never fired. It makes `tiny-shop` with the four Pipeline tasks already
 committed and a `checkout()` change left uncommitted, posts a Since you left handoff, hides the
 sidebar, then films, five frames a second: the Show panel (`herdr-show` posts the shop page, `herdr-show
-mark` adds a red circle and a note, then the fixed page arrives), the Changes panel and the diff in
+mark` adds a red circle and a note, then the fixed page arrives), the Git panel and the diff in
 its dialog, the Files panel and `src/cart.js` in its dialog, the Since you left panel, and a
 command watcher on `npm test` firing its toast (it checks every 15 seconds, so that wait is the
 longest). At the end it removes the Show images, the handoff and the watcher it made, closes the

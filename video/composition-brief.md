@@ -34,11 +34,11 @@ each of the other mods, all on a throwaway repository.
 - Font: Inter
 
 ## Scenes (seconds of the film)
-1. Hook, 0 to 2.4: "Herdr, extended." / "Ten features, one window." over the dimmed first frame
+1. Hook, 0 to 2.4: "Herdr, extended." / "Eleven features, one window." over the dimmed first frame
 2. Pipeline, 2.4 to 8.4: Pipeline clip 0 to 6; the queue, then the planner, then the work slots
 3. Pipeline, 8.4 to 12.2: Pipeline clip 11.8 to 15.6; the review column, then the whole window
 4. Show, 12.2 to 15.8: the panel as the screenshot, its markup and the fix arrive
-5. Changes, 15.8 to 18.3: the panel, then the diff in the dialog
+5. Git, 15.8 to 18.3: the panel, then the diff in the dialog
 6. Files, 18.3 to 20.6: the panel, then `src/cart.js` in the dialog
 7. Since you left, 20.6 to 23: the handoff with its question
 8. Watchers, 23 to 25.5: the "tiny-shop tests pass succeeded" toast

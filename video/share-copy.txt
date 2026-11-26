@@ -1,1 +1,1 @@
-One window, ten features. herdr-mods adds a task pipeline to Herdr, plus panels where agents post screenshots you mark up, diffs and files in a large dialog, a feed of what needs you, and watchers that tell you when tests pass.
+One window, eleven features. herdr-mods adds a task pipeline to Herdr, plus panels where agents post screenshots you mark up, diffs and files in a large dialog, a feed of what needs you, and watchers that tell you when tests pass.
