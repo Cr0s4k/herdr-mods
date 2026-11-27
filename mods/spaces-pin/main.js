@@ -1143,7 +1143,7 @@ export default class Spaces extends View {
           .hover(s => s.bg(t.hover).text_color(t.foreground))
           .role("button").accessibility_label("Suggest cleanup").tooltip("Suggest cleanup · Idle agents, terminals and panels to close; spaces stay")
           .on_click(() => this.cleanup())
-          .child(svg("mods/space-cleanup/sparkles.svg").size(14))))
+          .child(svg("mods/space-cleanup/broom.svg").size(14))))
         .when(!collapsed, el => el.child(div().id("spaces-tidy").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
           .hover(s => s.bg(t.hover).text_color(t.foreground))
           .role("button").accessibility_label("Tidy spaces").tooltip("Tidy · Most recently used spaces first; fold those unused for an hour")

@@ -86,7 +86,7 @@ function items(p, git) {
 
 function menuIcon(command, args) {
   if (command === "space.hide") return "mods/space-hide/eye-off.svg";
-  if (command === "space.cleanup") return "mods/space-cleanup/sparkles.svg";
+  if (command === "space.cleanup") return "mods/space-cleanup/broom.svg";
   if (command === "space.pin") return `mods/workspace-chrome/${args.pin ? "pin" : "pin-off"}.svg`;
   if (command === "space.focus") return args.id ? "mods/menu-pin/focus.svg" : "mods/workspace-chrome/layers.svg";
   const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? (args?.direction === "down" ? "panel-bottom" : "panel-right") : command === "pane.zoom" ? "square" : "terminal";

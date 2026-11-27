@@ -123,7 +123,7 @@ export default class SpaceCleanup extends View {
         cx.stop_propagation();
       })
       .child(h_flex().h(48).flex_none().px(16).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(svg("mods/space-cleanup/sparkles.svg").size(15).flex_none().text_color(t.accent))
+        .child(svg("mods/space-cleanup/broom.svg").size(15).flex_none().text_color(t.accent))
         .child(div().font_semibold().child(scoped ? `Clean up ${scoped.name}` : "Clean up spaces"))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted)
           .child(rows.length ? `${plural(rows.length, "suggestion")}, longest unused first` : ""))

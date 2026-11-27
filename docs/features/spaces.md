@@ -130,7 +130,7 @@ remove it; a space with nothing else open keeps its Home until it has another ta
 
 ## Suggest cleanup
 
-The sparkle beside **Tidy** lists what could close inside your spaces, each with why; the spaces
+The broom beside **Tidy** lists what could close inside your spaces, each with why; the spaces
 themselves stay. Right-click a space → **Suggest cleanup…**, or **C** on it in the sidebar, lists
 that space only. The [command palette](palette.md) has both.
 

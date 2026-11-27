@@ -878,7 +878,7 @@ test("a click on the space already shown goes to its Home tab; another space ope
   assert.deepEqual(world.calls, [["tab.select", { id: "app-home" }], ["pane.focus", { pane: "app-home-pane" }]]);
 });
 
-test("the sparkle suggests a cleanup of every space, C one space's, and the sidebar notes what each terminal last did", () => {
+test("the broom suggests a cleanup of every space, C one space's, and the sidebar notes what each terminal last did", () => {
   const view = setup();
   click(view.render(), "spaces-cleanup");
   assert.deepEqual(world.opened, [{ mod: "space-cleanup", kind: "dialog", width: 760, height: 560, props: {} }]);

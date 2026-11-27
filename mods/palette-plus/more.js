@@ -99,8 +99,8 @@ export function more() {
     do: () => { run("tab.select", { id: base.id }); run("pane.focus", { pane: base.pane }); } });
   if (space) list.push(overlay("Space", "Hide this space for a while…", "snooze later timed", { mod: "space-hide", width: 330, height: 350, props: { id: space.id } }));
   list.push(overlay("Space", "Hidden spaces…", "snoozed restore", { mod: "space-hide", width: 350, height: 420, props: { list: true } }));
-  list.push(overlay("Space", "Suggest cleanup…", "clean up close idle unused old terminals agents shells panels tabs magic", { mod: "space-cleanup", width: 760, height: 560 }));
-  if (space) list.push(overlay("Space", "Suggest cleanup in this space…", "clean up close idle unused old terminals agents shells panels tabs magic", { mod: "space-cleanup", width: 760, height: 560, props: { space: space.id } }));
+  list.push(overlay("Space", "Suggest cleanup…", "clean up close idle unused old terminals agents shells panels tabs broom", { mod: "space-cleanup", width: 760, height: 560 }));
+  if (space) list.push(overlay("Space", "Suggest cleanup in this space…", "clean up close idle unused old terminals agents shells panels tabs broom", { mod: "space-cleanup", width: 760, height: 560, props: { space: space.id } }));
 
   if (where?.tab) list.push(command("Tab", "Put tab away", "tab.settle", "settle hide park out of the lists"));
   const agent = where?.terminal && agents().find(a => a.address === where.terminal);
