@@ -479,6 +479,14 @@ what holds it. `herdr-pipeline T-3` shows one task (worktree, error, the end of 
 output, summary, tokens and its history with times); `.` picks the task of the worktree you're
 in. `--events N`, `--done`, `--full`, `--all` and `--json` widen it.
 
+`herdr-pipeline add "Fix the login redirect"` adds a task from any terminal, as if typed in
+Pipeline: a long text keeps its first sentence as the title. `--details TEXT` gives its agent
+more (`--details -` reads it from standard input), `--after T-7` holds it until T-7 has merged,
+and `--draft` keeps it out of the queue. It goes to the pipeline of the task worktree you're in;
+elsewhere, to the project's pipeline in this terminal's space, else the one running. It prints
+the new task's id, or why nothing was added. The tab bar takes the task in, so Herdr must be open
+on the main-custom layout; it answers within two seconds.
+
 Pipeline notes which of its buttons you press in a file on this computer
 (`~/.config/herdr-app/pipeline/usage.jsonl`: the action, the task's id and status, never a
 title or text). `herdr-pipeline --usage` counts the last 14 days, most pressed first, and lists

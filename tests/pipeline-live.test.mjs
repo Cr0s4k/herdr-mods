@@ -2588,3 +2588,47 @@ test("a draft waits out of the queue's order and the planner's reading until it 
   assert.deepEqual([state.tasks[0].draft, state.tasks[0].status], [undefined, "routing"]);
   assert.equal(reduce(state, { type: "queue", id: draft.id }, 3000), state);
 });
+
+test("herdr-pipeline add types a task, adds its details and what it waits for, and refuses before changing anything", () => {
+  let state = typed("Schema");
+  const added = model.addTask(state, { text: "Fix the login redirect", details: "  Safari only.  ", after: ["t-1", "T-1"] }, 0);
+  const task = row(added.state, "T-2");
+  assert.deepEqual(added.answer, { id: "T-2", title: "Fix the login redirect", draft: false, waits: ["T-1"], running: false, cut: false });
+  assert.deepEqual([task.source, task.description, task.depends], ["herdr-pipeline add", "Safari only.", ["T-1"]]);
+  assert.match(added.state.events[1].message, /^T-2 joined the queue · herdr-pipeline add\.$/);
+  const long = "Make the onboarding flow remember where the person left off. Then resume there when they come back later on.";
+  const both = model.addTask(state, { text: long, details: "x".repeat(4000), draft: true }, 0);
+  assert.equal(row(both.state, "T-2").description.slice(0, long.length + 2), `${long}\n\n`);
+  assert.deepEqual([both.answer.draft, both.answer.cut, row(both.state, "T-2").draft], [true, true, true]);
+  state = reduce(state, { type: "run" }, 0);
+  assert.equal(model.addTask(state, { text: "Later" }, 0).answer.running, true);
+  for (const [request, error] of [[{ text: "x", after: ["T-9"] }, /no task T-9/], [{ text: "   " }, /needs a title/]])
+    assert.match(model.addTask(state, request, 0).answer.error, error);
+  assert.match(model.addTask(undefined, { text: "x" }, 0).answer.error, /isn't saved/);
+  assert.match(model.addTask(createPipeline(context, 0), { text: "x" }, 0).answer.error, /isn't saved/, "never into an example pipeline");
+});
+
+test("the tab-bar tracker answers each herdr-pipeline add request once and adds its task", async () => {
+  const fs = await import("node:fs/promises"), { tmpdir } = await import("node:os");
+  let store = { [id]: createLive(context, 0) };
+  const none = () => [];
+  globalThis.__pipelineTrackerNative = { ...model, ...live, fs, shared: key => key === STORE ? store : undefined, setShared: (_key, value) => { store = value; },
+    notify: none, panes: none, focused: () => null, agents: none, terminals: none, spaces: none, run: none, exec: none, hc: none, knownAgents: none,
+    readTextFile: async () => null, appHome: () => "/app", loadProcedures: async () => {}, readTickets: none, fullTickets: none, ticketBlockers: none, updateTicket: none };
+  const trackerFile = await readFile(new URL("../mods/pipeline/tracker.js", import.meta.url), "utf8");
+  const names = [...trackerFile.matchAll(/^import \{([^}]*)\} from/gm)].flatMap(match => match[1].split(",").map(name => name.trim()));
+  const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { fs, ${names.join(", ")} } = globalThis.__pipelineTrackerNative;\n${trackerFile.replace(/^import .*;\n/gm, "")}`)}`);
+  const folder = await fs.mkdtemp(`${tmpdir()}/inbox-`), tracker = new PipelineTracker({});
+  await fs.writeFile(`${folder}/1.task.json`, JSON.stringify({ pipeline: "project", text: "Fix the login redirect" }));
+  await fs.writeFile(`${folder}/2.task.json`, "{half");
+  await fs.writeFile(`${folder}/3.task.json`, JSON.stringify({ pipeline: "elsewhere", text: "x" }));
+  await fs.writeFile(`${folder}/4.part`, "{}");
+  await Promise.all([tracker.inbox(folder), tracker.inbox(folder)]);
+  assert.deepEqual((await fs.readdir(folder)).sort(), ["1.done.json", "2.done.json", "3.done.json", "4.part"], "a request still being written is left alone");
+  const answer = async n => JSON.parse(await fs.readFile(`${folder}/${n}.done.json`, "utf8"));
+  assert.equal((await answer(1)).id, "T-1");
+  assert.ok((await answer(2)).error);
+  assert.match((await answer(3)).error, /isn't saved/);
+  assert.deepEqual(store[id].tasks.map(task => task.title), ["Fix the login redirect"]);
+  await fs.rm(folder, { recursive: true });
+});

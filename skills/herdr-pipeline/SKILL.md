@@ -14,6 +14,7 @@ Pipeline starts one agent per task in its own Git worktree. Its first message na
 The first message is the authority. If you no longer have it:
 
 - `herdr-pipeline .` prints the task whose worktree you are in, and what Pipeline is waiting for.
+- When the person asks you to add work to the pipeline, `herdr-pipeline add "<task>"` queues it in the same one (`-h` for details, drafts and order).
 - Follow [procedures/summary.md](procedures/summary.md) before you stop, every time. Its file is the one `git rev-parse --git-path herdr-summary.md` prints in the worktree.
 - Follow the others only when the first message asked for them. When you can't tell, write the summary and say on its Unsure line what you left out.
 - Commit on the task's branch and stop. Pipeline merges or opens the pull request; never push or open one yourself.

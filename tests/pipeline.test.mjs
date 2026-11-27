@@ -240,7 +240,7 @@ async function tracker(values) {
   const trackerSource = (await readFile(new URL("../mods/pipeline/tracker.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
   const { PipelineTracker } = await import(`data:text/javascript,${encodeURIComponent(`const { STORE, MOVING, reduce, migrate, LiveRunner, prompt, loadProcedures } = globalThis.__pipelineTracker;\nconst { ${names.join(", ")} } = Object.fromEntries(${JSON.stringify(names)}.map(name => [name, (...args) => globalThis.__pipelineTracker[name](...args)]));\n${trackerSource}`)}`);
   const callbacks = [];
-  const host = { timer: { every: (_ms, fn) => callbacks.push(fn) } };
+  const host = { timer: { every: (ms, fn) => { if (ms === 1000) callbacks.push(fn); } } };
   new PipelineTracker().start(host); new PipelineTracker().start(host);
   return callbacks;
 }

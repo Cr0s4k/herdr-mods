@@ -17,7 +17,7 @@ Real runs, sped up, on a throwaway repository: Pipeline first, then a few second
 
 | Feature | What it does | Guide |
 |---|---|---|
-| **Pipeline** | Queue tasks, typed or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
+| **Pipeline** | Queue tasks, typed, from a terminal (`herdr-pipeline add`) or from Plane and Linear tickets. Each one gets its own Git worktree and agent (Claude Code, Codex or OpenCode), is checked, then waits for your review and merges or opens a pull request. Includes a planner, usage-limit holds, a schedule and a demo mode. | [pipeline.md](docs/features/pipeline.md) |
 | **Show** | Agents post screenshots to a panel; you draw on them and send them back. | [show.md](docs/features/show.md) |
 | **Files and Git** | Files and diffs open in a large dialog with Vim keys (`10j`, `⌃D`, `gg`, `]c`) and, for diffs, a list of every changed file beside them, with push and pull counts, image previews and Material file icons. ⇧⌘N finds a file by name, like VS Code's ⌘P. Git's History tab graphs every branch's commits, with copy, GitHub and revert. Notes left on a diff's lines go to the agent as one message. A dialog lists the repository's worktrees with what removing each would lose, and removes the ticked ones. Any panel can move into a normal pane. | [files-and-changes.md](docs/features/files-and-changes.md) |
 | **Tasks** | Plane and Linear tickets beside your terminals, with handoff to an agent or a batch launch into worktrees. | [tasks.md](docs/features/tasks.md) |

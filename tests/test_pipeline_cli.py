@@ -103,3 +103,66 @@ class UsageLogTest(PipelineCliTests):
         self.assertNotIn("approve,", never)
         self.assertNotIn("launched", never, "what only the runner sends was never a button")
         self.assertRegex(self.run_cli("--usage", "60"), r"\s1  revert")
+
+
+class AddTaskTest(PipelineCliTests):
+    def tracker(self, answer):
+        """Stands in for Herdr's tab bar: takes each request and answers it."""
+        seen = []
+
+        def sleep(_):
+            for asked in Path(self.home.name, "pipeline/inbox").glob("*.task.json"):
+                seen.append(json.loads(asked.read_text()))
+                asked.unlink()
+                asked.with_name(asked.name.replace(".task.json", ".done.json")).write_text(json.dumps(answer))
+        return seen, patch.object(cli.time, "sleep", sleep)
+
+    def add_pipeline(self, key, **state):
+        path = Path(self.home.name, "shared.json")
+        shared = json.loads(path.read_text())
+        shared[cli.STORE][cli.LIVE + key] = {"context": {"cwd": "/proj", "name": "proj"}, "tasks": [], **state}
+        path.write_text(json.dumps(shared))
+
+    def test_add_hands_the_task_to_herdr_and_prints_what_became_of_it(self):
+        seen, sleeping = self.tracker({"id": "T-4", "title": "Fix the login redirect", "draft": False, "waits": ["T-2", "T-3"], "running": False, "cut": True})
+        with sleeping:
+            text = self.run_cli("add", "Fix", "the login redirect", "--details", "Safari only.", "--after", "T-2,t-3", "--after", "T-2")
+        self.assertEqual(seen, [{"pipeline": '[null,"/proj"]', "text": "Fix the login redirect", "details": "Safari only.", "draft": False, "after": ["T-2", "t-3", "T-2"]}])
+        self.assertEqual(text.splitlines(), ["T-4 joined the queue of proj: Fix the login redirect",
+                                             "  It starts once T-2, T-3 have merged. The pipeline is paused: start it in Pipeline to run the task. Its details were cut to 4000 characters."])
+        self.assertEqual(list(Path(self.home.name, "pipeline/inbox").iterdir()), [], "nothing is left behind")
+
+    def test_add_reads_details_from_standard_input_and_names_a_draft(self):
+        seen, sleeping = self.tracker({"id": "T-4", "title": "Plan", "draft": True, "waits": [], "running": True})
+        with sleeping, patch("sys.stdin", io.StringIO("Step one.\nStep two.\n")):
+            text = self.run_cli("add", "Plan", "--details", "-", "--draft")
+        self.assertEqual((seen[0]["details"], seen[0]["draft"]), ("Step one.\nStep two.\n", True))
+        self.assertEqual(text, "T-4 is a draft in proj: Plan\n  Queue it in Pipeline to start it.\n")
+
+    def test_add_from_a_task_worktree_goes_to_that_task_s_pipeline_and_otherwise_to_this_space_s(self):
+        self.add_pipeline('[null,"/proj","s2"]', space="s2", running=True, lastTick=9)
+        self.add_pipeline('[null,"/proj","s3"]', space="s3")
+        seen, sleeping = self.tracker({"id": "T-9", "title": "x", "running": True})
+        with sleeping, patch.object(cli, "herdr_spaces", return_value=({"s2", "s3"}, "s3")):
+            self.run_cli("add", "x", cwd=self.worktree)
+            self.run_cli("add", "x")
+        with sleeping, patch.object(cli, "herdr_spaces", return_value=(set(), None)):
+            self.run_cli("add", "x")
+        self.assertEqual([request["pipeline"] for request in seen], ['[null,"/proj"]', '[null,"/proj","s3"]', '[null,"/proj","s2"]'])
+
+    def test_add_stops_with_herdr_s_refusal(self):
+        _, sleeping = self.tracker({"error": "There is no task T-9 in this pipeline."})
+        with sleeping, self.assertRaises(SystemExit) as stop:
+            self.run_cli("add", "x", "--after", "T-9")
+        self.assertEqual(stop.exception.code, "herdr-pipeline: There is no task T-9 in this pipeline.")
+
+    def test_add_takes_its_request_back_when_herdr_never_picks_it_up(self):
+        with patch.object(cli, "WAIT", 0.05), patch.object(cli.time, "sleep", lambda _: None), self.assertRaises(SystemExit) as stop:
+            self.run_cli("add", "x")
+        self.assertIn("nothing was added", str(stop.exception.code))
+        self.assertEqual(list(Path(self.home.name, "pipeline/inbox").iterdir()), [])
+
+    def test_add_needs_a_live_pipeline_for_the_folder(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.run_cli("add", "x", cwd="/elsewhere", root="/elsewhere")
+        self.assertIn("no live pipeline", str(stop.exception.code))

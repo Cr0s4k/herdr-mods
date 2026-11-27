@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read Herdr Pipeline's saved state, compactly, for people and agents. Never writes."""
+"""Read Herdr Pipeline's saved state, compactly, for people and agents. Only `add` changes anything, through Herdr."""
 import argparse
 import json
 import os
@@ -13,6 +13,7 @@ STORE = "pipeline.prototype.v1"
 LIVE = "live:"
 ACTIVE = {"routing", "working", "input", "testing", "merging", "pr", "review", "failed"}
 BULKY = {"description", "planned", "log", "usage", "checkOutput"}
+WAIT = 8
 
 
 def home():
@@ -198,9 +199,106 @@ def usage(days, now):
         print("\nNever pressed: " + ", ".join(never))
 
 
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        node = list(node.values())
+    if isinstance(node, list):
+        for child in node:
+            yield from walk(child)
+
+
+def herdr_spaces():
+    """Herdr's open spaces, and the one this terminal is in."""
+    try:
+        listed = json.loads(subprocess.run(["herdr-app", "ls"], capture_output=True, text=True, timeout=5).stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return set(), None
+    spaces = [space for space in listed.get("spaces") or [] if isinstance(space, dict)]
+    terminal = os.environ.get("HC_TERMINAL_ID")
+    here = next((space["id"] for space in spaces if terminal and any(row.get("terminal") == terminal for row in walk(space))), None)
+    return {space.get("id") for space in spaces}, here
+
+
+def target(pipelines, cwd):
+    """The pipeline of the task worktree we are in; else this project's, in this terminal's space if it has one."""
+    found = mine(pipelines, cwd)
+    if not found:
+        sys.exit("herdr-pipeline: no live pipeline for this folder. Open Pipeline here in Live mode once.")
+    own = [key for key, state in found.items() if any(inside(cwd, r) for task in state.get("tasks", []) for r in roots(task))]
+    if own or len(found) == 1:
+        return (own or list(found))[0]
+    open_spaces, here = herdr_spaces()
+    space = lambda state: state.get("space") or (state.get("context") or {}).get("space")
+    return max(found, key=lambda key: (here is not None and space(found[key]) == here, space(found[key]) in open_spaces,
+                                       bool(found[key].get("running")), found[key].get("lastTick") or 0))
+
+
+def send(request):
+    folder = home() / "pipeline" / "inbox"
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = f"{int(time.time() * 1000)}-{os.getpid()}"
+    asked, done = folder / f"{stem}.task.json", folder / f"{stem}.done.json"
+    part = folder / f"{stem}.part"
+    part.write_text(json.dumps(request))
+    part.rename(asked)
+    deadline, taken = time.monotonic() + WAIT, False
+    while True:
+        try:
+            answer = json.loads(done.read_text())
+            done.unlink()
+            return answer
+        except (OSError, ValueError):
+            pass
+        if time.monotonic() > deadline:
+            if taken:
+                sys.exit("herdr-pipeline: Herdr took the task but didn't answer. Look in Pipeline before adding it again.")
+            try:
+                asked.unlink()
+            except FileNotFoundError:
+                deadline, taken = time.monotonic() + WAIT, True
+                continue
+            sys.exit("herdr-pipeline: Herdr didn't pick the task up, so nothing was added. "
+                     "Pipeline reads new tasks through the tab bar of the main-custom layout: is Herdr open on it?")
+        time.sleep(0.2)
+
+
+def add(argv):
+    parser = argparse.ArgumentParser(prog="herdr-pipeline add", description="Add a task to this project's live pipeline, as if typed in Pipeline.",
+                                     epilog='Examples: herdr-pipeline add "Fix the login redirect" · herdr-pipeline add "Split the API client" --details - < plan.md · '
+                                            'herdr-pipeline add "Document it" --after T-7 --draft')
+    parser.add_argument("text", nargs="+", help="the task as you would type it in Pipeline: a long text keeps its first sentence as the title and the whole text as details")
+    parser.add_argument("--details", metavar="TEXT", help="more for the agent: context, constraints, how to check it (- reads standard input)")
+    parser.add_argument("--after", action="append", default=[], metavar="TASK", help="start it only once this task has merged (repeat it, or separate ids with commas)")
+    parser.add_argument("--draft", action="store_true", help="keep it out of the queue until you queue it in Pipeline")
+    args = parser.parse_args(argv)
+    details = sys.stdin.read() if args.details == "-" else args.details
+    pipelines, cwd = load(), os.getcwd()
+    key = target(pipelines, cwd)
+    state = pipelines[key]
+    answer = send({"pipeline": key, "text": " ".join(args.text), "details": details or "", "draft": args.draft,
+                   "after": [part for value in args.after for part in value.split(",") if part.strip()]})
+    if answer.get("error"):
+        sys.exit(f"herdr-pipeline: {answer['error']}")
+    tid, draft, waits = answer["id"], answer.get("draft"), answer.get("waits") or []
+    print(f"{tid} {'is a draft in' if draft else 'joined the queue of'} {name(state)}: {answer.get('title')}")
+    notes = ["Queue it in Pipeline to start it."] if draft else []
+    if waits:
+        notes.append(f"It starts once {', '.join(waits)} {'has' if len(waits) == 1 else 'have'} merged.")
+    if not draft and not answer.get("running"):
+        notes.append("The pipeline is paused: start it in Pipeline to run the task.")
+    if answer.get("cut"):
+        notes.append("Its details were cut to 4000 characters.")
+    if notes:
+        print("  " + " ".join(notes))
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Show Herdr Pipeline's live tasks for this project. Read-only.",
-                                     epilog="Examples: herdr-pipeline · herdr-pipeline T-3 · herdr-pipeline . (the task of this worktree) · herdr-pipeline --events 20")
+    if sys.argv[1:2] == ["add"]:
+        add(sys.argv[2:])
+        return
+    parser = argparse.ArgumentParser(description="Show Herdr Pipeline's live tasks for this project. `herdr-pipeline add -h` adds one.",
+                                     epilog="Examples: herdr-pipeline · herdr-pipeline T-3 · herdr-pipeline . (the task of this worktree) · herdr-pipeline --events 20 · herdr-pipeline add \"Fix the login redirect\"")
     parser.add_argument("task", nargs="?", help="a task id, or . for the task whose worktree holds the current folder")
     parser.add_argument("--all", action="store_true", help="every saved live pipeline, not just this project's")
     parser.add_argument("--done", action="store_true", help="list done tasks, and pipelines with nothing left to do")

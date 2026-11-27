@@ -1,5 +1,6 @@
 import { shared, setShared, notify, panes, focused, agents, terminals, spaces, run, exec, hc, readTextFile, appHome, knownAgents } from "herdr";
-import { STORE, MOVING, reduce, migrate, agentOpening, prune } from "./pipeline-model.js";
+import * as fs from "fs/promises";
+import { STORE, LIVE, MOVING, reduce, migrate, agentOpening, prune, addTask } from "./pipeline-model.js";
 import { LiveRunner, prompt, openTry } from "./pipeline-live.js";
 import { loadProcedures } from "./procedures.js";
 import { readTickets, fullTickets, ticketBlockers, updateTicket } from "./ticket-source.js";
@@ -112,6 +113,28 @@ export class PipelineTracker {
       if (changed) setShared(STORE, next);
       this.live.step(cx);
     });
+    cx.timer.every(2000, cx => cx.spawn(() => this.inbox()));
+  }
+
+  // herdr-pipeline add leaves NAME.task.json here and waits for NAME.done.json. Whoever deletes the request first owns it.
+  async inbox(folder = `${appHome()}/pipeline/inbox`) {
+    if (this.reading) return;
+    this.reading = true;
+    try {
+      for (const name of (await fs.readdir(folder).catch(() => [])).filter(name => name.endsWith(".task.json"))) {
+        const path = `${folder}/${name}`, text = await fs.readFile(path, "utf8").catch(() => null);
+        if (text === null || !await fs.unlink(path).then(() => true, () => false)) continue;
+        let answer;
+        try { answer = this.add(JSON.parse(text)); } catch (error) { answer = { error: String(error?.message ?? error) }; }
+        await fs.writeFile(path.replace(/\.task\.json$/, ".done.json"), JSON.stringify(answer));
+      }
+    } finally { this.reading = false; }
+  }
+
+  add(request) {
+    const all = shared(STORE) ?? {}, key = LIVE + request.pipeline, { state, answer } = addTask(migrate(all[key]), request);
+    if (!answer.error) setShared(STORE, { ...all, [key]: state });
+    return answer;
   }
 
   async tidy() {

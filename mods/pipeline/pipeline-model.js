@@ -520,6 +520,25 @@ export function typedTask(text) {
   return { title: `${head}…`, description: full.slice(0, 4000) };
 }
 
+export function addTask(state, request, now = Date.now()) {
+  const refuse = error => ({ state, answer: { error } });
+  if (!state?.live || newer(state)) return refuse("That pipeline isn't saved any more. Open Pipeline in its space once.");
+  const waits = [];
+  for (const wanted of new Set((request.after ?? []).map(id => String(id).trim().toUpperCase()).filter(Boolean))) {
+    const other = state.tasks.find(task => task.id.toUpperCase() === wanted);
+    if (!other) return refuse(`There is no task ${wanted} in this pipeline.`);
+    waits.push(other.id);
+  }
+  let next = reduce(state, { type: "create", title: request.text, draft: Boolean(request.draft), source: "herdr-pipeline add" }, now);
+  if (next === state) return refuse("The task needs a title.");
+  const id = next.tasks.at(-1).id, typed = next.tasks.at(-1).description, details = String(request.details ?? "").trim();
+  const description = [typed, details].filter(Boolean).join("\n\n");
+  if (details) next = reduce(next, { type: "describe", id, text: description }, now);
+  for (const other of waits) next = reduce(next, { type: "link", id, on: other }, now);
+  const task = next.tasks.at(-1);
+  return { state: next, answer: { id, title: task.title, draft: Boolean(task.draft), waits: task.depends, running: Boolean(next.running), cut: description.length > task.description.length } };
+}
+
 // A follow-up starts from the branch as it is now, so it is told what the earlier task was and where its commits are.
 function followUpDetails(origin, extra) {
   const ticket = origin.ticket, landed = origin.landed ?? [], prs = Object.values(origin.prs ?? {});
@@ -782,8 +801,9 @@ export function reduce(state, action, now = Date.now()) {
       next.created = (next.created ?? 0) + 1;
       if (next.live) {
         const id = `T-${next.created}`;
-        next.tasks.push(liveTask(next, { id, title, description, ...(action.draft ? { draft: true } : {}) }, "Typed"));
-        event(next, action.draft ? `${id} is a draft. It starts only after you queue it.` : `${id} joined the queue${description ? " · the whole text is in its details" : ""}.`, id);
+        const via = action.source ? ` · ${action.source}` : "";
+        next.tasks.push(liveTask(next, { id, title, description, ...(action.draft ? { draft: true } : {}) }, action.source ?? "Typed"));
+        event(next, action.draft ? `${id} is a draft${via}. It starts only after you queue it.` : `${id} joined the queue${via}${description ? " · the whole text is in its details" : ""}.`, id);
         break;
       }
       const id = `NEW-${next.created}`;
