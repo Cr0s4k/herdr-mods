@@ -128,6 +128,32 @@ Home is always the first tab: one closed another way comes back, and one moved g
 left. Switch **Home tab** off in the tab bar's [feature toggles](tab-bar.md#feature-toggles) to
 remove it; a space with nothing else open keeps its Home until it has another tab.
 
+## Suggest cleanup
+
+The sparkle beside **Tidy** lists what could close inside your spaces, each with why; the spaces
+themselves stay. Right-click a space → **Suggest cleanup…**, or **C** on it in the sidebar, lists
+that space only. The [command palette](palette.md) has both.
+
+Suggestions sit under their space, longest unused first:
+
+- **Agents idle for an hour**, ticked: the conversation stays under Recent, to resume. One that
+  finished while you were away is listed unticked, since its reply is unread.
+- **Shells at their prompt for an hour**, ticked unless you named the tab.
+- **Programs untouched for a day** (a dev server, an editor), unticked.
+- **Panel tabs not opened for a day** (Files, Git, Show), ticked.
+- **Agents whose Pipeline task is merged**, ticked however recent.
+
+Never listed: agents working or waiting for you, terminals an unfinished Pipeline task owns, the
+Home and Pipeline tabs, and the pane you are typing in.
+
+A terminal or panel is in use while it is on screen with Herdr in front, or while its agent works
+or asks; the sidebar notes this once a minute. The last status change in its tab counts too. A
+terminal never seen in use counts from when it started; a panel never seen in use isn't listed.
+
+**Space** ticks, **↵** closes the ticked after asking once, **G** (or a row's arrow) goes there and
+**Esc** closes. Closing ends their terminals. Home keeps each space open; in a space without one
+(Home tab switched off), the tab used last is kept and marked **keeps the space open**.
+
 ## Pinned spaces
 
 Hover a space and click its pin to pin it to the top. Pinned spaces always show the pin;
@@ -141,5 +167,5 @@ in Herdr's shared state (`space.pinned`), so they survive restarts.
 accent outline on the current row. **↑ ↓** (or **J K**), **Home** and **End** move through
 spaces, their agents and terminals; **→ ←** unfold and fold a space, and **←** on an agent or
 terminal goes back to its space. **Enter** shows the space, focuses the agent or terminal, unfolds Recent or resumes a conversation. On a space, **P** pins it, **F**
-focuses it, **H** hides it and **M** opens its menu; **N** adds a space and **T** tidies. **Esc** leaves focus
+focuses it, **H** hides it, **C** suggests its cleanup and **M** opens its menu; **N** adds a space and **T** tidies. **Esc** leaves focus
 mode, then the sidebar. A long list doesn't scroll to the cursor on its own yet.

@@ -67,6 +67,7 @@ function items(p, git) {
         ["Hide space until…", "space.hide", { id: tg.id }],
         (shared("space.pinned") ?? []).includes(tg.id) ? ["Unpin", "space.pin", { id: tg.id, pin: false }] : ["Pin to top", "space.pin", { id: tg.id, pin: true }],
         shared("spaces.focus") === tg.id ? ["Show all spaces", "space.focus", { id: null }] : ["Focus this space", "space.focus", { id: tg.id }],
+        ["Suggest cleanup…", "space.cleanup", { space: tg.id }],
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),
         ["Close", "space.close", { id: tg.id }],
@@ -85,6 +86,7 @@ function items(p, git) {
 
 function menuIcon(command, args) {
   if (command === "space.hide") return "mods/space-hide/eye-off.svg";
+  if (command === "space.cleanup") return "mods/space-cleanup/sparkles.svg";
   if (command === "space.pin") return `mods/workspace-chrome/${args.pin ? "pin" : "pin-off"}.svg`;
   if (command === "space.focus") return args.id ? "mods/menu-pin/focus.svg" : "mods/workspace-chrome/layers.svg";
   const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? (args?.direction === "down" ? "panel-bottom" : "panel-right") : command === "pane.zoom" ? "square" : "terminal";
@@ -122,6 +124,9 @@ export default class Menu extends View {
     if (it[1] === "space.hide") {
       if (!spaces().some(s => s.id === it[2].id)) return;
       openOverlay({ mod: "space-hide", kind: "popup", width: 330, height: 350, props: it[2] });
+    } else if (it[1] === "space.cleanup") {
+      if (!spaces().some(s => s.id === it[2].space)) return;
+      openOverlay({ mod: "space-cleanup", kind: "dialog", width: 760, height: 560, props: it[2] });
     } else if (it[1] === "space.pin") {
       const pins = (shared("space.pinned") ?? []).filter((id) => id !== it[2].id);
       setShared("space.pinned", it[2].pin ? [...pins, it[2].id] : pins);

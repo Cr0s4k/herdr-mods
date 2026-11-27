@@ -95,6 +95,10 @@ test("dialogs open centred, and space focus switches both ways", () => {
   assert.equal(world.shared["spaces.focus"], "space");
   titled("All spaces").do();
   assert.equal(world.shared["spaces.focus"], null);
+  titled("Suggest cleanup…").do();
+  titled("Suggest cleanup in this space…").do();
+  assert.deepEqual(world.overlays.slice(-2), [{ kind: "dialog", mod: "space-cleanup", width: 760, height: 560 },
+    { kind: "dialog", mod: "space-cleanup", width: 760, height: 560, props: { space: "space" } }]);
 });
 
 test("Find file is listed even without the tab bar, and opens the find-file popup", () => {

@@ -66,9 +66,10 @@ source = "const { div, svg, h_flex } = globalThis.__spacesNative;\n" + source;
 const recent = await import("data:text/javascript," + encodeURIComponent(source));
 Object.assign(globalThis.__spacesNative, recent, { readTextFile: async () => "script", appHome: () => "/home", knownAgents: async () => world.known ?? [] });
 globalThis.__spacesNative.homeTab = (await import("../mods/space-home/model.js")).homeTab;
+Object.assign(globalThis.__spacesNative, await import("../mods/space-cleanup/model.js"));
 source = (await readFile(new URL("../mods/spaces-pin/main.js", import.meta.url), "utf8"))
   .replace(/^import .*;\n/gm, "");
-source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, terminals, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec, homeTab } = globalThis.__spacesNative;\n" + source;
+source = "const { View, div, svg, v_flex, h_flex, ScrollHandle, spaces, machines, panes, terminals, run, theme, shared, setShared, window, layout, AgentTree, branch, openOverlay, hiddenSpaces, expireSpaces, ink, watchMotion, nextCommand, spacePipeline, pipelineRow, openPipeline, taskStages, recentHeader, sessionRow, closedSessions, resumeArgs, readTextFile, appHome, knownAgents, spaceTerminals, terminalRow, touch, quietSpaces, TRACES, sessions, exec, homeTab, USED, touchUse } = globalThis.__spacesNative;\n" + source;
 const { default: Spaces } = await import("data:text/javascript," + encodeURIComponent(source));
 const { reduce, forgettable } = await import("../mods/pipeline/pipeline-model.js");
 source = (await readFile(new URL("../mods/pipeline-close/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
@@ -875,4 +876,34 @@ test("a click on the space already shown goes to its Home tab; another space ope
   world.calls = [];
   press("app");
   assert.deepEqual(world.calls, [["tab.select", { id: "app-home" }], ["pane.focus", { pane: "app-home-pane" }]]);
+});
+
+test("the sparkle suggests a cleanup of every space, C one space's, and the sidebar notes what each terminal last did", () => {
+  const view = setup();
+  click(view.render(), "spaces-cleanup");
+  assert.deepEqual(world.opened, [{ mod: "space-cleanup", kind: "dialog", width: 760, height: 560, props: {} }]);
+  view.keyboard = true;
+  view.render();
+  view.key({ key: "down", modifiers: {} }, cx);
+  view.key({ key: "c", modifiers: {} }, cx);
+  assert.deepEqual(world.opened[1].props, { space: "app" });
+  world.spaces = [{ ...space("app", true), tabs: [{ id: "app-tab", name: "1", named: false, active: true }] }, space("other")];
+  world.panes = [{ pane: "s", tab: "app-tab", terminal: "t1" }, { pane: "w", tab: "other-tab", terminal: "t2", status: "working" }, { pane: "q", tab: "other-tab", terminal: "t3" }];
+  const start = Date.now();
+  view.checkNew(cx);
+  const used = sharedState.get("cleanup.used");
+  assert.deepEqual(Object.keys(used).sort(), ["t1", "t2"]);
+  assert.ok(used.t1 >= start && used.t2 >= start);
+  view.checkNew(cx);
+  assert.equal(sharedState.get("cleanup.used"), used);
+});
+
+test("the right-click menu suggests a cleanup of that space, and not of one already gone", () => {
+  setup(); world.menu = { tab: "space", target: { id: "other" }, overlay: "popup" };
+  const menu = new Menu(); menu.init({}, cx);
+  assert.match(text(menu.render(cx)).replace(/\s+/g, " "), /Focus this space Suggest cleanup…/);
+  menu.choose(4, cx);
+  assert.deepEqual(world.opened, [{ mod: "space-cleanup", kind: "dialog", width: 760, height: 560, props: { space: "other" } }]);
+  world.opened = []; world.menu.target.id = "gone"; menu.choose(4, cx);
+  assert.deepEqual(world.opened, []);
 });

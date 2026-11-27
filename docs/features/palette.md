@@ -21,8 +21,8 @@ What it adds:
   [Clean up worktrees…](files-and-changes.md#clean-up-worktrees).
 - **Agent**: [Find conversation…](spaces.md#find-conversation), beside Herdr's own agent commands.
 - **Space**: a new space from `~/Projects`, hide this space for a while, hidden spaces, Focus
-  this space (or All spaces again), Tidy, the Needs you filter, and keyboard focus in the
-  sidebar.
+  this space (or All spaces again), Tidy, [Suggest cleanup](spaces.md#suggest-cleanup) of every
+  space or this one, the Needs you filter, and keyboard focus in the sidebar.
 - **Tab**, **Agent**, **App**: put the tab away, pin or unpin the focused agent, Feature toggles.
 
 An action bound in `keys.json` shows its key, as Herdr's do: bind the action the palette runs,

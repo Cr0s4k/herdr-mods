@@ -16,6 +16,7 @@ import { spaceTerminals, terminalRow } from "./terminal-row.js";
 import { touch, quietSpaces, TRACES, sessions } from "./tidy.js";
 import { recentHeader, sessionRow, closedSessions, resumeArgs } from "./recent.js";
 import { homeTab } from "./home-model.js";
+import { USED, touchUse } from "./cleanup-model.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -228,6 +229,7 @@ export default class Spaces extends View {
         break;
       }
       case "h": if (!space) return; this.hide(item.w); break;
+      case "c": if (!space) return; this.cleanup(item.w.id); break;
       case "m": if (!space) return; this.menu(item.w); break;
       case "f":
         if (!space) return;
@@ -253,6 +255,7 @@ export default class Spaces extends View {
     const sp = spaces(), ps = panes();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     this.use(now, sp, ps);
+    this.usePanes(now, sp, ps);
     this.seed(sp, ps, cx);
     const due = this.due(now, sp, ps);
     if (due.size) this.refreshGit(due, cx);
@@ -530,11 +533,20 @@ export default class Spaces extends View {
     openOverlay({ mod: "space-hide", kind: "popup", width: 330, height: 350, props: { id: w.id } });
   }
 
+  cleanup(space = null) {
+    openOverlay({ mod: "space-cleanup", kind: "dialog", width: 760, height: 560, props: space ? { space } : {} });
+  }
+
   use(now, sp, ps) {
     const used = touch(this.used, sp, ps, now, window().active);
     if (used === this.used) return;
     this.used = used;
     localStorage.setItem("spaces.lastUsed", JSON.stringify(used));
+  }
+
+  usePanes(now, sp, ps) {
+    const seen = shared(USED) ?? {}, next = touchUse(seen, sp, ps, now, window().active);
+    if (next !== seen) setShared(USED, next);
   }
 
   // A space first seen: when its folder was last worked in, as far as the folder shows. One made now is in use.
@@ -1127,6 +1139,11 @@ export default class Spaces extends View {
           .tooltip(this.attention ? "Show all spaces" : "Show only agents that need you")
           .on_click((_e, cx) => this.toggleAttention(cx))
           .child("Needs you").when(attentionCount > 0, el => el.child(div().text_color(t.blocked).child(String(attentionCount))))))
+        .when(!collapsed, el => el.child(div().id("spaces-cleanup").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
+          .hover(s => s.bg(t.hover).text_color(t.foreground))
+          .role("button").accessibility_label("Suggest cleanup").tooltip("Suggest cleanup · Idle agents, terminals and panels to close; spaces stay")
+          .on_click(() => this.cleanup())
+          .child(svg("mods/space-cleanup/sparkles.svg").size(14))))
         .when(!collapsed, el => el.child(div().id("spaces-tidy").size(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
           .hover(s => s.bg(t.hover).text_color(t.foreground))
           .role("button").accessibility_label("Tidy spaces").tooltip("Tidy · Most recently used spaces first; fold those unused for an hour")
