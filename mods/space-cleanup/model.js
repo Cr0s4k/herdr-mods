@@ -1,7 +1,16 @@
 import { MOD as HOME, agentName } from "./home-model.js";
 
-export const USED = "cleanup.used";
+export const USED = "cleanup.used", LEVEL = "cleanup.level";
 export const IDLE = 3600000, DAY = 86400000;
+// How long something waits unused before it is offered: agents and shells, then programs and panels.
+export const LEVELS = [
+  { id: "15m", label: "15 minutes", idle: IDLE / 4, long: 4 * IDLE, longLabel: "4 hours" },
+  { id: "1h", label: "1 hour", idle: IDLE, long: DAY, longLabel: "1 day" },
+  { id: "4h", label: "4 hours", idle: 4 * IDLE, long: 3 * DAY, longLabel: "3 days" },
+  { id: "1d", label: "1 day", idle: DAY, long: 7 * DAY, longLabel: "1 week" },
+  { id: "1w", label: "1 week", idle: 7 * DAY, long: 30 * DAY, longLabel: "1 month" },
+];
+export const level = id => LEVELS.find(l => l.id === id) ?? LEVELS[1];
 const STEP = 60000, KEPT = 400;
 const KEEP = new Set([HOME, "pipeline"]);
 const key = p => p.terminal ?? p.pane;
@@ -42,24 +51,24 @@ export function owners(all) {
   return found;
 }
 
-function judge({ p, tab, agent, task, last, now }) {
+function judge({ p, tab, agent, task, last, now, wait }) {
   const idle = last ? now - last : null;
-  if (p.mod) return KEEP.has(p.mod) || idle === null || idle < DAY ? null : { kind: "panel", why: `not opened for ${ago(idle)}`, tick: true };
+  if (p.mod) return KEEP.has(p.mod) || idle === null || idle < wait.long ? null : { kind: "panel", why: `not opened for ${ago(idle)}`, tick: true };
   if (task && !task.done) return null;
   if (agent) {
     if (agent.status === "working" || agent.status === "blocked") return null;
     if (task?.done) return { kind: "agent", why: `its Pipeline task ${task.id} is merged`, tick: true };
-    if (idle === null || idle < IDLE) return null;
+    if (idle === null || idle < wait.idle) return null;
     if (agent.status === "done") return { kind: "agent", why: `finished ${ago(idle)} ago, reply not read`, tick: false };
     return { kind: "agent", why: `idle for ${ago(idle)}`, tick: true };
   }
-  if (p.program && !p.program.shell) return idle === null || idle < DAY ? null : { kind: "program", why: `runs ${p.program.name}, untouched for ${ago(idle)}`, tick: false };
-  return idle === null || idle < IDLE ? null : { kind: "shell", why: `at its prompt for ${ago(idle)}`, tick: !tab.named };
+  if (p.program && !p.program.shell) return idle === null || idle < wait.long ? null : { kind: "program", why: `runs ${p.program.name}, untouched for ${ago(idle)}`, tick: false };
+  return idle === null || idle < wait.idle ? null : { kind: "shell", why: `at its prompt for ${ago(idle)}`, tick: !tab.named };
 }
 
 // What could close in each space, oldest first; the spaces themselves stay. A space without a Home tab
 // keeps the tab used last when everything else in it would go, since closing its last tab closes it.
-export function suggest({ spaces, panes, agents, terminals = [], pipelines = {}, used = {}, focused = null, only = null, now = Date.now() }) {
+export function suggest({ spaces, panes, agents, terminals = [], pipelines = {}, used = {}, focused = null, only = null, wait = level(), now = Date.now() }) {
   const tasks = owners(pipelines), born = new Map(terminals.map(t => [t.address, t.created_ms]));
   const byPane = new Map(agents.map(a => [a.pane, a]));
   return spaces.filter(space => !only || space.id === only).map(space => {
@@ -69,7 +78,7 @@ export function suggest({ spaces, panes, agents, terminals = [], pipelines = {},
       if (p.pane === focused) return [];
       const tab = tabs.get(p.tab), agent = byPane.get(p.pane) ?? null;
       const last = Math.max(used[key(p)] ?? 0, tab.changed_at ?? 0) || (p.terminal ? born.get(p.terminal) : null) || null;
-      const verdict = judge({ p, tab, agent, task: p.terminal ? tasks.get(p.terminal) : null, last, now });
+      const verdict = judge({ p, tab, agent, task: p.terminal ? tasks.get(p.terminal) : null, last, now, wait });
       if (!verdict) return [];
       const name = agent ? agentName(agent, tab, p) : p.mod ? p.name || (tab.named ? tab.name : p.title) : tab.named ? tab.name : p.cwd ? base(p.cwd) : p.program?.name || "Terminal";
       return [{ ...verdict, key: `${space.id}:${p.pane}`, pane: p.pane, terminal: p.terminal ?? null, tab: p.tab, name, program: p.program ?? null, cwd: p.cwd ?? null, branch: p.branch ?? null,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { suggest, touchUse, owners, ago, IDLE, DAY } from "../mods/space-cleanup/model.js";
+import { suggest, touchUse, owners, ago, level, LEVELS, IDLE, DAY } from "../mods/space-cleanup/model.js";
 import { STORE } from "../mods/pipeline/pipeline-model.js";
 
 const NOW = 10 * DAY;
@@ -120,10 +120,10 @@ function element() {
   let el;
   el = new Proxy(target, { get(t, k) {
     if (k in t) return t[k];
-    if (k === "child") return child => { t.nodes.push(child); return el; };
+    if (k === "child" || k === "content") return child => { t.nodes.push(child); return el; };
     if (k === "children") return children => { t.nodes.push(...children); return el; };
     if (k === "when") return (condition, apply) => condition ? apply(el) : el;
-    if (k.startsWith("on_")) return (...args) => { t.handlers[k.slice(3)] = args.at(-1); return el; };
+    if (k.startsWith("on_")) return (...args) => { t.handlers[k.slice(3) + (args.length > 1 ? `-${args[0]}` : "")] = args.at(-1); return el; };
     return (...args) => { t.styles[k] = args; return el; };
   } });
   return el;
@@ -131,6 +131,7 @@ function element() {
 const cx = { notify() {}, stop_propagation() {}, timer: { after() {} }, focus_handle: () => ({ focus() {} }) };
 globalThis.__cleanup = {
   View: class {}, div: element, svg: element, image: element, h_flex: element, v_flex: element, ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
+  Popup: { new: (id, trigger) => element().id(id).child(trigger) }, setShared: (k, v) => { world.shared[k] = v; },
   spaces: () => world.spaces, panes: () => world.panes, agents: () => world.agents, terminals: () => world.terminals,
   focused: () => world.focused, shared: k => world.shared[k], theme: () => new Proxy({}, { get: (_, k) => k }), props: () => world.props,
   run: (...args) => world.calls.push(args), closeOverlay: id => world.closed.push(id), checking: () => false, home: () => "/home/me",
@@ -139,7 +140,7 @@ globalThis.__cleanup = {
 const { readFile } = await import("node:fs/promises");
 const source = (await readFile(new URL("../mods/space-cleanup/main.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
 const { default: Cleanup } = await import("data:text/javascript," + encodeURIComponent(
-  "const { View, div, svg, image, h_flex, v_flex, ScrollHandle, spaces, panes, agents, terminals, focused, shared, theme, props, run, closeOverlay, checking, home, track, ink, STORE, USED, suggest } = globalThis.__cleanup;\n" + source));
+  "const { View, div, svg, image, h_flex, v_flex, ScrollHandle, Popup, spaces, panes, agents, terminals, focused, shared, setShared, theme, props, run, closeOverlay, checking, home, track, ink, STORE, USED, LEVEL, LEVELS, level, suggest } = globalThis.__cleanup;\n" + source));
 const find = (el, id) => el?.styles?.id?.[0] === id ? el : (el?.nodes ?? []).map(n => find(n, id)).find(Boolean);
 const text = el => typeof el === "string" ? el : (el?.nodes ?? []).map(text).join(" ");
 const click = (root, id) => { const el = find(root, id); assert.ok(el, `Missing ${id}`); el.handlers.click({}, cx); };
@@ -191,4 +192,31 @@ test("a space's own cleanup lists only it, a row's arrow goes there, and an empt
   world.terminals = [];
   root = view.render();
   assert.ok(find(root, "sc-empty"));
+});
+
+test("how long counts as unused is picked from a list, remembered, and starts the ticks over", () => {
+  const view = open();
+  const key = k => view.render().handlers["key_down"]({ key: k }, cx);
+  let root = view.render();
+  assert.match(text(find(root, "sc-level")), /Unused for 1 hour/);
+  assert.equal(find(root, "sc-level-15m"), undefined);
+  view.ticked.delete("app:pa");
+  click(root, "sc-level");
+  root = view.render();
+  assert.match(text(find(root, "sc-level-4h")), /4 hours programs and panels: 3 days/);
+  click(root, "sc-level-4h");
+  assert.equal(world.shared["cleanup.level"], "4h");
+  root = view.render();
+  assert.equal(find(root, "sc-level-4h"), undefined);
+  assert.ok(find(root, "sc-empty"));
+  assert.match(text(find(root, "sc-empty")), /Nothing unused for 4 hours.*A shorter time above finds more/);
+  key("u"); key("up"); key("enter");
+  assert.equal(world.shared["cleanup.level"], "1h");
+  view.render();
+  assert.deepEqual([...view.ticked], ["app:pa"]);
+  key("u"); key("escape");
+  assert.equal(view.picking, false);
+  assert.deepEqual(world.closed, []);
+  assert.equal(level("nonsense").id, "1h");
+  assert.deepEqual(LEVELS.map(l => l.id), ["15m", "1h", "4h", "1d", "1w"]);
 });

@@ -1,10 +1,10 @@
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, agents, terminals, focused, shared, theme, props, run, closeOverlay, checking, home } from "herdr";
+import { v_flex, h_flex, ScrollHandle, Popup } from "gpui-base";
+import { spaces, panes, agents, terminals, focused, shared, setShared, theme, props, run, closeOverlay, checking, home } from "herdr";
 import { track } from "./usage.js";
 import { ink } from "./ui.js";
 import { STORE } from "./pipeline-model.js";
-import { USED, suggest } from "./model.js";
+import { USED, LEVEL, LEVELS, level, suggest } from "./model.js";
 
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 const short = path => !path ? "" : path === home() ? "~" : path.startsWith(home() + "/") ? "~" + path.slice(home().length) : path;
@@ -16,17 +16,47 @@ export default class SpaceCleanup extends View {
     this.handle.focus();
     cx.timer.after(300, () => this.handle.focus());
     this.scroll = ScrollHandle.new();
-    this.ticked = new Set(); this.seen = new Set(); this.at = 0;
+    this.ticked = new Set(); this.seen = new Set(); this.at = 0; this.picking = false;
     if (!checking()) track("space-cleanup", "open");
   }
 
   groups() {
     const groups = suggest({ spaces: spaces(), panes: panes(), agents: agents(), terminals: terminals(), pipelines: shared(STORE) ?? {},
-      used: shared(USED) ?? {}, focused: focused()?.pane ?? null, only: props()?.space ?? null });
+      used: shared(USED) ?? {}, focused: focused()?.pane ?? null, only: props()?.space ?? null, wait: level(shared(LEVEL)) });
     const rows = groups.flatMap(group => group.rows), live = new Set(rows.map(row => row.key));
     for (const row of rows) if (!this.seen.has(row.key)) { this.seen.add(row.key); if (row.tick) this.ticked.add(row.key); }
     for (const k of this.ticked) if (!live.has(k)) this.ticked.delete(k);
     return { groups, rows };
+  }
+
+  pick(id, cx) {
+    this.picking = false;
+    if (id !== level(shared(LEVEL)).id) {
+      track("space-cleanup", "level");
+      setShared(LEVEL, id);
+      this.ticked = new Set(); this.seen = new Set(); this.at = 0; this.confirming = false; this.note = null;
+    }
+    cx.notify();
+  }
+
+  levels(wait, t) {
+    const trigger = h_flex().id("sc-level").h(30).pl(10).pr(8).gap(6).items_center().rounded(7).border_1().border_color(this.picking ? t.accent : t.border)
+      .text_size(12).cursor_pointer().hover(st => st.bg(t.hover)).role("button").accessibility_label(`Unused for ${wait.label}. Change how long`)
+      .tooltip(`Agents and shells unused for ${wait.label}, programs and panels for ${wait.longLabel}`)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { this.picking = !this.picking; this.pickAt = LEVELS.indexOf(wait); cx.notify(); })
+      .child(div().text_color(t.muted).child("Unused for")).child(div().child(wait.label))
+      .child(svg("mods/workspace-chrome/chevron-down.svg").size(10).flex_none().text_color(t.muted));
+    const option = (l, n) => h_flex().id(`sc-level-${l.id}`).h(40).px(10).gap(10).items_center().rounded(6).cursor_pointer()
+      .when(n === this.pickAt, el => el.bg(t.selected)).hover(st => st.bg(t.hover)).role("list_box_option").accessibility_label(`${l.label}, programs and panels ${l.longLabel}`)
+      .on_click((_e, cx) => this.pick(l.id, cx))
+      .child(v_flex().flex_1().min_w(0).gap(1).child(div().text_size(12.5).child(l.label))
+        .child(div().text_size(11).text_color(t.muted).child(`programs and panels: ${l.longLabel}`)))
+      .child(div().w(12).flex_none().text_size(12).text_color(t.accent).child(l === wait ? "✓" : ""));
+    return Popup.new("sc-levels", trigger).anchor("top_right").when(this.picking, el => el.content(v_flex().id("sc-level-list").w(230).p(4).gap(1)
+      .rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+      .on_mouse_down_out((_e, cx) => { this.picking = false; cx.notify(); })
+      .children(LEVELS.map(option))));
   }
 
   toggle(row, cx) {
@@ -103,7 +133,7 @@ export default class SpaceCleanup extends View {
   }
 
   render() {
-    const t = theme(), { groups, rows } = this.groups(), n = rows.filter(row => this.ticked.has(row.key) && !row.hold).length;
+    const t = theme(), wait = level(shared(LEVEL)), { groups, rows } = this.groups(), n = rows.filter(row => this.ticked.has(row.key) && !row.hold).length;
     this.at = Math.max(0, Math.min(rows.length - 1, this.at));
     const scoped = props()?.space ? spaces().find(s => s.id === props().space) : null;
     const hint = this.confirming ? "Their terminals end. An agent's conversation stays under Recent, to resume."
@@ -113,12 +143,22 @@ export default class SpaceCleanup extends View {
     return v_flex().id("space-cleanup").track_focus(this.handle).size_full().min_h(0).bg(t.background).text_size(13).text_color(t.foreground)
       .on_key_down((e, cx) => {
         const k = e.key;
+        if (this.picking) {
+          if (k === "escape") this.picking = false;
+          else if (k === "down" || k === "j") this.pickAt = Math.min(LEVELS.length - 1, this.pickAt + 1);
+          else if (k === "up" || k === "k") this.pickAt = Math.max(0, this.pickAt - 1);
+          else if (k === "enter" || k === "space") return this.pick(LEVELS[this.pickAt].id, cx), cx.stop_propagation();
+          else return;
+          cx.stop_propagation();
+          return cx.notify();
+        }
         if (k === "escape") { if (this.confirming) { this.confirming = false; cx.notify(); } else closeOverlay(props().overlay); }
         else if (k === "down" || k === "j") this.move(1, rows.length, cx);
         else if (k === "up" || k === "k") this.move(-1, rows.length, cx);
         else if (k === "space" && rows[this.at]) this.toggle(rows[this.at], cx);
         else if (k === "g" && rows[this.at]) this.go(rows[this.at]);
         else if (k === "enter") this.close(rows, cx);
+        else if (k === "u") { this.picking = true; this.pickAt = LEVELS.indexOf(wait); cx.notify(); }
         else return;
         cx.stop_propagation();
       })
@@ -127,16 +167,17 @@ export default class SpaceCleanup extends View {
         .child(div().font_semibold().child(scoped ? `Clean up ${scoped.name}` : "Clean up spaces"))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted)
           .child(rows.length ? `${plural(rows.length, "suggestion")}, longest unused first` : ""))
+        .child(this.levels(wait, t))
         .child(this.button("sc-close", "✕", () => closeOverlay(props().overlay), false, true, t)))
       .child(v_flex().id("sc-list").flex_1().min_h(0).p(6).gap(1).overflow_y_scrollbar().track_scroll(this.scroll)
         .children(groups.flatMap(group => [this.header(group.space, group.rows.length, t), ...group.rows.map(row => this.row(row, i++, t))]))
         .when(!rows.length, el => el.child(div().id("sc-empty").p(10).line_height(1.5).text_size(12).text_color(t.muted)
-          .child("Nothing to clean up. Every agent and terminal was used in the last hour, is working or needs you, and every panel was opened today."))))
+          .child(`Nothing unused for ${wait.label}: every agent and shell was used since, is working or needs you, and every program and panel was used in the last ${wait.longLabel}.${wait === LEVELS[0] ? "" : " A shorter time above finds more."}`))))
       .child(h_flex().h(52).flex_none().px(16).gap(10).items_center().border_t(1).border_color(t.border)
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(this.confirming ? t.foreground : t.muted).child(hint))
         .when(this.confirming, el => el.child(this.button("sc-cancel", "Cancel", cx => { this.confirming = false; cx.notify(); }, false, true, t)))
         .child(this.button("sc-confirm", this.confirming ? `Close ${n}` : `Close ${plural(n, "item")}`, cx => this.close(rows, cx), true, n > 0, t)))
       .child(h_flex().h(28).flex_none().px(16).gap(16).items_center().border_t(1).border_color(t.border).text_size(11).text_color(t.muted)
-        .child("↑ ↓ move").child("Space tick").child("G go there").child("↵ close the ticked").child("Esc close"));
+        .child("↑ ↓ move").child("Space tick").child("G go there").child("U unused for").child("↵ close the ticked").child("Esc close"));
   }
 }

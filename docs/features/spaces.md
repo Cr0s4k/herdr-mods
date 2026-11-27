@@ -134,7 +134,10 @@ The broom beside **Tidy** lists what could close inside your spaces, each with w
 themselves stay. Right-click a space → **Suggest cleanup…**, or **C** on it in the sidebar, lists
 that space only. The [command palette](palette.md) has both.
 
-Suggestions sit under their space, longest unused first:
+Suggestions sit under their space, longest unused first. **Unused for**, at the top, sets how long
+something waits before it is offered: 15 minutes, 1 hour (to start with), 4 hours, 1 day or
+1 week for agents and shells, and longer for programs and panels (4 hours, 1 day, 3 days, 1 week
+or 1 month). The choice is kept. At 1 hour:
 
 - **Agents idle for an hour**, ticked: the conversation stays under Recent, to resume. One that
   finished while you were away is listed unticked, since its reply is unread.
@@ -150,9 +153,10 @@ A terminal or panel is in use while it is on screen with Herdr in front, or whil
 or asks; the sidebar notes this once a minute. The last status change in its tab counts too. A
 terminal never seen in use counts from when it started; a panel never seen in use isn't listed.
 
-**Space** ticks, **↵** closes the ticked after asking once, **G** (or a row's arrow) goes there and
-**Esc** closes. Closing ends their terminals. Home keeps each space open; in a space without one
-(Home tab switched off), the tab used last is kept and marked **keeps the space open**.
+**Space** ticks, **↵** closes the ticked after asking once, **G** (or a row's arrow) goes there, **U**
+opens Unused for (↑ ↓ and ↵ pick) and **Esc** closes. Closing ends their terminals. Home keeps
+each space open; in a space without one (Home tab switched off), the tab used last is kept and
+marked **keeps the space open**.
 
 ## Pinned spaces
 
